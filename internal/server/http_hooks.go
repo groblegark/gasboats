@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/groblegark/kbeads/internal/eventbus"
 	"github.com/groblegark/kbeads/internal/hooks"
 	"github.com/groblegark/kbeads/internal/presence"
 )
@@ -128,6 +129,23 @@ func (s *BeadsServer) handleHookEmit(w http.ResponseWriter, r *http.Request) {
 			resp.Reason = hookResp.Reason
 		}
 		resp.Warnings = append(resp.Warnings, hookResp.Warnings...)
+	}
+
+	// Dispatch hook event through the bus for JetStream publishing and handler chain.
+	if s.bus != nil {
+		event := &eventbus.Event{
+			Type:      eventbus.EventType(req.HookType),
+			SessionID: req.ClaudeSessionID,
+			CWD:       req.CWD,
+			Actor:     req.Actor,
+			ToolName:  req.ToolName,
+		}
+		if busResult, err := s.bus.Dispatch(ctx, event); err != nil {
+			slog.Warn("hookEmit: bus dispatch error", "hook_type", req.HookType, "err", err)
+		} else if busResult.Block && !resp.Block {
+			resp.Block = busResult.Block
+			resp.Reason = busResult.Reason
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

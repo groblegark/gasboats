@@ -32,6 +32,12 @@ func (p *NATSPublisher) Publish(ctx context.Context, topic string, event any) er
 	return p.conn.Publish(topic, data)
 }
 
+// Conn returns the underlying NATS connection. Used by serve.go to create
+// a JetStream context for the eventbus without opening a second connection.
+func (p *NATSPublisher) Conn() *nats.Conn {
+	return p.conn
+}
+
 func (p *NATSPublisher) Close() error {
 	p.conn.Close()
 	return nil

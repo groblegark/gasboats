@@ -7,6 +7,7 @@ import (
 	"time"
 
 	beadsv1 "github.com/groblegark/kbeads/gen/beads/v1"
+	"github.com/groblegark/kbeads/internal/eventbus"
 	"github.com/groblegark/kbeads/internal/events"
 	"github.com/groblegark/kbeads/internal/hooks"
 	"github.com/groblegark/kbeads/internal/model"
@@ -21,6 +22,7 @@ type BeadsServer struct {
 	beadsv1.UnimplementedBeadsServiceServer
 	store        store.Store
 	publisher    events.Publisher
+	bus          *eventbus.Bus
 	sseHub       *sseHub
 	hooksHandler *hooks.Handler
 	Presence     *presence.Tracker
@@ -35,6 +37,17 @@ func NewBeadsServer(s store.Store, p events.Publisher) *BeadsServer {
 		hooksHandler: hooks.NewHandler(s, slog.Default()),
 		Presence:     presence.New(),
 	}
+}
+
+// SetBus attaches an event bus for JetStream publishing. When set, mutation
+// events are published to JetStream streams in addition to basic NATS pub/sub.
+func (s *BeadsServer) SetBus(bus *eventbus.Bus) {
+	s.bus = bus
+}
+
+// Bus returns the event bus, or nil if not configured.
+func (s *BeadsServer) Bus() *eventbus.Bus {
+	return s.bus
 }
 
 // recordAndPublish persists an event to the store and publishes it to NATS.
@@ -57,6 +70,34 @@ func (s *BeadsServer) recordAndPublish(ctx context.Context, topic, beadID, actor
 		slog.Warn("failed to publish event", "topic", topic, "bead_id", beadID, "error", err)
 	}
 	s.broadcastEvent(topic, event)
+
+	// Publish to JetStream mutation stream if bus is configured.
+	if s.bus != nil {
+		if mutationType := topicToMutationType(topic); mutationType != "" {
+			s.bus.PublishRaw(
+				eventbus.SubjectMutationPrefix+mutationType,
+				payload,
+			)
+		}
+	}
+}
+
+// topicToMutationType maps a legacy event topic to a JetStream mutation event
+// type suffix. Returns "" for topics that are not mutation events.
+func topicToMutationType(topic string) string {
+	switch topic {
+	case events.TopicBeadCreated:
+		return string(eventbus.EventMutationCreate)
+	case events.TopicBeadUpdated:
+		return string(eventbus.EventMutationUpdate)
+	case events.TopicBeadClosed:
+		return string(eventbus.EventMutationStatus)
+	case events.TopicBeadDeleted:
+		return string(eventbus.EventMutationDelete)
+	case events.TopicCommentAdded:
+		return string(eventbus.EventMutationComment)
+	}
+	return ""
 }
 
 // inputError indicates invalid user input.

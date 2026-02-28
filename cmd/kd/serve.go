@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/groblegark/kbeads/internal/config"
+	"github.com/groblegark/kbeads/internal/eventbus"
 	"github.com/groblegark/kbeads/internal/events"
 	"github.com/groblegark/kbeads/internal/hooks"
 	"github.com/groblegark/kbeads/internal/presence"
@@ -56,8 +57,25 @@ var serveCmd = &cobra.Command{
 			logger.Info("events disabled (BEADS_NATS_URL not set)")
 		}
 
+		// Create event bus with JetStream if NATS is available.
+		bus := eventbus.New()
+		if pub, ok := publisher.(*events.NATSPublisher); ok {
+			js, err := pub.Conn().JetStream()
+			if err != nil {
+				logger.Error("failed to create JetStream context", "err", err)
+			} else {
+				if err := eventbus.EnsureStreams(js); err != nil {
+					logger.Error("failed to ensure JetStream streams", "err", err)
+				} else {
+					bus.SetJetStream(js)
+					logger.Info("eventbus JetStream enabled")
+				}
+			}
+		}
+
 		// Create server components.
 		beadsServer := server.NewBeadsServer(store, publisher)
+		beadsServer.SetBus(bus)
 		grpcServer := server.NewGRPCServer(beadsServer, cfg.AuthToken)
 
 		// Start gRPC listener.
