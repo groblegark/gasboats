@@ -25,8 +25,8 @@ spec:
       {{- end }}
       containers:
         - name: advice-viewer
-          image: "{{ .Values.adviceViewer.image.repository }}:{{ .Values.adviceViewer.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.adviceViewer.image.pullPolicy | default "Always" }}
+          image: "{{ .Values.adviceViewer.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.adviceViewer.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.adviceViewer.image.pullPolicy "global" .Values.global) }}
           ports:
             - name: http
               containerPort: {{ .Values.adviceViewer.service.port | default 8091 }}

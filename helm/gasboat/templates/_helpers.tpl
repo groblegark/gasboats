@@ -24,6 +24,36 @@ app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/* ===== Image tag/pull policy helpers ===== */}}
+
+{{/*
+Resolve image tag for gasboat-owned images.
+When global.latestMode is true, returns "latest" regardless of per-component tag.
+Otherwise returns the per-component tag, falling back to Chart.AppVersion.
+Usage: include "gasboat.imageTag" (dict "tag" .Values.agents.image.tag "global" .Values.global "Chart" .Chart)
+*/}}
+{{- define "gasboat.imageTag" -}}
+{{- if .global.latestMode -}}
+latest
+{{- else -}}
+{{- .tag | default .Chart.AppVersion -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Resolve image pull policy for gasboat-owned images.
+When global.latestMode is true, always returns "Always".
+Otherwise returns the per-component pullPolicy, falling back to "IfNotPresent".
+Usage: include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.agents.image.pullPolicy "global" .Values.global)
+*/}}
+{{- define "gasboat.imagePullPolicy" -}}
+{{- if .global.latestMode -}}
+Always
+{{- else -}}
+{{- .pullPolicy | default "IfNotPresent" -}}
+{{- end -}}
+{{- end }}
+
 {{/* ===== Beads daemon connection helpers ===== */}}
 
 {{/*

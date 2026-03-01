@@ -25,8 +25,8 @@ spec:
       {{- end }}
       containers:
         - name: slack-bridge
-          image: "{{ .Values.slackBridge.image.repository }}:{{ .Values.slackBridge.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.slackBridge.image.pullPolicy | default "Always" }}
+          image: "{{ .Values.slackBridge.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.slackBridge.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.slackBridge.image.pullPolicy "global" .Values.global) }}
           ports:
             - name: http
               containerPort: 8090

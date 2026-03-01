@@ -71,8 +71,8 @@ spec:
       {{- end }}
       containers:
         - name: agents
-          image: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.agents.image.pullPolicy }}
+          image: "{{ .Values.agents.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.agents.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.agents.image.pullPolicy "global" .Values.global) }}
           ports:
             - name: health
               containerPort: 8091
@@ -99,7 +99,7 @@ spec:
             - name: BEADS_HTTP_ADDR
               value: http://{{ include "gasboat.beads.host" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ include "gasboat.beads.httpPort" . }}
             - name: COOP_IMAGE
-              value: "{{ .Values.agents.agentImage.repository }}:{{ .Values.agents.agentImage.tag | default .Chart.AppVersion }}"
+              value: "{{ .Values.agents.agentImage.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.agents.agentImage.tag "global" .Values.global "Chart" .Chart) }}"
             {{- if .Values.agents.claudeOAuthSecret }}
             - name: CLAUDE_OAUTH_SECRET
               value: {{ .Values.agents.claudeOAuthSecret }}

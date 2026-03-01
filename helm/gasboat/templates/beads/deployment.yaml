@@ -29,8 +29,8 @@ spec:
         runAsUser: 65534
       containers:
         - name: beads
-          image: "{{ .Values.beads.image.repository }}:{{ .Values.beads.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.beads.image.pullPolicy }}
+          image: "{{ .Values.beads.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.beads.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.beads.image.pullPolicy "global" .Values.global) }}
           command: {{ .Values.beads.command | default (list "kd" "serve") | toJson }}
           ports:
             - name: grpc

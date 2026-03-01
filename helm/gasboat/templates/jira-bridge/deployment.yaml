@@ -25,8 +25,8 @@ spec:
       {{- end }}
       containers:
         - name: jira-bridge
-          image: "{{ .Values.jiraBridge.image.repository }}:{{ .Values.jiraBridge.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.jiraBridge.image.pullPolicy | default "Always" }}
+          image: "{{ .Values.jiraBridge.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.jiraBridge.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.jiraBridge.image.pullPolicy "global" .Values.global) }}
           ports:
             - name: http
               containerPort: 8091

@@ -13,6 +13,12 @@ imagePullSecrets: []
 # Global settings (shared across all components)
 # =============================================================================
 global:
+  # Latest mode: when true, all gasboat-owned images use "latest" tag with
+  # Always pull policy instead of the default Chart.AppVersion tag.
+  # Third-party images (postgres, nats) are unaffected.
+  # Override: --set global.latestMode=true
+  latestMode: false
+
   # Shared basic auth secret for Traefik ingress protection.
   # Individual services can override with their own basicAuth.secret value.
   # The secret must contain htpasswd-formatted credentials.
