@@ -80,7 +80,7 @@ var listCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().StringSliceP("status", "s", nil, "filter by status (repeatable)")
 	listCmd.Flags().StringSliceP("type", "t", nil, "filter by type (repeatable)")
-	listCmd.Flags().StringSliceP("kind", "k", nil, "filter by kind (repeatable)")
+	listCmd.Flags().StringSliceP("kind", "k", nil, "filter by kind (repeatable; default: issue)")
 	listCmd.Flags().Int("limit", 20, "maximum number of beads to return")
 	listCmd.Flags().String("assignee", "", "filter by assignee")
 	listCmd.Flags().Int("offset", 0, "offset for pagination")
