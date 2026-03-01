@@ -228,8 +228,8 @@ func TestBusEventsStreamFilter(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish two events: one that matches the filter, one that doesn't.
-	js.Publish("hooks.agent1.SessionStart", []byte(`{"type":"SessionStart"}`))
-	js.Publish("hooks.agent1.Stop", []byte(`{"type":"Stop"}`))
+	_, _ = js.Publish("hooks.agent1.SessionStart", []byte(`{"type":"SessionStart"}`))
+	_, _ = js.Publish("hooks.agent1.Stop", []byte(`{"type":"Stop"}`))
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -270,8 +270,8 @@ func TestBusEventsMultipleStreams(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	js.Publish("hooks.agent1.SessionStart", []byte(`{"type":"SessionStart"}`))
-	js.Publish("decisions.agent1.DecisionCreated", []byte(`{"type":"DecisionCreated"}`))
+	_, _ = js.Publish("hooks.agent1.SessionStart", []byte(`{"type":"SessionStart"}`))
+	_, _ = js.Publish("decisions.agent1.DecisionCreated", []byte(`{"type":"DecisionCreated"}`))
 
 	time.Sleep(200 * time.Millisecond)
 

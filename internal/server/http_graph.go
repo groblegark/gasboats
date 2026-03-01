@@ -327,12 +327,10 @@ func (s *BeadsServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if revDepRecords != nil {
-		for _, deps := range revDepRecords {
-			for _, dep := range deps {
-				if dep.Type == model.DepParentChild {
-					parentOf[dep.BeadID] = dep.DependsOnID
-				}
+	for _, deps := range revDepRecords {
+		for _, dep := range deps {
+			if dep.Type == model.DepParentChild {
+				parentOf[dep.BeadID] = dep.DependsOnID
 			}
 		}
 	}
