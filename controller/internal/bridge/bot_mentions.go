@@ -76,6 +76,7 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
 		Title:       title,
 		Type:        "task",
+		Kind:        "issue",
 		Description: description,
 		Assignee:    extractAgentName(agent),
 		Labels:      []string{"slack-mention"},

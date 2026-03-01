@@ -104,6 +104,7 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 	agentBeadID, err := daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
 		Title:     agentName,
 		Type:      "task",
+		Kind:      "issue",
 		Assignee:  agentName,
 		CreatedBy: actor,
 		Labels:    []string{"kd:agent", "execution_target:local"},

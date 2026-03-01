@@ -133,7 +133,7 @@ func configs() map[string]any {
 		},
 
 		"type:task": TypeConfig{
-			Kind: "data",
+			Kind: "issue",
 			Fields: []FieldDef{
 				{Name: "jira_key", Type: "string"},
 				{Name: "jira_project", Type: "string"},
