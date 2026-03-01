@@ -350,7 +350,7 @@ func TestBusEventsSSEFormat(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	js.Publish("hooks.agent1.Stop", []byte(`{"stopped":true}`))
+	_, _ = js.Publish("hooks.agent1.Stop", []byte(`{"stopped":true}`))
 
 	time.Sleep(200 * time.Millisecond)
 	cancel()
@@ -418,7 +418,7 @@ func TestBusEventsStreamAllDefault(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish to mutations stream (should be subscribed by default).
-	js.Publish("mutations.MutationCreate", []byte(`{"issue_id":"kd-123"}`))
+	_, _ = js.Publish("mutations.MutationCreate", []byte(`{"issue_id":"kd-123"}`))
 
 	time.Sleep(200 * time.Millisecond)
 	cancel()
