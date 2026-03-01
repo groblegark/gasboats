@@ -54,6 +54,10 @@ spec:
       middlewares:
         {{- include "gasboat.coopmux.ingressMiddlewares" (dict "Values" .Values "fullname" $fullname "includeBasicAuth" true) | nindent 8 }}
     {{- end }}
+  {{- if .Values.tls.enabled }}
+  tls:
+    secretName: {{ include "gasboat.fullname" . }}-wildcard-tls
+  {{- end }}
 {{- if .Values.coopmux.ingress.bearerToken }}
 ---
 # Injects bearer token so coopmux's auth layer is satisfied after basic auth.

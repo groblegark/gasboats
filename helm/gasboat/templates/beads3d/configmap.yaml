@@ -16,6 +16,11 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
+        # Patch cached JS bundles: force rest mode (kbeads doesn't speak Connect-RPC on HTTP port)
+        sub_filter_once off;
+        sub_filter_types application/javascript;
+        sub_filter 'mode||"rpc"' 'mode||"rest"';
+
         # Static assets with cache headers
         location /assets/ {
             expires 7d;
@@ -25,10 +30,10 @@ data:
         # SPA fallback
         location / {
             try_files $uri $uri/ /index.html;
-            expires 1h;
+            expires 5m;
         }
 
-        # Reverse-proxy API (strips /api prefix)
+        # Reverse-proxy API (strips /api prefix) — REST paths
         location /api/ {
             {{- if $hasDaemonAuth }}
             include /etc/nginx/snippets/daemon-auth.conf;
@@ -55,12 +60,12 @@ data:
             proxy_read_timeout 3600s;
         }
 
-        # SSE events stream (bd-daemon RPC mode)
+        # SSE events stream (legacy rpc mode — redirect to REST)
         location /api/events {
             {{- if $hasDaemonAuth }}
             include /etc/nginx/snippets/daemon-auth.conf;
             {{- end }}
-            proxy_pass {{ $daemonURL }}/events;
+            proxy_pass {{ $daemonURL }}/v1/events/stream;
             proxy_http_version 1.1;
             proxy_set_header Connection "";
             proxy_buffering off;
@@ -68,12 +73,25 @@ data:
             proxy_read_timeout 3600s;
         }
 
-        # SSE bus events stream (NATS event bus)
+        # SSE bus events stream (kbeads REST path)
+        location /api/v1/bus/ {
+            {{- if $hasDaemonAuth }}
+            include /etc/nginx/snippets/daemon-auth.conf;
+            {{- end }}
+            proxy_pass {{ $daemonURL }}/v1/bus/;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+        }
+
+        # SSE bus events stream (legacy path — rewrite to v1)
         location /api/bus/ {
             {{- if $hasDaemonAuth }}
             include /etc/nginx/snippets/daemon-auth.conf;
             {{- end }}
-            proxy_pass {{ $daemonURL }}/bus/;
+            proxy_pass {{ $daemonURL }}/v1/bus/;
             proxy_http_version 1.1;
             proxy_set_header Connection "";
             proxy_buffering off;

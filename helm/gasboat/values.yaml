@@ -685,6 +685,21 @@ beads3d:
   affinity: {}
 
 # =============================================================================
+# TLS — wildcard cert via cert-manager (Let's Encrypt + Route53 DNS-01)
+# Creates a cert-manager Certificate and a DNSEndpoint for the wildcard record.
+# Uses the NLB for TLS passthrough to Traefik (websecure entrypoint).
+# =============================================================================
+tls:
+  enabled: false
+  # Wildcard domain for the certificate
+  domainName: ""  # e.g. "*.gasboat.app.e2e.dev.fics.ai"
+  # cert-manager ClusterIssuer to use
+  issuer: "letsencrypt-production"
+  # DNS: creates a Route53 wildcard record via external-dns DNSEndpoint CRD
+  dns:
+    target: ""  # NLB hostname for TLS passthrough
+
+# =============================================================================
 # Landing Page — static landing page with links to all gasboat services
 # Served by nginx from a ConfigMap-mounted HTML file.
 # =============================================================================

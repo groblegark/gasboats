@@ -29,6 +29,10 @@ spec:
         - name: {{ $fullname }}-basicauth
         {{- end }}
       {{- end }}
+  {{- if .Values.tls.enabled }}
+  tls:
+    secretName: {{ include "gasboat.fullname" . }}-wildcard-tls
+  {{- end }}
 {{- if .Values.beads3d.ingress.ipWhitelist.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
