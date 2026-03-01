@@ -685,6 +685,46 @@ beads3d:
   affinity: {}
 
 # =============================================================================
+# Landing Page — static landing page with links to all gasboat services
+# Served by nginx from a ConfigMap-mounted HTML file.
+# =============================================================================
+landing:
+  enabled: false
+
+  image:
+    repository: nginx
+    tag: "1-alpine"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  ingress:
+    enabled: false
+    host: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
 # JIRA Bridge — standalone beads→JIRA sync bridge
 # Polls JIRA for new tickets, creates task beads, and syncs MR links/status
 # back to JIRA. Runs independently from the agent controller.

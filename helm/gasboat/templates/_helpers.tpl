@@ -387,3 +387,28 @@ NATS URL — returns nats://{svc}:4222 when nats.enabled, else empty string.
 {{- printf "nats://%s:4222" (include "gasboat.nats.fullname" .) -}}
 {{- end -}}
 {{- end }}
+
+{{/* ===== Landing Page component helpers ===== */}}
+
+{{/*
+Landing Page fully qualified name
+*/}}
+{{- define "gasboat.landing.fullname" -}}
+{{- printf "%s-landing" (include "gasboat.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Landing Page labels
+*/}}
+{{- define "gasboat.landing.labels" -}}
+{{ include "gasboat.labels" . }}
+app.kubernetes.io/component: landing
+{{- end }}
+
+{{/*
+Landing Page selector labels
+*/}}
+{{- define "gasboat.landing.selectorLabels" -}}
+{{ include "gasboat.selectorLabels" . }}
+app.kubernetes.io/component: landing
+{{- end }}
