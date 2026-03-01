@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -37,6 +38,15 @@ func Execute(ctx context.Context, command string, timeoutSec int, cwd string, en
 	defer cancel()
 
 	cmd := exec.CommandContext(hookCtx, "sh", "-c", command) //nolint:gosec // hook commands are from trusted advice config
+
+	// Use a process group so we can kill the entire tree on timeout.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// Kill the entire process group (negative PID).
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 2 * time.Second
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
