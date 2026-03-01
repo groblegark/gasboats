@@ -251,7 +251,7 @@ beads3d:
   enabled: true
   image:
     pullPolicy: Always
-    repository: ghcr.io/groblegark/beads3d
+    repository: ghcr.io/groblegark/kbeads3d
     tag: latest
   imagePullSecrets:
     - name: ghcr-registry
