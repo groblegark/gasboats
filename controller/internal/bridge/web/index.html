@@ -282,7 +282,7 @@ async function loadDecisions() {
 
 function connectSSE() {
   const statusEl = document.getElementById('sse-status');
-  const src = new EventSource(SSE_URL);
+  const src = new EventSource(SSE_URL, { withCredentials: true });
 
   src.onopen = () => {
     statusEl.textContent = 'live';
