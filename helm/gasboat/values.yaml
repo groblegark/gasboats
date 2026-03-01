@@ -639,6 +639,15 @@ beads3d:
   # Auto-wired to the in-chart beads daemon when empty.
   daemonURL: ""
 
+  # ExternalSecret for beads daemon auth token (creates a K8s Secret from AWS Secrets Manager)
+  externalSecret:
+    enabled: false
+    secretStoreName: "secretstore"
+    secretStoreKind: ClusterSecretStore
+    refreshInterval: "1h"
+    remoteRef: ""
+    property: "token"
+
   service:
     type: ClusterIP
     port: 80
