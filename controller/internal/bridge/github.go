@@ -93,9 +93,8 @@ func calverKey(tag string) (year, doy, build int, ok bool) {
 }
 
 // GetLatestTag returns the most recent calver tag for the repo.
-// It fetches up to 100 tags, picks the highest calver tag by
-// (year, dayOfYear, build), and falls back to the first tag if
-// none match the calver format.
+// It fetches up to 100 tags and picks the highest calver tag by
+// (year, dayOfYear, build). Returns an error if no calver tags exist.
 func (c *GitHubClient) GetLatestTag(ctx context.Context, repo RepoRef) (string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=100", c.baseURL, repo.Owner, repo.Repo)
 	var tags []ghTag
@@ -118,7 +117,7 @@ func (c *GitHubClient) GetLatestTag(ctx context.Context, repo RepoRef) (string, 
 		}
 	}
 	if len(cv) == 0 {
-		return tags[0].Name, nil
+		return "", fmt.Errorf("no calver tags found for %s", repo)
 	}
 
 	sort.Slice(cv, func(i, j int) bool {

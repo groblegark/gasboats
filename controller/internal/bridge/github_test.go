@@ -81,13 +81,13 @@ func TestGetLatestTag_MixedVPrefixCalver(t *testing.T) {
 	}
 }
 
-func TestGetLatestTag_FallbackNoCalver(t *testing.T) {
+func TestGetLatestTag_ErrorNoCalver(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/org/repo/tags" {
 			http.NotFound(w, r)
 			return
 		}
-		// No calver tags — should fall back to the first tag.
+		// No calver tags — should return an error.
 		writeJSON(w, []ghTag{
 			{Name: "v1.2.3"},
 			{Name: "v0.9.0"},
@@ -96,12 +96,9 @@ func TestGetLatestTag_FallbackNoCalver(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(srv.URL, "")
-	tag, err := client.GetLatestTag(context.Background(), RepoRef{Owner: "org", Repo: "repo"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tag != "v1.2.3" {
-		t.Errorf("got tag %q, want v1.2.3", tag)
+	_, err := client.GetLatestTag(context.Background(), RepoRef{Owner: "org", Repo: "repo"})
+	if err == nil {
+		t.Fatal("expected error for no calver tags")
 	}
 }
 
@@ -181,8 +178,8 @@ func TestGetUnreleased(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/org/repo/tags":
-			writeJSON(w, []ghTag{{Name: "v2.0.0"}})
-		case "/repos/org/repo/compare/v2.0.0...main":
+			writeJSON(w, []ghTag{{Name: "2026.60.2"}})
+		case "/repos/org/repo/compare/2026.60.2...main":
 			writeJSON(w, ghCompare{
 				AheadBy: 2,
 				Commits: []struct {
@@ -224,8 +221,8 @@ func TestGetUnreleased(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
-	if result.LatestTag != "v2.0.0" {
-		t.Errorf("got tag %q, want v2.0.0", result.LatestTag)
+	if result.LatestTag != "2026.60.2" {
+		t.Errorf("got tag %q, want 2026.60.2", result.LatestTag)
 	}
 	if result.AheadBy != 2 {
 		t.Errorf("got AheadBy=%d, want 2", result.AheadBy)
@@ -240,7 +237,7 @@ func TestAuthHeader(t *testing.T) {
 		var gotAuth string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
-			writeJSON(w, []ghTag{{Name: "v1.0.0"}})
+			writeJSON(w, []ghTag{{Name: "2026.60.1"}})
 		}))
 		defer srv.Close()
 
@@ -256,7 +253,7 @@ func TestAuthHeader(t *testing.T) {
 		var gotAuth string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
-			writeJSON(w, []ghTag{{Name: "v1.0.0"}})
+			writeJSON(w, []ghTag{{Name: "2026.60.1"}})
 		}))
 		defer srv.Close()
 

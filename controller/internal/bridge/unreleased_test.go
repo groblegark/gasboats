@@ -13,8 +13,8 @@ func TestGetUnreleasedData(t *testing.T) {
 	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/org/repo1/tags":
-			writeJSON(w, []ghTag{{Name: "v1.0.0"}})
-		case "/repos/org/repo1/compare/v1.0.0...main":
+			writeJSON(w, []ghTag{{Name: "2026.59.1"}})
+		case "/repos/org/repo1/compare/2026.59.1...main":
 			writeJSON(w, ghCompare{
 				AheadBy: 2,
 				Commits: []struct {
@@ -45,8 +45,8 @@ func TestGetUnreleasedData(t *testing.T) {
 				},
 			})
 		case "/repos/org/repo2/tags":
-			writeJSON(w, []ghTag{{Name: "v2.0.0"}})
-		case "/repos/org/repo2/compare/v2.0.0...main":
+			writeJSON(w, []ghTag{{Name: "2026.60.1"}})
+		case "/repos/org/repo2/compare/2026.60.1...main":
 			writeJSON(w, ghCompare{AheadBy: 0})
 		default:
 			http.NotFound(w, r)
@@ -80,8 +80,8 @@ func TestGetUnreleasedData(t *testing.T) {
 	if r1.AheadBy != 2 {
 		t.Errorf("repo1: got aheadBy=%d, want 2", r1.AheadBy)
 	}
-	if r1.LatestTag != "v1.0.0" {
-		t.Errorf("repo1: got latestTag=%q, want v1.0.0", r1.LatestTag)
+	if r1.LatestTag != "2026.59.1" {
+		t.Errorf("repo1: got latestTag=%q, want 2026.59.1", r1.LatestTag)
 	}
 	if len(r1.Commits) != 2 {
 		t.Fatalf("repo1: got %d commits, want 2", len(r1.Commits))
@@ -147,8 +147,8 @@ func TestHandleUnreleased(t *testing.T) {
 	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/org/repo/tags":
-			writeJSON(w, []ghTag{{Name: "v1.0.0"}})
-		case "/repos/org/repo/compare/v1.0.0...main":
+			writeJSON(w, []ghTag{{Name: "2026.59.1"}})
+		case "/repos/org/repo/compare/2026.59.1...main":
 			writeJSON(w, ghCompare{AheadBy: 1, Commits: []struct {
 				SHA    string `json:"sha"`
 				Commit struct {
