@@ -1,4 +1,5 @@
 {{- if .Values.beads3d.enabled }}
+{{- $hasDaemonAuth := or .Values.beads3d.daemonToken .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,6 +23,30 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if $hasDaemonAuth }}
+      initContainers:
+        - name: write-auth-snippet
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              TOKEN="${DAEMON_TOKEN:-$(cat /run/secrets/daemon-token/token)}"
+              mkdir -p /etc/nginx/snippets
+              printf 'proxy_set_header Authorization "Bearer %s";\n' "${TOKEN}" > /etc/nginx/snippets/daemon-auth.conf
+          {{- if .Values.beads3d.daemonToken }}
+          env:
+            - name: DAEMON_TOKEN
+              value: {{ .Values.beads3d.daemonToken | quote }}
+          {{- end }}
+          volumeMounts:
+            - name: auth-snippet
+              mountPath: /etc/nginx/snippets
+            {{- if or .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
+            - name: daemon-token
+              mountPath: /run/secrets/daemon-token
+              readOnly: true
+            {{- end }}
+      {{- end }}
       containers:
         - name: beads3d
           image: "{{ .Values.beads3d.image.repository }}:{{ .Values.beads3d.image.tag }}"
@@ -34,6 +59,11 @@ spec:
             - name: nginx-config
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
+            {{- if $hasDaemonAuth }}
+            - name: auth-snippet
+              mountPath: /etc/nginx/snippets
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /
@@ -52,6 +82,15 @@ spec:
         - name: nginx-config
           configMap:
             name: {{ include "gasboat.beads3d.fullname" . }}-nginx
+        {{- if $hasDaemonAuth }}
+        - name: auth-snippet
+          emptyDir: {}
+        {{- end }}
+        {{- if or .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
+        - name: daemon-token
+          secret:
+            secretName: {{ .Values.beads3d.daemonTokenSecret | default (printf "%s-daemon-token" (include "gasboat.beads3d.fullname" .)) }}
+        {{- end }}
       {{- with .Values.beads3d.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
