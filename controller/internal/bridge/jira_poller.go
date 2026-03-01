@@ -237,6 +237,7 @@ func (p *JiraPoller) createBeadFromIssue(ctx context.Context, issue JiraIssue) (
 	beadID, err := p.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
 		Title:       title,
 		Type:        "task",
+		Kind:        "issue",
 		Description: description,
 		Labels:      labels,
 		Priority:    priority,
