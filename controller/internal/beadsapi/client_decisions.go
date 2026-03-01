@@ -51,7 +51,7 @@ type decisionDetailJSON struct {
 
 func (d *decisionDetailJSON) toDetail() *DecisionDetail {
 	dd := &DecisionDetail{}
-	if d.Decision != nil {
+	if d.Decision != nil && d.Decision.ID != "" {
 		dd.Decision = d.Decision.toDetail()
 	}
 	if d.Issue != nil {

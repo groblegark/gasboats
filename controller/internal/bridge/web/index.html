@@ -267,7 +267,9 @@ async function loadDecisions() {
     const data = await resp.json();
     decisions = {};
     (data.decisions || []).forEach(d => {
-      const dec = d.decision || d;
+      // The daemon returns the full bead in "issue"; "decision" only has
+      // metadata (prompt, options) without bead identity fields (id, status).
+      const dec = d.issue || d.decision || d;
       decisions[dec.id] = dec;
     });
     renderList();
