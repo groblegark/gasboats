@@ -77,6 +77,7 @@ func TestStatus_IsValid(t *testing.T) {
 		{StatusInProgress, true},
 		{StatusDeferred, true},
 		{StatusClosed, true},
+		{StatusBlocked, true},
 		{Status(""), false},
 		{Status("deleted"), false},
 	} {
@@ -111,6 +112,10 @@ func TestKindFor(t *testing.T) {
 		{TypeFeature, KindIssue},
 		{TypeChore, KindIssue},
 		{TypeBug, KindIssue},
+		{TypeAdvice, KindData},
+		{TypeJack, KindData},
+		{TypeDecision, Kind("")},
+		{TypeReport, Kind("")},
 		{BeadType("workflow"), Kind("")},
 		{BeadType(""), Kind("")},
 	} {
@@ -136,6 +141,26 @@ func TestDependencyType_IsValid(t *testing.T) {
 	} {
 		if got := tc.dep.IsValid(); got != tc.want {
 			t.Errorf("DependencyType(%q).IsValid() = %v, want %v", tc.dep, got, tc.want)
+		}
+	}
+}
+
+func TestIsValidJackAction(t *testing.T) {
+	for _, tc := range []struct {
+		action string
+		want   bool
+	}{
+		{"edit", true},
+		{"exec", true},
+		{"patch", true},
+		{"delete", true},
+		{"create", true},
+		{"", false},
+		{"drop", false},
+		{"Edit", false}, // case-sensitive
+	} {
+		if got := IsValidJackAction(tc.action); got != tc.want {
+			t.Errorf("IsValidJackAction(%q) = %v, want %v", tc.action, got, tc.want)
 		}
 	}
 }
