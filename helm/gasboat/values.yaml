@@ -632,7 +632,7 @@ beads3d:
 
   image:
     repository: ghcr.io/groblegark/beads3d
-    tag: "latest"
+    tag: "2026.224.1"
     pullPolicy: IfNotPresent
 
   # Beads daemon URL for nginx reverse proxy (e.g. "http://release-beads:8080")

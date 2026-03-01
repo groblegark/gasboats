@@ -41,3 +41,10 @@ agents:
   enabled: true
   coopMaxPods: 4
   coopBurstLimit: 2
+
+# =============================================================================
+# Beads3D (disabled by default; pin image tag when enabled)
+# =============================================================================
+beads3d:
+  image:
+    tag: "2026.224.1"
