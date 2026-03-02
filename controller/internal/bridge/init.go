@@ -146,6 +146,12 @@ func configs() map[string]any {
 				{Name: "jira_attachment_count", Type: "string"},
 				{Name: "jira_has_images", Type: "string"},
 				{Name: "jira_has_video", Type: "string"},
+				// GitLab bridge fields — set by gitlab-bridge when MR events are detected.
+				{Name: "mr_merged", Type: "boolean"},
+				{Name: "mr_state", Type: "enum", Values: []string{"opened", "closed", "merged", "locked"}},
+				{Name: "mr_pipeline_status", Type: "string"},
+				{Name: "gitlab_mr_iid", Type: "string"},
+				{Name: "gitlab_project_id", Type: "string"},
 			},
 		},
 
