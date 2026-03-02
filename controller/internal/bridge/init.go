@@ -75,7 +75,7 @@ func configs() map[string]any {
 				// Agent identity.
 				{Name: "project", Type: "string"},
 				{Name: "mode", Type: "string"},
-				{Name: "role", Type: "enum", Values: []string{"captain", "crew", "job"}},
+				{Name: "role", Type: "string"},
 				{Name: "agent", Type: "string"},
 				// Agent lifecycle state written back by the controller.
 				{Name: "agent_state", Type: "enum", Values: []string{"spawning", "working", "done", "failed"}},
@@ -213,6 +213,15 @@ func configs() map[string]any {
 			Sort:    "updated_at",
 			Columns: []string{"id", "title", "status", "assignee", "fields"},
 		},
+		"view:agents:reviewers": ViewConfig{
+			Filter: ViewFilter{
+				Status: []string{"open", "in_progress", "blocked", "deferred"},
+				Type:   []string{"agent"},
+				Labels: []string{"role:reviewer"},
+			},
+			Sort:    "updated_at",
+			Columns: []string{"id", "title", "status", "assignee", "fields"},
+		},
 		"view:decisions:pending": ViewConfig{
 			Filter: ViewFilter{
 				Status: []string{"open", "in_progress", "blocked", "deferred"},
@@ -256,6 +265,14 @@ func configs() map[string]any {
 		// Crew: persistent worker — inbox and blockers only.
 		// Hooked work (if any) is surfaced by prime.sh, not here.
 		"context:crew": ContextConfig{
+			Sections: []ContextSection{
+				{Header: "## Inbox", View: "mail:inbox", Format: "list", Fields: []string{"id", "title", "assignee"}},
+				{Header: "## Pending Decisions", View: "decisions:pending", Format: "list", Fields: []string{"id", "title", "status"}},
+			},
+		},
+		// Reviewer: MR shepherd — same base dashboard as crew; the
+		// advice beads define the actual review workflow.
+		"context:reviewer": ContextConfig{
 			Sections: []ContextSection{
 				{Header: "## Inbox", View: "mail:inbox", Format: "list", Fields: []string{"id", "title", "assignee"}},
 				{Header: "## Pending Decisions", View: "decisions:pending", Format: "list", Fields: []string{"id", "title", "status"}},
