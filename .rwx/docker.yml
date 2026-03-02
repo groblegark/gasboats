@@ -302,7 +302,14 @@ tasks:
       crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
       crane mutate "${REPO}:${TAG}" --entrypoint /controller --user nobody -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
-      echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      # Also tag with Chart appVersion so helm deploys can find the image
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+        echo "Pushed ${REPO}:${TAG}, ${REPO}:latest, ${REPO}:${APP_VERSION}"
+      else
+        echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      fi
     env:
       REF_NAME: ${{ init.ref-name }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -328,7 +335,11 @@ tasks:
       crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
       crane mutate "${REPO}:${TAG}" --entrypoint /slack-bridge --user nobody -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
-      echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -354,7 +365,11 @@ tasks:
       crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
       crane mutate "${REPO}:${TAG}" --entrypoint /jira-bridge --user nobody -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
-      echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -380,7 +395,11 @@ tasks:
       crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
       crane mutate "${REPO}:${TAG}" --entrypoint /advice-viewer --user nobody -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
-      echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -794,7 +813,11 @@ tasks:
         --workdir /home/agent/workspace \
         -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
-      echo "Pushed ${REPO}:${TAG} and ${REPO}:latest"
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -816,6 +839,10 @@ tasks:
       TAG="${TAG#refs/heads/}"
 
       crane cp ghcr.io/groblegark/coop:coopmux ghcr.io/groblegark/coop:${TAG}
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag ghcr.io/groblegark/coop:${TAG} "$APP_VERSION"
+      fi
       echo "Re-tagged coop:coopmux → coop:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
@@ -831,6 +858,10 @@ tasks:
       TAG="${TAG#refs/heads/}"
 
       crane cp ghcr.io/groblegark/kbeads:latest ghcr.io/groblegark/kbeads:${TAG}
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag ghcr.io/groblegark/kbeads:${TAG} "$APP_VERSION"
+      fi
       echo "Re-tagged kbeads:latest → kbeads:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
