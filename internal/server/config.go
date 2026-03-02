@@ -123,7 +123,8 @@ var builtinConfigs = map[string]*model.Config{
 		"fields": [
 			{"name": "formula_id",   "type": "string"},
 			{"name": "template_id",  "type": "string"},
-			{"name": "applied_vars", "type": "json"}
+			{"name": "applied_vars", "type": "json"},
+			{"name": "ephemeral",    "type": "boolean"}
 		]
 	}`)},
 	"type:template": {Key: "type:template", Value: json.RawMessage(`{
@@ -138,7 +139,8 @@ var builtinConfigs = map[string]*model.Config{
 		"fields": [
 			{"name": "formula_id",   "type": "string"},
 			{"name": "template_id",  "type": "string"},
-			{"name": "applied_vars", "type": "json"}
+			{"name": "applied_vars", "type": "json"},
+			{"name": "ephemeral",    "type": "boolean"}
 		]
 	}`)},
 	"type:mention":  {Key: "type:mention", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
