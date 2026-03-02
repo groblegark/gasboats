@@ -157,6 +157,15 @@ func beadField(b *model.Bead, col string) string {
 	case "labels":
 		return strings.Join(b.Labels, ",")
 	default:
+		// Check typed fields (e.g., jira_key, jira_url).
+		if len(b.Fields) > 0 {
+			var fields map[string]string
+			if json.Unmarshal(b.Fields, &fields) == nil {
+				if v, ok := fields[col]; ok {
+					return v
+				}
+			}
+		}
 		return ""
 	}
 }

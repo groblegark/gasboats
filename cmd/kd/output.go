@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -36,6 +37,20 @@ func printBeadTable(bead *model.Bead) {
 	}
 	if len(bead.Labels) > 0 {
 		fmt.Printf("Labels:      %s\n", strings.Join(bead.Labels, ", "))
+	}
+	if len(bead.Fields) > 0 {
+		var fields map[string]string
+		if json.Unmarshal(bead.Fields, &fields) == nil && len(fields) > 0 {
+			keys := make([]string, 0, len(fields))
+			for k := range fields {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			fmt.Println("Fields:")
+			for _, k := range keys {
+				fmt.Printf("  %-24s %s\n", k+":", fields[k])
+			}
+		}
 	}
 	fmt.Printf("Created By:  %s\n", bead.CreatedBy)
 	if !bead.CreatedAt.IsZero() {
