@@ -144,6 +144,103 @@ func (c *GitLabClient) GetPipeline(ctx context.Context, projectID, pipelineID in
 	return &pip, nil
 }
 
+// GitLabJob represents a CI job within a pipeline.
+type GitLabJob struct {
+	ID         int            `json:"id"`
+	Name       string         `json:"name"`
+	Stage      string         `json:"stage"`
+	Status     string         `json:"status"` // created, pending, running, success, failed, canceled, skipped
+	WebURL     string         `json:"web_url"`
+	Artifacts  []GitLabArtifact `json:"artifacts"`
+	Pipeline   GitLabPipRef   `json:"pipeline"`
+	FinishedAt *string        `json:"finished_at"`
+}
+
+// GitLabArtifact represents an artifact archive in a CI job.
+type GitLabArtifact struct {
+	FileType   string `json:"file_type"`
+	Filename   string `json:"filename"`
+	Size       int64  `json:"size"`
+	FileFormat string `json:"file_format"`
+}
+
+// ListPipelineJobs lists all jobs for a pipeline.
+// GET /projects/:id/pipelines/:pipeline_id/jobs
+func (c *GitLabClient) ListPipelineJobs(ctx context.Context, projectID, pipelineID int) ([]GitLabJob, error) {
+	path := fmt.Sprintf("/api/v4/projects/%d/pipelines/%d/jobs?per_page=100", projectID, pipelineID)
+	var jobs []GitLabJob
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &jobs); err != nil {
+		return nil, fmt.Errorf("GitLab list jobs for pipeline %d/%d: %w", projectID, pipelineID, err)
+	}
+	return jobs, nil
+}
+
+// ListPipelineJobsByPath lists all jobs for a pipeline using an encoded project path.
+func (c *GitLabClient) ListPipelineJobsByPath(ctx context.Context, projectPath string, pipelineID int) ([]GitLabJob, error) {
+	encoded := url.PathEscape(projectPath)
+	path := fmt.Sprintf("/api/v4/projects/%s/pipelines/%d/jobs?per_page=100", encoded, pipelineID)
+	var jobs []GitLabJob
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &jobs); err != nil {
+		return nil, fmt.Errorf("GitLab list jobs for pipeline %s/%d: %w", projectPath, pipelineID, err)
+	}
+	return jobs, nil
+}
+
+// GetJobLog fetches the log (trace) output for a job.
+// GET /projects/:id/jobs/:job_id/trace
+func (c *GitLabClient) GetJobLog(ctx context.Context, projectPath string, jobID int) (string, error) {
+	encoded := url.PathEscape(projectPath)
+	reqURL := fmt.Sprintf("%s/api/v4/projects/%s/jobs/%d/trace", c.baseURL, encoded, jobID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create job log request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch job log: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("job log returned %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read job log: %w", err)
+	}
+	return string(data), nil
+}
+
+// DownloadJobArtifacts downloads the artifact archive for a job.
+// GET /projects/:id/jobs/:job_id/artifacts
+func (c *GitLabClient) DownloadJobArtifacts(ctx context.Context, projectPath string, jobID int, w io.Writer) error {
+	encoded := url.PathEscape(projectPath)
+	reqURL := fmt.Sprintf("%s/api/v4/projects/%s/jobs/%d/artifacts", c.baseURL, encoded, jobID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("create artifacts request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch artifacts: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("artifacts download returned %d", resp.StatusCode)
+	}
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("download artifacts: %w", err)
+	}
+	return nil
+}
+
 // MRRef holds the parsed components of a GitLab MR URL.
 type MRRef struct {
 	ProjectPath string // e.g., "PiHealth/CoreFICS/fics-helm-chart"
