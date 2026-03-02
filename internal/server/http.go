@@ -39,6 +39,7 @@ func (s *BeadsServer) NewHTTPHandler(authToken string) http.Handler {
 	mux.HandleFunc("GET /v1/blocked", s.handleGetBlocked)
 	mux.HandleFunc("POST /v1/hooks/execute", s.handleExecuteHooks)
 	mux.HandleFunc("POST /v1/hooks/emit", s.handleHookEmit)
+	mux.HandleFunc("POST /v1/hooks/publish", s.handleHookPublish)
 	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /v1/bus/events", s.handleBusEvents)
 	mux.HandleFunc("GET /v1/bus/status", s.handleBusStatus)

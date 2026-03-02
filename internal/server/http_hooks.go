@@ -151,6 +151,41 @@ func (s *BeadsServer) handleHookEmit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// hookPublishRequest is the JSON body for POST /v1/hooks/publish.
+type hookPublishRequest struct {
+	Subject string          `json:"subject"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// handleHookPublish handles POST /v1/hooks/publish.
+// It publishes a pre-built hook event payload to the NATS HOOK_EVENTS stream
+// on the given subject. This allows the hook relay to publish events through
+// the daemon's persistent NATS connection instead of opening a new connection
+// per event.
+func (s *BeadsServer) handleHookPublish(w http.ResponseWriter, r *http.Request) {
+	var req hookPublishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Subject == "" {
+		writeError(w, http.StatusBadRequest, "subject is required")
+		return
+	}
+	if len(req.Payload) == 0 {
+		writeError(w, http.StatusBadRequest, "payload is required")
+		return
+	}
+
+	if s.bus == nil {
+		writeError(w, http.StatusServiceUnavailable, "event bus not configured")
+		return
+	}
+
+	s.bus.PublishRaw(req.Subject, req.Payload)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // executeHooksRequest is the JSON body for POST /v1/hooks/execute.
 type executeHooksRequest struct {
 	AgentID string `json:"agent_id"`

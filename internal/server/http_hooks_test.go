@@ -5,8 +5,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/groblegark/kbeads/internal/eventbus"
 	"github.com/groblegark/kbeads/internal/model"
+	"github.com/nats-io/nats.go"
 )
+
+// publishedMsg records a message published to the mock JetStream.
+type publishedMsg struct {
+	subject string
+	data    []byte
+}
+
+// mockJetStream is a minimal mock of nats.JetStreamContext that records
+// Publish calls. Unimplemented methods will panic if called.
+type mockJetStream struct {
+	nats.JetStreamContext
+	published []publishedMsg
+}
+
+func (m *mockJetStream) Publish(subject string, data []byte, _ ...nats.PubOpt) (*nats.PubAck, error) {
+	m.published = append(m.published, publishedMsg{subject: subject, data: data})
+	return &nats.PubAck{Stream: "HOOK_EVENTS", Sequence: uint64(len(m.published))}, nil
+}
+
+// newTestBusWithJS creates an event bus backed by a mock JetStream, returning
+// both so tests can inspect published messages.
+func newTestBusWithJS() (*eventbus.Bus, *mockJetStream) {
+	js := &mockJetStream{}
+	bus := eventbus.New()
+	bus.SetJetStream(js)
+	return bus, js
+}
 
 // TestHandleHookEmit_NoAgentBeadID verifies that a hook emit without
 // agent_bead_id returns immediately with no block (no gates to check).
@@ -117,6 +146,81 @@ func TestHandleHookEmit_NilPresence(t *testing.T) {
 		"actor":             "test-agent",
 	})
 	requireStatus(t, rec, 200)
+}
+
+// TestHandleHookPublish_Success verifies that a valid publish request
+// returns 204 and publishes to JetStream.
+func TestHandleHookPublish_Success(t *testing.T) {
+	srv, _, h := newTestServer()
+
+	bus, js := newTestBusWithJS()
+	srv.SetBus(bus)
+
+	rec := doJSON(t, h, "POST", "/v1/hooks/publish", map[string]any{
+		"subject": "hooks.worker-1.PreToolUse",
+		"payload": map[string]any{
+			"agent": "worker-1",
+			"event": "PreToolUse",
+			"ts":    "2026-03-02T07:30:00Z",
+		},
+	})
+	requireStatus(t, rec, 204)
+
+	if len(js.published) != 1 {
+		t.Fatalf("expected 1 published message, got %d", len(js.published))
+	}
+	if js.published[0].subject != "hooks.worker-1.PreToolUse" {
+		t.Errorf("expected subject hooks.worker-1.PreToolUse, got %s", js.published[0].subject)
+	}
+}
+
+// TestHandleHookPublish_MissingSubject verifies that a missing subject
+// returns 400.
+func TestHandleHookPublish_MissingSubject(t *testing.T) {
+	srv, _, h := newTestServer()
+	bus, _ := newTestBusWithJS()
+	srv.SetBus(bus)
+
+	rec := doJSON(t, h, "POST", "/v1/hooks/publish", map[string]any{
+		"payload": map[string]any{"event": "Stop"},
+	})
+	requireStatus(t, rec, 400)
+}
+
+// TestHandleHookPublish_MissingPayload verifies that a missing payload
+// returns 400.
+func TestHandleHookPublish_MissingPayload(t *testing.T) {
+	srv, _, h := newTestServer()
+	bus, _ := newTestBusWithJS()
+	srv.SetBus(bus)
+
+	rec := doJSON(t, h, "POST", "/v1/hooks/publish", map[string]any{
+		"subject": "hooks.worker-1.Stop",
+	})
+	requireStatus(t, rec, 400)
+}
+
+// TestHandleHookPublish_InvalidJSON verifies that invalid JSON returns 400.
+func TestHandleHookPublish_InvalidJSON(t *testing.T) {
+	_, _, h := newTestServer()
+
+	req := httptest.NewRequest("POST", "/v1/hooks/publish", strings.NewReader("{bad json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	requireStatus(t, rec, 400)
+}
+
+// TestHandleHookPublish_NoBus verifies that publishing without a configured
+// event bus returns 503.
+func TestHandleHookPublish_NoBus(t *testing.T) {
+	_, _, h := newTestServer()
+
+	rec := doJSON(t, h, "POST", "/v1/hooks/publish", map[string]any{
+		"subject": "hooks.worker-1.Stop",
+		"payload": map[string]any{"event": "Stop"},
+	})
+	requireStatus(t, rec, 503)
 }
 
 // TestHandleExecuteHooks_Valid verifies a valid request returns 200.
