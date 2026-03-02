@@ -412,3 +412,18 @@ Landing Page selector labels
 {{ include "gasboat.selectorLabels" . }}
 app.kubernetes.io/component: landing
 {{- end }}
+
+{{/* ===== Pod scheduling helpers ===== */}}
+
+{{/*
+Merged nodeSelector — combines global.nodeSelector with per-component nodeSelector.
+Per-component values take precedence over global values.
+Usage: include "gasboat.nodeSelector" (dict "local" .Values.beads.nodeSelector "global" .Values.global.nodeSelector)
+*/}}
+{{- define "gasboat.nodeSelector" -}}
+{{- $merged := merge (deepCopy (.local | default dict)) (.global | default dict) -}}
+{{- if $merged }}
+nodeSelector:
+  {{- toYaml $merged | nindent 2 }}
+{{- end }}
+{{- end }}

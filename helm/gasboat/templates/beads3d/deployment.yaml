@@ -91,10 +91,7 @@ spec:
           secret:
             secretName: {{ .Values.beads3d.daemonTokenSecret | default (printf "%s-daemon-token" (include "gasboat.beads3d.fullname" .)) }}
         {{- end }}
-      {{- with .Values.beads3d.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.beads3d.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.beads3d.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

@@ -160,10 +160,7 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-      {{- with .Values.slackBridge.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.slackBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.slackBridge.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

@@ -74,10 +74,7 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.adviceViewer.resources | nindent 12 }}
-      {{- with .Values.adviceViewer.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.adviceViewer.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.adviceViewer.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

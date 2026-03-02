@@ -83,10 +83,7 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.beads.resources | nindent 12 }}
-      {{- with .Values.beads.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.beads.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.beads.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}

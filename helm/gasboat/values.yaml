@@ -25,6 +25,12 @@ global:
   basicAuth:
     secret: ""
 
+  # Global nodeSelector applied to all pods. Per-component nodeSelector values
+  # are merged on top (component values take precedence).
+  # Default: schedule on amd64 nodes (gasboat images are amd64-only).
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
 # =============================================================================
 # Registry Pull Secrets (ExternalSecrets for private container registries)
 # =============================================================================

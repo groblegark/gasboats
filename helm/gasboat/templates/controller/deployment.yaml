@@ -196,10 +196,7 @@ spec:
             # Slack env vars removed — now handled by slack-bridge container (bd-8x8fy).
           resources:
             {{- toYaml .Values.agents.resources | nindent 12 }}
-      {{- with .Values.agents.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.agents.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.agents.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}

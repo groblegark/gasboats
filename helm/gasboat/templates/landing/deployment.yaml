@@ -55,10 +55,7 @@ spec:
         - name: nginx-config
           configMap:
             name: {{ include "gasboat.landing.fullname" . }}-nginx
-      {{- with .Values.landing.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.landing.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.landing.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

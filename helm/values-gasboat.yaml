@@ -46,8 +46,6 @@ agents:
   gitlabTokenSecret: gitlab-token
   image:
     repository: ghcr.io/groblegark/gasboat/controller
-  nodeSelector:
-    kubernetes.io/arch: amd64
   rwxAccessTokenExternalSecret:
     enabled: true
     refreshInterval: 15m
@@ -69,8 +67,6 @@ beads:
       average: 50
       burst: 100
       enabled: true
-  nodeSelector:
-    kubernetes.io/arch: amd64
   replicaCount: 1
   resources:
     limits:
@@ -105,8 +101,6 @@ coopmux:
       enabled: false
   mux:
     port: 9800
-  nodeSelector:
-    kubernetes.io/arch: amd64
   persistence:
     enabled: true
     size: 100Mi
@@ -126,6 +120,8 @@ externalSecrets:
 global:
   basicAuth:
     secret: gasboat-basic-auth
+  nodeSelector:
+    kubernetes.io/arch: amd64
 imagePullSecrets:
   - name: ghcr-registry
 jiraBridge:
@@ -142,8 +138,6 @@ jiraBridge:
     secretName: jira-api-token
     statuses: To Do,Ready for Development
   logLevel: debug
-  nodeSelector:
-    kubernetes.io/arch: amd64
   replicaCount: 1
   resources:
     limits:
@@ -194,8 +188,6 @@ postgres:
     pullPolicy: IfNotPresent
     repository: postgres
     tag: 17-alpine
-  nodeSelector:
-    kubernetes.io/arch: amd64
   persistence:
     enabled: true
     size: 10Gi
@@ -223,8 +215,6 @@ slackBridge:
   image:
     repository: ghcr.io/groblegark/gasboat/slack-bridge
   logLevel: debug
-  nodeSelector:
-    kubernetes.io/arch: amd64
   replicaCount: 1
   resources:
     limits:

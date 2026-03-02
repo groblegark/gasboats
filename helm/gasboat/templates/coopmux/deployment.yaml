@@ -193,10 +193,7 @@ spec:
           secret:
             secretName: {{ .Values.coopmux.claudeApiKeySecret }}
         {{- end }}
-      {{- with .Values.coopmux.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.coopmux.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.coopmux.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}

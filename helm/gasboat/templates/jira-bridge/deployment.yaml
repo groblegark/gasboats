@@ -107,10 +107,7 @@ spec:
       volumes:
         - name: state
           emptyDir: {}
-      {{- with .Values.jiraBridge.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.jiraBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.jiraBridge.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
