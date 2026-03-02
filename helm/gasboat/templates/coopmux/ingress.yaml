@@ -17,6 +17,15 @@ spec:
     - web
     - websecure
   routes:
+    # Root → /mux redirect
+    - match: Host(`{{ $host }}`) && Path(`/`)
+      kind: Rule
+      priority: 200
+      services:
+        - name: {{ $fullname }}
+          port: {{ $servicePort }}
+      middlewares:
+        - name: {{ $fullname }}-root-redirect
     # Dashboard HTML
     - match: Host(`{{ $host }}`) && PathPrefix(`/mux`)
       kind: Rule
@@ -116,4 +125,17 @@ spec:
     average: {{ .Values.coopmux.ingress.rateLimit.average }}
     burst: {{ .Values.coopmux.ingress.rateLimit.burst }}
 {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-root-redirect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.coopmux.labels" . | nindent 4 }}
+spec:
+  redirectRegex:
+    regex: "^https?://[^/]+/$"
+    replacement: "/mux"
+    permanent: false
 {{- end }}
