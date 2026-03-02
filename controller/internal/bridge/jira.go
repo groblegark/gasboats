@@ -239,6 +239,31 @@ func (c *JiraClient) AddRemoteLink(ctx context.Context, key, linkURL, title stri
 	return nil
 }
 
+// DownloadAttachment fetches a JIRA attachment by URL and writes it to w.
+// The contentURL is the full URL from JiraAttachment.Content.
+func (c *JiraClient) DownloadAttachment(ctx context.Context, contentURL string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, contentURL, nil)
+	if err != nil {
+		return fmt.Errorf("create download request: %w", err)
+	}
+	req.Header.Set("Authorization", c.authHeader)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("writing attachment: %w", err)
+	}
+	return nil
+}
+
 // doJSON performs an HTTP request against the JIRA API with JSON body/response.
 func (c *JiraClient) doJSON(ctx context.Context, method, path string, body any, result any) error {
 	var bodyReader io.Reader
