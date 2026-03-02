@@ -258,6 +258,93 @@ func TestRemoveThreadAgentByAgent(t *testing.T) {
 	}
 }
 
+func TestResolveAgentFromText(t *testing.T) {
+	daemon := newMockDaemon()
+
+	// Seed agent beads.
+	daemon.beads["bd-agent-hq"] = &beadsapi.BeadDetail{
+		ID:    "bd-agent-hq",
+		Title: "crew-gasboat-crew-hq",
+		Type:  "agent",
+		Fields: map[string]string{
+			"agent":   "hq",
+			"project": "gasboat",
+			"role":    "crew",
+		},
+	}
+	daemon.beads["bd-agent-k8s"] = &beadsapi.BeadDetail{
+		ID:    "bd-agent-k8s",
+		Title: "crew-gasboat-crew-k8s",
+		Type:  "agent",
+		Fields: map[string]string{
+			"agent":   "k8s",
+			"project": "gasboat",
+			"role":    "crew",
+		},
+	}
+
+	b := &Bot{
+		daemon: daemon,
+		logger: slog.Default(),
+	}
+
+	tests := []struct {
+		name          string
+		text          string
+		wantAgent     string
+		wantRemaining string
+	}{
+		{
+			name:          "bare agent name",
+			text:          "hq check the logs",
+			wantAgent:     "crew-gasboat-crew-hq",
+			wantRemaining: "check the logs",
+		},
+		{
+			name:          "bare agent name case insensitive",
+			text:          "HQ check the logs",
+			wantAgent:     "crew-gasboat-crew-hq",
+			wantRemaining: "check the logs",
+		},
+		{
+			name:          "full title match",
+			text:          "crew-gasboat-crew-k8s deploy now",
+			wantAgent:     "crew-gasboat-crew-k8s",
+			wantRemaining: "deploy now",
+		},
+		{
+			name:          "no match",
+			text:          "hello everyone",
+			wantAgent:     "",
+			wantRemaining: "hello everyone",
+		},
+		{
+			name:          "agent name only, no remaining text",
+			text:          "k8s",
+			wantAgent:     "crew-gasboat-crew-k8s",
+			wantRemaining: "",
+		},
+		{
+			name:          "empty text",
+			text:          "",
+			wantAgent:     "",
+			wantRemaining: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent, remaining := b.resolveAgentFromText(context.Background(), tt.text)
+			if agent != tt.wantAgent {
+				t.Errorf("agent = %q, want %q", agent, tt.wantAgent)
+			}
+			if remaining != tt.wantRemaining {
+				t.Errorf("remaining = %q, want %q", remaining, tt.wantRemaining)
+			}
+		})
+	}
+}
+
 func TestHandleAppMention_InAgentThread(t *testing.T) {
 	daemon := newMockDaemon()
 

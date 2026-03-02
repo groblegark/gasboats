@@ -14,13 +14,23 @@ import (
 )
 
 // handleAppMention processes @mention events.
-// When a user mentions the bot in an agent's thread or in an agent-specific
-// channel, this creates a tracking bead and nudges the agent with the message.
-// When mentioned in the default channel outside a thread, it creates a broadcast
-// mention bead (unassigned) and nudges all active agents.
+//
+// Routing priority:
+//  1. If the first word after @gasboat matches a known agent name → route to that agent
+//  2. If in a thread bound to an agent → route to that agent
+//  3. If in a channel mapped to an agent via router → route to that agent
+//  4. Otherwise → broadcast mention to all agents
 func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
 	// Ignore bot-triggered mentions.
 	if ev.BotID != "" {
+		return
+	}
+
+	// Strip the bot mention from the message text.
+	text := stripBotMention(ev.Text, b.botUserID)
+	if text == "" {
+		b.logger.Debug("app_mention ignored: empty after stripping mention",
+			"channel", ev.Channel)
 		return
 	}
 
@@ -28,7 +38,15 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	broadcast := false
 	replyTS := ev.ThreadTimeStamp // timestamp to thread the confirmation reply under
 
-	if ev.ThreadTimeStamp == "" {
+	// Priority 1: Check if the first word is an agent name.
+	if resolved, remaining := b.resolveAgentFromText(ctx, text); resolved != "" {
+		agent = resolved
+		text = remaining
+		b.logger.Info("mention: resolved agent from text",
+			"agent", agent, "channel", ev.Channel)
+	}
+
+	if agent == "" && ev.ThreadTimeStamp == "" {
 		// Not in a thread — check if this channel is mapped to an agent via the router.
 		// This handles "@gasboat <message>" in a dedicated agent channel.
 		if b.router != nil {
@@ -41,22 +59,18 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		// Use the mention's own timestamp as the reply anchor so the response
 		// threads back to this message.
 		replyTS = ev.TimeStamp
-	} else {
+	} else if agent == "" {
 		// In a thread — reverse-lookup which agent owns this thread.
 		agent = b.getAgentByThread(ev.Channel, ev.ThreadTimeStamp)
 		if agent == "" {
-			b.logger.Debug("app_mention ignored: not an agent thread",
+			b.logger.Debug("app_mention in unbound thread (thread-spawn candidate)",
 				"channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp)
 			return
 		}
 	}
 
-	// Strip the bot mention from the message text.
-	text := stripBotMention(ev.Text, b.botUserID)
-	if text == "" {
-		b.logger.Debug("app_mention ignored: empty after stripping mention",
-			"channel", ev.Channel, "agent", agent)
-		return
+	if replyTS == "" {
+		replyTS = ev.TimeStamp
 	}
 
 	// Resolve sender display name.
@@ -218,6 +232,40 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 		}
 	}
 	return ""
+}
+
+// resolveAgentFromText checks if the first word of text matches a known active
+// agent name. Matching is case-insensitive and supports both bare names
+// ("crew-k8s") and project-qualified names ("gasboat/crew/k8s").
+// Returns the matched agent identity and the remaining text (with agent name
+// stripped), or ("", text) if no match.
+func (b *Bot) resolveAgentFromText(ctx context.Context, text string) (string, string) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return "", text
+	}
+	candidate := words[0]
+
+	agents, err := b.daemon.ListAgentBeads(ctx)
+	if err != nil {
+		b.logger.Debug("failed to list agents for name resolution", "error", err)
+		return "", text
+	}
+
+	candidateLower := strings.ToLower(candidate)
+	for _, a := range agents {
+		// Match against the short agent name (e.g., "crew-k8s").
+		if strings.EqualFold(a.AgentName, candidateLower) {
+			remaining := strings.TrimSpace(strings.TrimPrefix(text, candidate))
+			return a.Title, remaining
+		}
+		// Match against the full title/identity (e.g., "crew-gasboat-crew-k8s").
+		if strings.EqualFold(a.Title, candidateLower) {
+			remaining := strings.TrimSpace(strings.TrimPrefix(text, candidate))
+			return a.Title, remaining
+		}
+	}
+	return "", text
 }
 
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
