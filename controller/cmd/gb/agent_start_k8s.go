@@ -85,13 +85,11 @@ func runAgentStartK8s(cmd *cobra.Command, args []string) error {
 
 	credMode := provisionCredentials(claudeStateDir)
 
+	// Materialize user settings + workspace hooks from config beads.
+	// runSetupClaude writes user-level settings (from beads or defaults) to
+	// claudeDir and workspace hooks to workspace/.claude/settings.json.
 	claudeDir := homeDir() + "/.claude"
-	if err := writeClaudeSettings(claudeDir); err != nil {
-		fmt.Printf("[gb agent start] warning: write claude settings: %v\n", err)
-	}
-
-	// Hook materialization via gb setup claude (falls back to defaults).
-	if err := runSetupClaude(context.Background(), workspace, cfg.role); err != nil {
+	if err := runSetupClaude(context.Background(), workspace, cfg.role, claudeDir); err != nil {
 		fmt.Printf("[gb agent start] config beads not found, installing default hooks\n")
 		if err2 := runSetupClaudeDefaults(workspace); err2 != nil {
 			fmt.Printf("[gb agent start] warning: could not write workspace .claude/settings.json: %v\n", err2)
