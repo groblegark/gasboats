@@ -17,23 +17,9 @@ func (b *Bot) NotifyBeadCreated(ctx context.Context, bead BeadEvent) {
 
 	b.recordActivity(agent)
 
-	if !b.agentThreadingEnabled() {
-		return
-	}
-
-	threadTS := b.getAgentThreadTS(agent)
-	if threadTS == "" {
-		return
-	}
-
-	channel := b.resolveChannel(agent)
 	title := truncateText(bead.Title, 60)
 	text := fmt.Sprintf(":pencil2: Created %s: *%s*", bead.Type, title)
-
-	_, _, _ = b.api.PostMessageContext(ctx, channel,
-		slack.MsgOptionText(text, false),
-		slack.MsgOptionTS(threadTS),
-	)
+	b.postAgentThreadMessage(ctx, agent, text)
 }
 
 // NotifyBeadClaimed posts a notification in the claiming agent's Slack thread.
@@ -45,23 +31,9 @@ func (b *Bot) NotifyBeadClaimed(ctx context.Context, bead BeadEvent) {
 
 	b.recordActivity(agent)
 
-	if !b.agentThreadingEnabled() {
-		return
-	}
-
-	threadTS := b.getAgentThreadTS(agent)
-	if threadTS == "" {
-		return
-	}
-
-	channel := b.resolveChannel(agent)
 	title := truncateText(bead.Title, 60)
 	text := fmt.Sprintf(":arrow_right: Claimed %s: *%s*", bead.Type, title)
-
-	_, _, _ = b.api.PostMessageContext(ctx, channel,
-		slack.MsgOptionText(text, false),
-		slack.MsgOptionTS(threadTS),
-	)
+	b.postAgentThreadMessage(ctx, agent, text)
 }
 
 // NotifyBeadClosed posts a notification in the assigned agent's Slack thread.
@@ -73,6 +45,25 @@ func (b *Bot) NotifyBeadClosed(ctx context.Context, bead BeadEvent) {
 
 	b.recordActivity(agent)
 
+	title := truncateText(bead.Title, 60)
+	text := fmt.Sprintf(":white_check_mark: Closed %s: *%s*", bead.Type, title)
+	b.postAgentThreadMessage(ctx, agent, text)
+}
+
+// postAgentThreadMessage posts a message in the agent's thread — either the
+// agent card thread (for regular agents) or the bound Slack thread (for
+// thread-spawned agents).
+func (b *Bot) postAgentThreadMessage(ctx context.Context, agent, text string) {
+	// Check for thread-bound agent first.
+	if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
+		_, _, _ = b.api.PostMessageContext(ctx, slackChannel,
+			slack.MsgOptionText(text, false),
+			slack.MsgOptionTS(slackTS),
+		)
+		return
+	}
+
+	// Fall back to agent card thread (regular threading mode).
 	if !b.agentThreadingEnabled() {
 		return
 	}
@@ -83,9 +74,6 @@ func (b *Bot) NotifyBeadClosed(ctx context.Context, bead BeadEvent) {
 	}
 
 	channel := b.resolveChannel(agent)
-	title := truncateText(bead.Title, 60)
-	text := fmt.Sprintf(":white_check_mark: Closed %s: *%s*", bead.Type, title)
-
 	_, _, _ = b.api.PostMessageContext(ctx, channel,
 		slack.MsgOptionText(text, false),
 		slack.MsgOptionTS(threadTS),

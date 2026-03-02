@@ -8,6 +8,7 @@ import (
 )
 
 // NotifyAgentCrash posts a crash alert to the agent's resolved Slack channel.
+// For thread-bound agents, the crash is posted as a reply in the bound thread.
 func (b *Bot) NotifyAgentCrash(ctx context.Context, bead BeadEvent) error {
 	agent := bead.Assignee
 	if agent == "" {
@@ -41,11 +42,18 @@ func (b *Bot) NotifyAgentCrash(ctx context.Context, bead BeadEvent) error {
 	}
 
 	targetChannel := b.resolveChannel(agent)
-
-	_, _, err := b.api.PostMessageContext(ctx, targetChannel,
+	msgOpts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Agent crashed: %s", name), false),
 		slack.MsgOptionBlocks(blocks...),
-	)
+	}
+
+	// Thread-bound agents: post crash in the originating thread.
+	if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
+		targetChannel = slackChannel
+		msgOpts = append(msgOpts, slack.MsgOptionTS(slackTS))
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, targetChannel, msgOpts...)
 	if err != nil {
 		return fmt.Errorf("post agent crash to Slack: %w", err)
 	}

@@ -107,6 +107,20 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	// Fetch pod_name from the agent bead notes for coopmux terminal linking.
 	b.fetchAndCachePodName(ctx, agent)
 
+	// Thread-bound agents: post a brief status message in the thread
+	// instead of a top-level agent card.
+	if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
+		_, _, err := b.api.PostMessageContext(ctx, slackChannel,
+			slack.MsgOptionText(fmt.Sprintf("Agent %s is starting...", agent), false),
+			slack.MsgOptionTS(slackTS),
+		)
+		if err != nil {
+			b.logger.Error("failed to post thread-bound spawn message",
+				"agent", agent, "error", err)
+		}
+		return
+	}
+
 	channel := b.resolveChannel(agent)
 
 	if b.agentThreadingEnabled() {
@@ -163,10 +177,53 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 		b.fetchAndCachePodName(context.Background(), agent)
 	}
 
+	// Thread-bound agents: post state transitions as thread replies (only
+	// for significant terminal states to avoid noise).
+	if state == "done" || state == "failed" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
+			b.postThreadStateReply(ctx, agent, state, bead, slackChannel, slackTS)
+			return
+		}
+	}
+
 	// Refresh the card if one exists for this agent.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	b.updateAgentCard(ctx, agent)
+}
+
+// postThreadStateReply posts a state transition message in the agent's bound
+// Slack thread for thread-spawned agents.
+func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bead BeadEvent, channel, threadTS string) {
+	var emoji, status string
+	switch state {
+	case "done":
+		emoji = ":white_check_mark:"
+		status = "finished"
+	case "failed":
+		emoji = ":x:"
+		status = "failed"
+	default:
+		return // Only post for terminal states.
+	}
+
+	text := fmt.Sprintf("%s Agent *%s* %s.", emoji, agent, status)
+
+	// Append close reason if available.
+	if reason := bead.Fields["close_reason"]; reason != "" {
+		text += fmt.Sprintf("\n> %s", truncateText(reason, 500))
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, channel,
+		slack.MsgOptionText(text, false),
+		slack.MsgOptionTS(threadTS),
+	)
+	if err != nil {
+		b.logger.Error("failed to post thread state reply",
+			"agent", agent, "state", state, "error", err)
+	}
 }
 
 // NotifyAgentTaskUpdate is called when a task bead assigned to an agent changes
