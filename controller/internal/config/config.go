@@ -191,6 +191,8 @@ type ProjectCacheEntry struct {
 
 	// Per-project secret overrides (merged with globals at pod creation).
 	Secrets []beadsapi.SecretEntry
+	// Per-project plain env vars (non-secret config like JIRA_BASE_URL).
+	EnvVars []beadsapi.EnvEntry
 	// Multi-repo definitions (primary + reference repos).
 	Repos []beadsapi.RepoEntry
 }

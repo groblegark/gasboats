@@ -364,6 +364,15 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 				spec.GitlabTokenSecret = ps.Secret
 			}
 		}
+
+		// Per-project plain env vars: inject non-secret config like
+		// JIRA_BASE_URL, JIRA_EMAIL, GIT_AUTHOR_EMAIL, etc.
+		if spec.Env == nil {
+			spec.Env = make(map[string]string)
+		}
+		for _, ev := range entry.EnvVars {
+			spec.Env[ev.Name] = ev.Value
+		}
 	}
 }
 

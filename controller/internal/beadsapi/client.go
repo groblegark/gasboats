@@ -142,6 +142,13 @@ type SecretEntry struct {
 	Key    string `json:"key"`    // key within the Secret
 }
 
+// EnvEntry maps a plain environment variable name to a value.
+// Used for non-secret configuration on project beads.
+type EnvEntry struct {
+	Name  string `json:"name"`  // env var name in the pod
+	Value string `json:"value"` // plain text value
+}
+
 // RepoEntry declares a repository to clone into the agent workspace.
 type RepoEntry struct {
 	URL    string `json:"url"`
@@ -161,6 +168,7 @@ type ProjectInfo struct {
 	ServiceAccount string // Per-project K8s ServiceAccount override
 	RTKEnabled     bool   // Enable RTK token optimization for this project
 	Secrets        []SecretEntry // Per-project secret overrides
+	EnvVars        []EnvEntry    // Per-project plain env vars
 	Repos          []RepoEntry   // Multi-repo definitions
 }
 
@@ -193,6 +201,13 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			var secrets []SecretEntry
 			if json.Unmarshal([]byte(raw), &secrets) == nil {
 				info.Secrets = secrets
+			}
+		}
+		// Parse per-project plain env vars from JSON field.
+		if raw := fields["env"]; raw != "" {
+			var envVars []EnvEntry
+			if json.Unmarshal([]byte(raw), &envVars) == nil {
+				info.EnvVars = envVars
 			}
 		}
 		// Parse multi-repo definitions from JSON field.

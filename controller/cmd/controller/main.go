@@ -437,6 +437,7 @@ func refreshProjectCache(ctx context.Context, logger *slog.Logger, daemon *beads
 			ServiceAccount: info.ServiceAccount,
 			RTKEnabled:     info.RTKEnabled,
 			Secrets:        info.Secrets,
+			EnvVars:        info.EnvVars,
 			Repos:          info.Repos,
 		}
 	}
