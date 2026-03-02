@@ -2,15 +2,19 @@ package main
 
 // gb stop — request polite agent despawn.
 //
-// Sets stop_requested=true on the agent bead. The entrypoint restart loop
-// checks this flag after each coop session and exits instead of restarting,
-// then closes the bead so the reconciler stops tracking this pod.
+// Sets stop_requested=true on the agent bead and POSTs to the local coop
+// API to trigger a graceful session shutdown. The entrypoint restart loop
+// checks the stop_requested flag after coop exits and terminates cleanly
+// instead of restarting, then closes the bead so the reconciler stops
+// tracking this pod.
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -100,9 +104,37 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("setting stop_requested on bead %s: %w", agentID, err)
 	}
 
+	// Request coop shutdown so the session actually terminates.
+	// Without this, the entrypoint blocks on wait(COOP_PID) and never
+	// reaches the stop_requested check.
+	requestCoopShutdown()
+
 	fmt.Printf("Stop requested for agent %s.\n", agentID)
 	fmt.Printf("Exit now — the entrypoint will not restart this pod.\n")
 	return nil
+}
+
+// requestCoopShutdown POSTs to the local coop API to trigger a graceful
+// session shutdown. This mirrors what monitor_agent_exit() does in the
+// entrypoint. Failures are non-fatal since the agent may not be running
+// inside coop (e.g. local dev).
+func requestCoopShutdown() {
+	coopURL := os.Getenv("COOP_URL")
+	if coopURL == "" {
+		coopURL = "http://localhost:8080"
+	}
+	shutdownURL := strings.TrimRight(coopURL, "/") + "/api/v1/shutdown"
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(shutdownURL, "", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: could not reach coop at %s (not running inside coop?): %v\n", shutdownURL, err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Fprintf(os.Stderr, "Note: coop shutdown returned status %d\n", resp.StatusCode)
+	}
 }
 
 // retireAgentSessions renames all .jsonl session logs under ~/.claude/projects/
