@@ -275,9 +275,14 @@ fi
 
 # ── Claude settings ──────────────────────────────────────────────────────
 #
-# User-level settings (permissions, model, plugins) and workspace hooks are
-# materialized from config beads via `gb setup claude`. When config beads
-# are unavailable (daemon unreachable), falls back to hardcoded defaults.
+# User-level settings (permissions, plugins, model) and workspace hooks are
+# both materialized from config beads via `gb setup claude`. The command
+# fetches claude-settings:* and claude-hooks:* config beads, merges them by
+# specificity (global → role), and writes:
+#   ~/.claude/settings.json           — user-level (permissions, plugins)
+#   {workspace}/.claude/settings.json — workspace-level (hooks)
+#
+# When config beads are unavailable, --defaults installs hardcoded fallbacks.
 # Mock mode: skip Claude settings entirely (claudeless doesn't use them).
 
 if [ "${MOCK_MODE}" = "1" ]; then
@@ -290,15 +295,16 @@ else
 # Disable interactive features that interrupt autonomous agents.
 export CLAUDE_CODE_ENABLE_TASKS="${CLAUDE_CODE_ENABLE_TASKS:-false}"
 
-# Materialize user settings + hooks from config beads.
-# gb setup claude --claude-dir writes user-level settings (from claude-settings:*
-# beads or hardcoded defaults) and workspace hooks (from claude-hooks:* beads).
+# Materialize settings + hooks from config beads.
+# gb setup claude writes both:
+#   ~/.claude/settings.json           (user-level: permissions, plugins, model)
+#   {workspace}/.claude/settings.json (workspace-level: hooks)
 mkdir -p "${WORKSPACE}/.claude"
 MATERIALIZED=0
 
 if command -v gb &>/dev/null; then
-    echo "[entrypoint] Materializing settings from config beads (role: ${ROLE})"
-    if gb setup claude --claude-dir="${CLAUDE_DIR}" --workspace="${WORKSPACE}" --role="${ROLE}" 2>&1; then
+    echo "[entrypoint] Materializing settings and hooks from config beads (role: ${ROLE})"
+    if gb setup claude --workspace="${WORKSPACE}" --role="${ROLE}" 2>&1; then
         if grep -q '"hooks"' "${WORKSPACE}/.claude/settings.json" 2>/dev/null; then
             MATERIALIZED=1
             echo "[entrypoint] Settings and hooks materialized from config beads"
@@ -307,32 +313,9 @@ if command -v gb &>/dev/null; then
 fi
 
 if [ "${MATERIALIZED}" = "0" ]; then
-    echo "[entrypoint] No hook config beads found, installing default gb hooks"
+    echo "[entrypoint] No config beads found, installing defaults"
     gb setup claude --defaults --workspace="${WORKSPACE}" 2>&1 || \
-        echo "[entrypoint] WARNING: gb setup --defaults failed, no hooks installed"
-fi
-
-# Fallback: if user settings weren't written (daemon unreachable), write hardcoded defaults.
-if [ ! -f "${CLAUDE_DIR}/settings.json" ]; then
-    echo "[entrypoint] Writing fallback user settings (daemon unreachable)"
-    SETTINGS_JSON='{"permissions":{"allow":["Bash(*)","Read(*)","Write(*)","Edit(*)","Glob(*)","Grep(*)","WebFetch(*)","WebSearch(*)"],"deny":[]},"alwaysThinkingEnabled":true,"skipDangerousModePermissionPrompt":true}'
-    PLUGINS_JSON=""
-    if command -v gopls &>/dev/null; then
-        PLUGINS_JSON="${PLUGINS_JSON}\"gopls-lsp@claude-plugins-official\":true,"
-    fi
-    if command -v rust-analyzer &>/dev/null; then
-        PLUGINS_JSON="${PLUGINS_JSON}\"rust-analyzer-lsp@claude-plugins-official\":true,"
-    fi
-    if [ -n "${PLUGINS_JSON}" ]; then
-        PLUGINS_JSON="{${PLUGINS_JSON%,}}"
-        SETTINGS_JSON=$(echo "${SETTINGS_JSON}" | jq --argjson p "${PLUGINS_JSON}" '. + {enabledPlugins: $p}')
-    fi
-    # Add Playwright MCP server if playwright-mcp is available.
-    if command -v playwright-mcp &>/dev/null; then
-        MCP_JSON='{"playwright":{"command":"playwright-mcp","args":["--headless","--no-sandbox"]}}'
-        SETTINGS_JSON=$(echo "${SETTINGS_JSON}" | jq --argjson m "${MCP_JSON}" '. + {mcpServers: $m}')
-    fi
-    echo "${SETTINGS_JSON}" | jq . > "${CLAUDE_DIR}/settings.json"
+        echo "[entrypoint] WARNING: gb setup --defaults failed"
 fi
 
 # ── MCP server configuration ─────────────────────────────────────────────
@@ -391,30 +374,24 @@ Rules:
 - If you receive a nudge that your claimed bead was updated, run \`kd show <id>\`
 - If \`gb ready\` shows nothing, check \`kd list --no-blockers\` for your project
 
-## Ephemeral Agent Lifecycle
+## Checkpoint Protocol (Stop Hook)
 
-Agents are ephemeral: start up, do the work, despawn. Do not idle or loop waiting for more work.
+When the stop hook blocks, you MUST create a decision checkpoint before stopping.
 
-1. **Start** — Check for in-progress work (\`kd list --status=in_progress\`) or find new work (\`gb ready\`)
-2. **Work** — Claim a task, do it thoroughly, commit, push, close the bead
-3. **Done** — Call \`gb done\` to despawn cleanly
-
-If you are **blocked mid-task** and need human input, create a decision checkpoint:
-\`\`\`bash
-gb decision create --no-wait \\
-  --prompt="Did X. Blocked on Y. Recommending option A because..." \\
-  --options='[
-    {"id":"a","short":"Continue","label":"Finish remaining work","artifact_type":"report"},
-    {"id":"b","short":"Rethink","label":"Change approach","artifact_type":"plan"}
-  ]'
-gb yield
-\`\`\`
-
-When work is **done**, just close and stop — no checkpoint needed:
-\`\`\`bash
-kd close <bead-id>
-gb done
-\`\`\`
+1. **Summarize** what you accomplished and what's blocked
+2. **Create a decision** with concrete options — each option needs an \`artifact_type\`:
+   \`\`\`bash
+   gb decision create --no-wait \\
+     --prompt="Did X. Blocked on Y. Recommending option A because..." \\
+     --options='[
+       {"id":"a","short":"Continue","label":"Finish remaining work","artifact_type":"report"},
+       {"id":"b","short":"Rethink","label":"Change approach","artifact_type":"plan"}
+     ]'
+   \`\`\`
+   Artifact types: \`report\`, \`plan\`, \`checklist\`, \`diff-summary\`, \`epic\`, \`bug\`
+3. Run \`gb yield\` — blocks until human responds
+4. If yield requires an artifact, submit it:
+   \`gb decision report <id> --content '...'\`
 CLAUDEMD
 fi
 
@@ -599,7 +576,7 @@ inject_initial_prompt() {
     if [ -n "${BOAT_PROMPT:-}" ]; then
         nudge_msg="${BOAT_PROMPT}"
     else
-        nudge_msg="You are an ephemeral agent. Find work, do it, then \`gb done\`.${project_hint}${task_hint} Steps: (1) Run \`gb news\` to see what teammates are working on — do not duplicate. (2) Run \`gb ready\` to find available work. (3) \`kd claim <id>\` BEFORE starting — this atomically marks it in_progress. (4) When done: close the bead, commit, push, then \`gb done\` to despawn."
+        nudge_msg="Check \`gb ready\` for your workflow steps and begin working.${project_hint}${task_hint} IMPORTANT: (1) Run \`gb news\` first to see what your teammates are already working on — do not duplicate in-progress work. (2) Run \`kd claim <id>\` BEFORE starting any task — this atomically marks it in_progress so no other agent picks it up simultaneously."
     fi
 
     echo "[entrypoint] Injecting initial work prompt (role: ${ROLE})"
