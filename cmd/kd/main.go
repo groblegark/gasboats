@@ -61,7 +61,12 @@ var rootCmd = &cobra.Command{
 	Short: "CLI client for the Beads service",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Resolve auth token: env var takes precedence, then active remote.
+		// BEADS_AUTH_TOKEN is the canonical env var; BEADS_DAEMON_TOKEN is
+		// set by the gasboat controller in agent pods, so check it as a fallback.
 		token := os.Getenv("BEADS_AUTH_TOKEN")
+		if token == "" {
+			token = os.Getenv("BEADS_DAEMON_TOKEN")
+		}
 		if token == "" {
 			token = activeRemoteToken()
 		}
@@ -125,7 +130,6 @@ func init() {
 	rootCmd.AddCommand(undeferCmd)
 
 	// Views
-	rootCmd.AddCommand(orphansCmd)
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(contextCmd)
 	rootCmd.AddCommand(watchCmd)
