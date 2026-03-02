@@ -80,6 +80,14 @@ func (s *BeadsServer) handleListBeads(w http.ResponseWriter, r *http.Request) {
 	if q.Get("no_open_deps") == "true" {
 		filter.NoOpenDeps = true
 	}
+	if ff := q["field"]; len(ff) > 0 {
+		filter.Fields = make(map[string]string, len(ff))
+		for _, f := range ff {
+			if k, v, ok := strings.Cut(f, "="); ok {
+				filter.Fields[k] = v
+			}
+		}
+	}
 
 	beads, total, err := s.store.ListBeads(r.Context(), filter)
 	if err != nil {

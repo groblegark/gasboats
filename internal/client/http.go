@@ -87,6 +87,9 @@ func (c *HTTPClient) ListBeads(ctx context.Context, req *ListBeadsRequest) (*Lis
 	if req.Offset > 0 {
 		q.Set("offset", fmt.Sprintf("%d", req.Offset))
 	}
+	for k, v := range req.FieldFilters {
+		q.Add("field", k+"="+v)
+	}
 
 	path := "/v1/beads"
 	if len(q) > 0 {

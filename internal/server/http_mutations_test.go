@@ -242,6 +242,35 @@ func TestHandleListBeads_FilterByPriority(t *testing.T) {
 	}
 }
 
+func TestHandleListBeads_FilterByFields(t *testing.T) {
+	_, ms, h := newTestServer()
+	ms.beads["kd-f1"] = &model.Bead{
+		ID: "kd-f1", Title: "Has images", Status: model.StatusOpen,
+		Fields: json.RawMessage(`{"jira_has_images":"true"}`),
+	}
+	ms.beads["kd-f2"] = &model.Bead{
+		ID: "kd-f2", Title: "No images", Status: model.StatusOpen,
+		Fields: json.RawMessage(`{}`),
+	}
+	ms.beads["kd-f3"] = &model.Bead{
+		ID: "kd-f3", Title: "No fields", Status: model.StatusOpen,
+	}
+
+	rec := doJSON(t, h, "GET", "/v1/beads?field=jira_has_images%3Dtrue", nil)
+	requireStatus(t, rec, 200)
+	var result struct {
+		Beads []model.Bead `json:"beads"`
+		Total int          `json:"total"`
+	}
+	decodeJSON(t, rec, &result)
+	if result.Total != 1 {
+		t.Fatalf("expected total=1, got %d", result.Total)
+	}
+	if result.Beads[0].ID != "kd-f1" {
+		t.Fatalf("expected bead kd-f1, got %q", result.Beads[0].ID)
+	}
+}
+
 func TestHandleCreateBead_LabelFailure_ReturnsError(t *testing.T) {
 	_, ms, h := newTestServer()
 	ms.addLabelErr = fmt.Errorf("label store down")

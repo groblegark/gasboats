@@ -122,6 +122,25 @@ outer:
 				continue
 			}
 		}
+		if len(filter.Fields) > 0 {
+			if b.Fields == nil {
+				continue
+			}
+			var fm map[string]string
+			if json.Unmarshal(b.Fields, &fm) != nil {
+				continue
+			}
+			match := true
+			for k, v := range filter.Fields {
+				if fm[k] != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
 		result = append(result, b)
 	}
 	return result, len(result), nil

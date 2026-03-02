@@ -329,6 +329,29 @@ func TestHTTPClient_ListBeads_EmptyResponse(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_ListBeads_FieldFilters(t *testing.T) {
+	h := &testHandler{
+		responseBody: `{"beads": [], "total": 0}`,
+	}
+	c, srv := newTestClient(h)
+	defer srv.Close()
+
+	_, err := c.ListBeads(context.Background(), &ListBeadsRequest{
+		FieldFilters: map[string]string{
+			"jira_has_images": "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListBeads() error = %v", err)
+	}
+
+	q := h.query
+	want := "field=jira_has_images%3Dtrue"
+	if !strings.Contains(q, want) {
+		t.Errorf("query %q does not contain %q", q, want)
+	}
+}
+
 // --- UpdateBead ---
 
 func TestHTTPClient_UpdateBead(t *testing.T) {
