@@ -346,7 +346,12 @@ func (b *Bot) resolveChannel(agent string) string {
 // the bead. If coop is unreachable (pod already dead), it falls back to an
 // immediate hard-close.
 func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error {
-	bead, err := b.daemon.FindAgentBead(ctx, agentName)
+	// Use a detached context for the kill operation — Slack's slash command
+	// context expires after ~3s, but graceful shutdown + bead close can take longer.
+	killCtx, killCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer killCancel()
+
+	bead, err := b.daemon.FindAgentBead(killCtx, agentName)
 	if err != nil {
 		return fmt.Errorf("find agent bead: %w", err)
 	}
@@ -355,7 +360,7 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 		coopURL := beadsapi.ParseNotes(bead.Notes)["coop_url"]
 		if coopURL != "" {
 			b.logger.Info("attempting graceful shutdown via coop", "agent", agentName, "coop_url", coopURL)
-			shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+			shutdownCtx, shutdownCancel := context.WithTimeout(killCtx, 30*time.Second)
 			if ok := gracefulShutdownCoop(shutdownCtx, coopURL); ok {
 				b.logger.Info("graceful coop shutdown confirmed", "agent", agentName)
 			} else {
@@ -365,7 +370,7 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 		}
 	}
 
-	if err := b.daemon.CloseBead(ctx, bead.ID, nil); err != nil {
+	if err := b.daemon.CloseBead(killCtx, bead.ID, nil); err != nil {
 		return fmt.Errorf("close agent bead: %w", err)
 	}
 

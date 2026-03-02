@@ -291,16 +291,23 @@ func (b *Bot) handleKillCommand(ctx context.Context, cmd slack.SlashCommand) {
 	}
 
 	agentName := positional[0]
-	if err := b.killAgent(ctx, agentName, force); err != nil {
-		b.logger.Error("kill command: failed to kill agent", "agent", agentName, "force", force, "error", err)
-		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent %q: %s", agentName, err.Error()), false))
-		return
-	}
 
-	b.logger.Info("killed agent via Slack slash command", "agent", agentName, "force", force, "user", cmd.UserID)
+	// Run kill asynchronously — graceful shutdown can take 30s+ which exceeds
+	// Slack's slash command response window.
+	go func() {
+		if err := b.killAgent(context.Background(), agentName, force); err != nil {
+			b.logger.Error("kill command: failed to kill agent", "agent", agentName, "force", force, "error", err)
+			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+				slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent %q: %s", agentName, err.Error()), false))
+			return
+		}
+		b.logger.Info("killed agent via Slack slash command", "agent", agentName, "force", force, "user", cmd.UserID)
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(fmt.Sprintf(":skull: Agent *%s* terminated.", agentName), false))
+	}()
+
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-		slack.MsgOptionText(fmt.Sprintf(":skull: Agent *%s* terminated.", agentName), false))
+		slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing agent *%s*…", agentName), false))
 }
 
 // handleRosterCommand shows the agent dashboard as an ephemeral message.
