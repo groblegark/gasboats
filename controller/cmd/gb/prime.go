@@ -421,11 +421,17 @@ func outputAutoAssign(w io.Writer, agentID string) {
 		return // agent already has work
 	}
 
-	// Fetch ready tasks.
+	// Fetch ready tasks scoped to this agent's project.
+	var labels []string
+	if proj := defaultGBProject(); proj != "" {
+		labels = append(labels, "project:"+proj)
+	}
 	ready, err := daemon.ListBeadsFiltered(ctx, beadsapi.ListBeadsQuery{
-		Statuses: []string{"open"},
-		Sort:     "priority",
-		Limit:    1,
+		Statuses:   []string{"open"},
+		Labels:     labels,
+		NoOpenDeps: true,
+		Sort:       "priority",
+		Limit:      1,
 	})
 	if err != nil || len(ready.Beads) == 0 {
 		return
