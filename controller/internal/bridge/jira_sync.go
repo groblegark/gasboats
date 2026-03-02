@@ -65,33 +65,46 @@ func (s *JiraSync) handleUpdated(ctx context.Context, data []byte) {
 	}
 
 	// Check for MR URL field — sync it as a remote link to JIRA.
-	mrURL := bead.Fields["mr_url"]
-	if mrURL == "" {
-		return
+	if mrURL := bead.Fields["mr_url"]; mrURL != "" {
+		dedupKey := "mr:" + bead.ID + ":" + mrURL
+		if !s.isDuplicate(dedupKey) {
+			s.logger.Info("syncing MR link to JIRA",
+				"bead", bead.ID, "jira_key", jiraKey, "mr_url", mrURL)
+
+			title := "Merge Request: " + bead.Title
+			if err := s.jira.AddRemoteLink(ctx, jiraKey, mrURL, title); err != nil {
+				s.logger.Error("failed to add JIRA remote link",
+					"jira_key", jiraKey, "mr_url", mrURL, "error", err)
+			} else {
+				comment := "Automated MR created: " + mrURL
+				if err := s.jira.AddComment(ctx, jiraKey, comment); err != nil {
+					s.logger.Error("failed to add JIRA comment for MR",
+						"jira_key", jiraKey, "error", err)
+				}
+			}
+		}
 	}
 
-	// Dedup: don't re-sync the same MR link.
-	dedupKey := "mr:" + bead.ID + ":" + mrURL
-	if s.isDuplicate(dedupKey) {
-		return
-	}
+	// Check for mr_merged=true — transition JIRA issue to Review.
+	if bead.Fields["mr_merged"] == "true" {
+		dedupKey := "merged:" + bead.ID
+		if !s.isDuplicate(dedupKey) {
+			s.logger.Info("MR merged, transitioning JIRA to Review",
+				"bead", bead.ID, "jira_key", jiraKey)
 
-	s.logger.Info("syncing MR link to JIRA",
-		"bead", bead.ID, "jira_key", jiraKey, "mr_url", mrURL)
+			comment := "MR merged — transitioning to Review."
+			if err := s.jira.AddComment(ctx, jiraKey, comment); err != nil {
+				s.logger.Error("failed to add JIRA MR merged comment",
+					"jira_key", jiraKey, "error", err)
+			}
 
-	// Add remote link.
-	title := "Merge Request: " + bead.Title
-	if err := s.jira.AddRemoteLink(ctx, jiraKey, mrURL, title); err != nil {
-		s.logger.Error("failed to add JIRA remote link",
-			"jira_key", jiraKey, "mr_url", mrURL, "error", err)
-		return
-	}
-
-	// Add comment.
-	comment := "Automated MR created: " + mrURL
-	if err := s.jira.AddComment(ctx, jiraKey, comment); err != nil {
-		s.logger.Error("failed to add JIRA comment for MR",
-			"jira_key", jiraKey, "error", err)
+			if !s.disableTransitions {
+				if err := s.jira.TransitionIssue(ctx, jiraKey, "Review"); err != nil {
+					s.logger.Warn("failed to transition JIRA issue to Review",
+						"jira_key", jiraKey, "error", err)
+				}
+			}
+		}
 	}
 }
 
@@ -115,7 +128,7 @@ func (s *JiraSync) handleClosed(ctx context.Context, data []byte) {
 	s.logger.Info("syncing bead closure to JIRA",
 		"bead", bead.ID, "jira_key", jiraKey)
 
-	// Post closing comment.
+	// Post closing comment (no transition — transitions are triggered by mr_merged).
 	comment := "Task bead closed in beads system (bead " + bead.ID + ")."
 	if mrURL := bead.Fields["mr_url"]; mrURL != "" {
 		comment += " MR: " + mrURL
@@ -123,14 +136,6 @@ func (s *JiraSync) handleClosed(ctx context.Context, data []byte) {
 	if err := s.jira.AddComment(ctx, jiraKey, comment); err != nil {
 		s.logger.Error("failed to add JIRA closing comment",
 			"jira_key", jiraKey, "error", err)
-	}
-
-	// Attempt to transition to "Review" (best-effort).
-	if !s.disableTransitions {
-		if err := s.jira.TransitionIssue(ctx, jiraKey, "Review"); err != nil {
-			s.logger.Warn("failed to transition JIRA issue to Review (may not be available)",
-				"jira_key", jiraKey, "error", err)
-		}
 	}
 }
 

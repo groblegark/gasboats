@@ -133,12 +133,78 @@ func TestJiraSync_Closed(t *testing.T) {
 	if !commentAdded {
 		t.Fatal("expected JIRA closing comment")
 	}
+	// Transitions are no longer triggered on close — they fire on mr_merged=true.
+	if transitionCalls != 0 {
+		t.Errorf("expected 0 transition calls on close, got %d", transitionCalls)
+	}
+}
+
+func TestJiraSync_MRMerged(t *testing.T) {
+	var (
+		mu              sync.Mutex
+		commentAdded    bool
+		commentBody     string
+		transitionCalls int
+	)
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-100/comment":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if doc, ok := body["body"].(map[string]any); ok {
+				if content, ok := doc["content"].([]any); ok && len(content) > 0 {
+					if para, ok := content[0].(map[string]any); ok {
+						if pc, ok := para["content"].([]any); ok && len(pc) > 0 {
+							if tn, ok := pc[0].(map[string]any); ok {
+								commentBody, _ = tn["text"].(string)
+							}
+						}
+					}
+				}
+			}
+			commentAdded = true
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":"1"}`)
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PE-100/transitions":
+			resp := map[string]any{"transitions": []map[string]any{
+				{"id": "31", "name": "In Progress", "to": map[string]string{"name": "In Progress"}},
+				{"id": "41", "name": "Review", "to": map[string]string{"name": "Review"}},
+			}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-100/transitions":
+			transitionCalls++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jiraServer.Close()
+
+	s := NewJiraSync(JiraSyncConfig{Jira: newTestJiraClient(jiraServer.URL), Logger: slog.Default()})
+	event := marshalSSEBeadPayload(BeadEvent{
+		ID: "bd-task-5", Type: "task", Title: "[PE-100] Fix login bug",
+		Labels: []string{"source:jira", "jira:PE-100"},
+		Fields: map[string]string{"jira_key": "PE-100", "mr_merged": "true"},
+	})
+	s.handleUpdated(context.Background(), event)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !commentAdded {
+		t.Fatal("expected JIRA MR merged comment")
+	}
+	if commentBody != "MR merged — transitioning to Review." {
+		t.Errorf("comment body: %s", commentBody)
+	}
 	if transitionCalls != 1 {
 		t.Errorf("expected 1 transition call, got %d", transitionCalls)
 	}
 }
 
-func TestJiraSync_Closed_TransitionsDisabled(t *testing.T) {
+func TestJiraSync_MRMerged_TransitionsDisabled(t *testing.T) {
 	var (
 		mu              sync.Mutex
 		commentAdded    bool
@@ -148,18 +214,17 @@ func TestJiraSync_Closed_TransitionsDisabled(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/DEVOPS-42/comment":
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-200/comment":
 			commentAdded = true
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"id":"1"}`)
-		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/DEVOPS-42/transitions":
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PE-200/transitions":
 			resp := map[string]any{"transitions": []map[string]any{
-				{"id": "31", "name": "In Progress", "to": map[string]string{"name": "In Progress"}},
 				{"id": "41", "name": "Review", "to": map[string]string{"name": "Review"}},
 			}}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
-		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/DEVOPS-42/transitions":
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-200/transitions":
 			transitionCalls++
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -174,16 +239,16 @@ func TestJiraSync_Closed_TransitionsDisabled(t *testing.T) {
 		DisableTransitions: true,
 	})
 	event := marshalSSEBeadPayload(BeadEvent{
-		ID: "bd-task-4", Type: "task", Title: "[DEVOPS-42] Fix CI pipeline",
-		Labels: []string{"source:jira", "jira:DEVOPS-42"},
-		Fields: map[string]string{"jira_key": "DEVOPS-42"},
+		ID: "bd-task-6", Type: "task", Title: "[PE-200] Fix upload",
+		Labels: []string{"source:jira", "jira:PE-200"},
+		Fields: map[string]string{"jira_key": "PE-200", "mr_merged": "true"},
 	})
-	s.handleClosed(context.Background(), event)
+	s.handleUpdated(context.Background(), event)
 
 	mu.Lock()
 	defer mu.Unlock()
 	if !commentAdded {
-		t.Fatal("expected JIRA closing comment")
+		t.Fatal("expected JIRA MR merged comment even with transitions disabled")
 	}
 	if transitionCalls != 0 {
 		t.Errorf("expected 0 transition calls with DisableTransitions, got %d", transitionCalls)
