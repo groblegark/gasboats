@@ -47,7 +47,7 @@
       {
         "command": "/unreleased",
         "description": "Show unreleased changes across tracked repos",
-        "usage_hint": "",
+        "usage_hint": "[repo]",
         "should_escape": false
       }
     ]
@@ -61,6 +61,8 @@
         "channels:history",
         "commands",
         "groups:history",
+        "pins:read",
+        "pins:write",
         "users:read"
       ]
     }
