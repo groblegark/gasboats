@@ -355,11 +355,13 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 		coopURL := beadsapi.ParseNotes(bead.Notes)["coop_url"]
 		if coopURL != "" {
 			b.logger.Info("attempting graceful shutdown via coop", "agent", agentName, "coop_url", coopURL)
-			if ok := gracefulShutdownCoop(ctx, coopURL); ok {
+			shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+			if ok := gracefulShutdownCoop(shutdownCtx, coopURL); ok {
 				b.logger.Info("graceful coop shutdown confirmed", "agent", agentName)
 			} else {
-				b.logger.Warn("coop unreachable, falling back to hard-close", "agent", agentName)
+				b.logger.Warn("graceful shutdown failed or timed out, falling back to hard-close", "agent", agentName)
 			}
+			shutdownCancel()
 		}
 	}
 

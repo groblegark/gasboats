@@ -20,8 +20,9 @@ import (
 )
 
 var stopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Request polite agent despawn — prevents pod restart after exit",
+	Use:     "stop",
+	Aliases: []string{"done"},
+	Short:   "Request polite agent despawn — prevents pod restart after exit",
 	Long: `Mark this agent as stop-requested.
 
 After calling 'gb stop', exit normally (finish your current turn). The entrypoint

@@ -274,18 +274,27 @@ func findResumeSession(claudeStateDir string, sessionResume bool) string {
 
 // isStopRequested checks whether the agent bead has stop_requested=true.
 // This is set by 'gb stop' and tells the restart loop to exit instead of
-// restarting. Returns false on any error (fail-safe: keep running).
+// restarting. Retries up to 3 times on transient errors to avoid accidentally
+// restarting an agent that requested a polite stop.
 func isStopRequested(ctx context.Context, agentBeadID string) bool {
 	if agentBeadID == "" || daemon == nil {
 		return false
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	bead, err := daemon.GetBead(checkCtx, agentBeadID)
-	if err != nil {
-		return false // fail-safe: don't stop if we can't check
+	for attempt := 0; attempt < 3; attempt++ {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		bead, err := daemon.GetBead(checkCtx, agentBeadID)
+		cancel()
+		if err == nil {
+			return bead.Fields["stop_requested"] == "true"
+		}
+		fmt.Printf("[gb agent start] isStopRequested: attempt %d failed: %v\n", attempt+1, err)
+		if ctx.Err() != nil {
+			return false
+		}
+		time.Sleep(2 * time.Second)
 	}
-	return bead.Fields["stop_requested"] == "true"
+	fmt.Printf("[gb agent start] isStopRequested: all retries failed, assuming not stopped\n")
+	return false
 }
 
 // truncateIncompleteLastLine removes the last line of a .jsonl file if it
