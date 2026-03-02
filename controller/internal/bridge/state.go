@@ -32,6 +32,7 @@ type StateData struct {
 	DecisionMessages map[string]MessageRef `json:"decision_messages,omitempty"` // bead ID → message ref
 	ChatMessages     map[string]MessageRef `json:"chat_messages,omitempty"`     // bead ID → message ref (chat forwarding)
 	AgentCards       map[string]MessageRef `json:"agent_cards,omitempty"`       // agent identity → status card message ref
+	ThreadAgents     map[string]string     `json:"thread_agents,omitempty"`     // "{channel}:{thread_ts}" → agent identity
 	Dashboard        *DashboardRef         `json:"dashboard,omitempty"`
 	LastEventID      string                `json:"last_event_id,omitempty"` // SSE event ID for reconnection
 }
@@ -52,6 +53,7 @@ func NewStateManager(path string) (*StateManager, error) {
 			DecisionMessages: make(map[string]MessageRef),
 			ChatMessages:     make(map[string]MessageRef),
 			AgentCards:       make(map[string]MessageRef),
+			ThreadAgents:     make(map[string]string),
 		},
 	}
 	if err := sm.load(); err != nil && !os.IsNotExist(err) {
@@ -171,6 +173,49 @@ func (sm *StateManager) AllAgentCards() map[string]MessageRef {
 	return out
 }
 
+// --- Thread Agents ---
+
+// threadAgentKey builds the map key for a thread-agent association.
+func threadAgentKey(channel, threadTS string) string {
+	return channel + ":" + threadTS
+}
+
+// GetThreadAgent returns the agent identity bound to a Slack thread.
+func (sm *StateManager) GetThreadAgent(channel, threadTS string) (string, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	agent, ok := sm.data.ThreadAgents[threadAgentKey(channel, threadTS)]
+	return agent, ok
+}
+
+// SetThreadAgent stores a thread→agent association and persists.
+func (sm *StateManager) SetThreadAgent(channel, threadTS, agent string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.data.ThreadAgents[threadAgentKey(channel, threadTS)] = agent
+	return sm.saveLocked()
+}
+
+// RemoveThreadAgent removes a thread→agent association and persists.
+func (sm *StateManager) RemoveThreadAgent(channel, threadTS string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	delete(sm.data.ThreadAgents, threadAgentKey(channel, threadTS))
+	return sm.saveLocked()
+}
+
+// RemoveThreadAgentByAgent removes all thread associations for a given agent and persists.
+func (sm *StateManager) RemoveThreadAgentByAgent(agent string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	for k, v := range sm.data.ThreadAgents {
+		if v == agent {
+			delete(sm.data.ThreadAgents, k)
+		}
+	}
+	return sm.saveLocked()
+}
+
 // --- Dashboard ---
 
 // GetDashboard returns the dashboard message ref.
@@ -228,6 +273,9 @@ func (sm *StateManager) load() error {
 	}
 	if sm.data.AgentCards == nil {
 		sm.data.AgentCards = make(map[string]MessageRef)
+	}
+	if sm.data.ThreadAgents == nil {
+		sm.data.ThreadAgents = make(map[string]string)
 	}
 	return nil
 }

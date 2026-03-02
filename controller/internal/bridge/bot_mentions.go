@@ -189,8 +189,17 @@ func (b *Bot) broadcastNudge(ctx context.Context, text, beadID string) {
 }
 
 // getAgentByThread reverse-maps (channel, thread_ts) to an agent identity
-// by checking the agentCards hot cache and falling back to persisted state.
+// by checking the threadAgents map, agentCards hot cache, and falling back
+// to persisted state.
 func (b *Bot) getAgentByThread(channelID, threadTS string) string {
+	// Check direct thread→agent mapping first (thread-spawned agents).
+	if b.state != nil {
+		if agent, ok := b.state.GetThreadAgent(channelID, threadTS); ok {
+			return agent
+		}
+	}
+
+	// Check agentCards hot cache (agent card threads).
 	b.mu.Lock()
 	for agent, ref := range b.agentCards {
 		if ref.ChannelID == channelID && ref.Timestamp == threadTS {
@@ -200,7 +209,7 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 	}
 	b.mu.Unlock()
 
-	// Fall back to persisted state.
+	// Fall back to persisted agentCards state.
 	if b.state != nil {
 		for agent, ref := range b.state.AllAgentCards() {
 			if ref.ChannelID == channelID && ref.Timestamp == threadTS {

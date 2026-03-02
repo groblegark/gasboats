@@ -143,6 +143,121 @@ func TestGetAgentByThread_StateFallback(t *testing.T) {
 	}
 }
 
+func TestGetAgentByThread_ThreadAgents(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set a thread→agent mapping (thread-spawned agent).
+	_ = state.SetThreadAgent("C-support", "7777.8888", "gasboat/crew/support")
+
+	b := &Bot{
+		agentCards: map[string]MessageRef{}, // empty hot cache
+		state:      state,
+	}
+
+	t.Run("found via threadAgents", func(t *testing.T) {
+		got := b.getAgentByThread("C-support", "7777.8888")
+		if got != "gasboat/crew/support" {
+			t.Errorf("got %q, want %q", got, "gasboat/crew/support")
+		}
+	})
+
+	t.Run("threadAgents takes priority over agentCards", func(t *testing.T) {
+		// Same channel/ts exists in both threadAgents and agentCards.
+		b.mu.Lock()
+		b.agentCards["gasboat/crew/other"] = MessageRef{
+			ChannelID: "C-support",
+			Timestamp: "7777.8888",
+			Agent:     "gasboat/crew/other",
+		}
+		b.mu.Unlock()
+
+		got := b.getAgentByThread("C-support", "7777.8888")
+		if got != "gasboat/crew/support" {
+			t.Errorf("threadAgents should take priority: got %q, want %q", got, "gasboat/crew/support")
+		}
+	})
+
+	t.Run("not found in threadAgents falls through to agentCards", func(t *testing.T) {
+		b.mu.Lock()
+		b.agentCards["gasboat/crew/k8s"] = MessageRef{
+			ChannelID: "C-k8s",
+			Timestamp: "9999.0000",
+			Agent:     "gasboat/crew/k8s",
+		}
+		b.mu.Unlock()
+
+		got := b.getAgentByThread("C-k8s", "9999.0000")
+		if got != "gasboat/crew/k8s" {
+			t.Errorf("got %q, want %q", got, "gasboat/crew/k8s")
+		}
+	})
+}
+
+func TestThreadAgentsPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	// Create state, add thread agent, close.
+	state1, err := NewStateManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state1.SetThreadAgent("C-test", "1111.2222", "gasboat/crew/hq"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload from disk.
+	state2, err := NewStateManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	agent, ok := state2.GetThreadAgent("C-test", "1111.2222")
+	if !ok || agent != "gasboat/crew/hq" {
+		t.Errorf("after reload: got (%q, %v), want (%q, true)", agent, ok, "gasboat/crew/hq")
+	}
+
+	// Remove and verify.
+	if err := state2.RemoveThreadAgent("C-test", "1111.2222"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state2.GetThreadAgent("C-test", "1111.2222"); ok {
+		t.Error("expected thread agent to be removed")
+	}
+}
+
+func TestRemoveThreadAgentByAgent(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = state.SetThreadAgent("C-a", "1.1", "gasboat/crew/hq")
+	_ = state.SetThreadAgent("C-b", "2.2", "gasboat/crew/hq")
+	_ = state.SetThreadAgent("C-c", "3.3", "gasboat/crew/k8s")
+
+	if err := state.RemoveThreadAgentByAgent("gasboat/crew/hq"); err != nil {
+		t.Fatal(err)
+	}
+
+	// hq entries should be gone.
+	if _, ok := state.GetThreadAgent("C-a", "1.1"); ok {
+		t.Error("expected C-a:1.1 to be removed")
+	}
+	if _, ok := state.GetThreadAgent("C-b", "2.2"); ok {
+		t.Error("expected C-b:2.2 to be removed")
+	}
+	// k8s entry should remain.
+	if agent, ok := state.GetThreadAgent("C-c", "3.3"); !ok || agent != "gasboat/crew/k8s" {
+		t.Errorf("expected C-c:3.3 to remain, got (%q, %v)", agent, ok)
+	}
+}
+
 func TestHandleAppMention_InAgentThread(t *testing.T) {
 	daemon := newMockDaemon()
 
