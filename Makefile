@@ -45,7 +45,7 @@ image-agent:
 	docker build \
 		-t $(REGISTRY)/agent:$(VERSION) \
 		-t $(REGISTRY)/agent:latest \
-		images/agent/
+		-f images/agent/Dockerfile .
 
 image-bridge:
 	docker build \

@@ -24,7 +24,7 @@ FROM ubuntu:24.04 AS base
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION=24
 ARG COOP_VERSION=2026.224.0
-ARG BEADS_VERSION=2026.60.2
+ARG BEADS_VERSION=2026.60.3
 ARG TARGETARCH
 
 # ── System packages (minimal) ─────────────────────────────────────
@@ -60,8 +60,8 @@ RUN set -e && \
     if [ -z "${BEADS_VERSION}" ]; then \
       BEADS_VERSION=$(curl -fsSL "https://api.github.com/repos/groblegark/kbeads/releases/latest" | jq -r .tag_name); \
     fi && \
-    case "${TARGETARCH}" in arm64) BD_ARCH=aarch64 ;; *) BD_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://github.com/groblegark/kbeads/releases/download/${BEADS_VERSION}/kd-linux-${BD_ARCH}.tar.gz" \
+    case "${TARGETARCH}" in arm64) BD_ARCH=arm64 ;; *) BD_ARCH=amd64 ;; esac && \
+    curl -fsSL "https://github.com/groblegark/kbeads/releases/download/${BEADS_VERSION}/kd_${BEADS_VERSION}_linux_${BD_ARCH}.tar.gz" \
       | tar -xz -C /usr/local/bin kd
 
 # ── Gasboat CLI (gb) — agent orchestration ──────────────────────
