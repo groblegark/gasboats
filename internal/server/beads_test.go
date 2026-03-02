@@ -271,3 +271,138 @@ func TestGRPCCreateBead_AgentType_WithRequiredFields(t *testing.T) {
 		t.Fatalf("expected kind=config, got %q", resp.Bead.Kind)
 	}
 }
+
+// --- Type alias resolution tests ---
+
+func TestGRPCCreateBead_BundleResolvesToMolecule(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title: "Test bundle alias", Type: "bundle",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Bead.Type != "molecule" {
+		t.Fatalf("expected type=molecule (alias of bundle), got %q", resp.Bead.Type)
+	}
+	if resp.Bead.Kind != "issue" {
+		t.Fatalf("expected kind=issue for molecule, got %q", resp.Bead.Kind)
+	}
+}
+
+func TestGRPCCreateBead_TemplateResolvesToFormula(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title: "Test template alias", Type: "template",
+		Fields: []byte(`{"vars":[],"steps":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Bead.Type != "formula" {
+		t.Fatalf("expected type=formula (alias of template), got %q", resp.Bead.Type)
+	}
+	if resp.Bead.Kind != "data" {
+		t.Fatalf("expected kind=data for formula, got %q", resp.Bead.Kind)
+	}
+}
+
+func TestGRPCCreateBead_MoleculeDirectType(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title: "Direct molecule", Type: "molecule",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Bead.Type != "molecule" {
+		t.Fatalf("expected type=molecule, got %q", resp.Bead.Type)
+	}
+	if resp.Bead.Kind != "issue" {
+		t.Fatalf("expected kind=issue, got %q", resp.Bead.Kind)
+	}
+}
+
+func TestGRPCCreateBead_FormulaDirectType(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title: "Direct formula", Type: "formula",
+		Fields: []byte(`{"vars":[],"steps":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Bead.Type != "formula" {
+		t.Fatalf("expected type=formula, got %q", resp.Bead.Type)
+	}
+	if resp.Bead.Kind != "data" {
+		t.Fatalf("expected kind=data, got %q", resp.Bead.Kind)
+	}
+}
+
+func TestGRPCCreateBead_MoleculeFieldsValidated(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	// Valid molecule fields.
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title:  "Molecule with fields",
+		Type:   "molecule",
+		Fields: []byte(`{"formula_id":"kd-f1","applied_vars":{"a":"b"},"ephemeral":true}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Bead.Type != "molecule" {
+		t.Fatalf("expected type=molecule, got %q", resp.Bead.Type)
+	}
+}
+
+func TestGRPCListBeads_TemplateFilterResolvesToFormula(t *testing.T) {
+	srv, ms, ctx := testCtx(t)
+	ms.beads["kd-f1"] = &model.Bead{
+		ID: "kd-f1", Title: "A formula", Kind: model.KindData, Type: model.TypeFormula, Status: model.StatusOpen,
+	}
+	ms.beads["kd-t1"] = &model.Bead{
+		ID: "kd-t1", Title: "A task", Kind: model.KindIssue, Type: model.TypeTask, Status: model.StatusOpen,
+	}
+
+	// Filter by deprecated "template" type — mock store filters by Type,
+	// so if alias resolution works, we'll get the formula bead.
+	resp, err := srv.ListBeads(ctx, &beadsv1.ListBeadsRequest{Type: []string{"template"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("expected 1 bead (formula via template alias), got %d", resp.Total)
+	}
+	if resp.Beads[0].Type != "formula" {
+		t.Fatalf("expected type=formula, got %q", resp.Beads[0].Type)
+	}
+}
+
+func TestGRPCListBeads_BundleFilterResolvesToMolecule(t *testing.T) {
+	srv, ms, ctx := testCtx(t)
+	ms.beads["kd-m1"] = &model.Bead{
+		ID: "kd-m1", Title: "A molecule", Kind: model.KindIssue, Type: model.TypeMolecule, Status: model.StatusOpen,
+	}
+	ms.beads["kd-t1"] = &model.Bead{
+		ID: "kd-t1", Title: "A task", Kind: model.KindIssue, Type: model.TypeTask, Status: model.StatusOpen,
+	}
+
+	// Filter by deprecated "bundle" type — mock store filters by Type,
+	// so if alias resolution works, we'll get the molecule bead.
+	resp, err := srv.ListBeads(ctx, &beadsv1.ListBeadsRequest{Type: []string{"bundle"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("expected 1 bead (molecule via bundle alias), got %d", resp.Total)
+	}
+	if resp.Beads[0].Type != "molecule" {
+		t.Fatalf("expected type=molecule, got %q", resp.Beads[0].Type)
+	}
+}
