@@ -806,8 +806,13 @@ jiraBridge:
     # project label (e.g., PE issues → project:monorepo instead of project:pe).
     # Example: "gasboat=https://github.com/org/gasboat.git:KD,monorepo=https://gitlab.com/org/repo:PE"
     boatProjects: ""
-    # Disable JIRA issue transitions on bead close (default: transitions enabled)
-    disableTransitions: false
+    # Disable JIRA issue transitions on bead close.
+    # Enabled (true) until the GitLab bridge (kd-PgCL2BShzU) is built:
+    # the bridge will watch MR merge events, set mr_merged=true on the bead,
+    # and jira-bridge will transition to "Review" only when that field is set.
+    # Until then, auto-transitioning on bead close is incorrect because agents
+    # close beads after creating draft MRs, before they are merged.
+    disableTransitions: true
 
   service:
     type: ClusterIP
