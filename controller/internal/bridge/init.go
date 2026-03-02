@@ -147,6 +147,7 @@ func configs() map[string]any {
 				{Name: "jira_url", Type: "string"},
 				{Name: "jira_epic", Type: "string"},
 				{Name: "jira_reporter", Type: "string"},
+				{Name: "jira_xlinks", Type: "string"},
 				{Name: "mr_url", Type: "string"},
 				{Name: "jira_attachment_count", Type: "string"},
 				{Name: "jira_has_images", Type: "string"},
