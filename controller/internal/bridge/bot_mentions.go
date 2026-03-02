@@ -20,7 +20,7 @@ import (
 //  1. If the first word after @gasboat matches a known agent name → route to that agent
 //  2. If in a thread bound to an agent → route to that agent
 //  3. If in a channel mapped to an agent via router → route to that agent
-//  4. Otherwise → broadcast mention to all agents
+//  4. Otherwise → post ephemeral help message
 func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
 	// Ignore bot-triggered mentions.
 	if ev.BotID != "" {
@@ -36,7 +36,6 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	}
 
 	var agent string
-	broadcast := false
 	replyTS := ev.ThreadTimeStamp // timestamp to thread the confirmation reply under
 
 	// Priority 1: Check if the first word is an agent name.
@@ -69,8 +68,18 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 			agent = b.router.GetAgentByChannel(ev.Channel)
 		}
 		if agent == "" {
-			// No agent-specific mapping — treat as a broadcast mention to all agents.
-			broadcast = true
+			// No agent could be resolved — post an ephemeral help message.
+			b.logger.Info("mention: no agent resolved for channel",
+				"channel", ev.Channel, "user", ev.User)
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(ev.Channel, ev.User,
+					slack.MsgOptionText(
+						":thinking_face: No agent is mapped to this channel. "+
+							"Try mentioning a specific agent: `@gasboat <agent-name> <message>`, "+
+							"or mention me in a thread to spawn a thread-bound agent.",
+						false))
+			}
+			return
 		}
 		// Use the mention's own timestamp as the reply anchor so the response
 		// threads back to this message.
@@ -103,11 +112,6 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	title := truncateText(fmt.Sprintf("Mention: %s", text), 80)
 	slackTag := fmt.Sprintf("[slack:%s:%s]", ev.Channel, replyTS)
 	description := fmt.Sprintf("Mention from %s in Slack:\n\n%s\n\n---\n%s", username, text, slackTag)
-
-	if broadcast {
-		b.handleBroadcastMention(ctx, ev.Channel, replyTS, title, description, text, username)
-		return
-	}
 
 	// Create tracking bead assigned to the agent.
 	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
@@ -154,75 +158,6 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 			false),
 		slack.MsgOptionTS(replyTS),
 	)
-}
-
-// handleBroadcastMention handles @gasboat mentions that aren't targeted at a
-// specific agent (not in a thread, not in a dedicated agent channel). It creates
-// an unassigned mention bead and nudges all active agents.
-func (b *Bot) handleBroadcastMention(ctx context.Context, channelID, replyTS, title, description, text, username string) {
-	// Create an unassigned mention bead — any agent can pick it up via gb ready.
-	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
-		Title:       title,
-		Type:        "task",
-		Description: description,
-		Labels:      []string{"slack-mention", "broadcast"},
-		Priority:    2,
-	})
-	if err != nil {
-		b.logger.Error("failed to create broadcast mention bead",
-			"channel", channelID, "error", err)
-		return
-	}
-
-	b.logger.Info("mention: created broadcast bead",
-		"bead", beadID, "user", username)
-
-	// Persist message ref for response relay.
-	if b.state != nil {
-		_ = b.state.SetChatMessage(beadID, MessageRef{
-			ChannelID: channelID,
-			Timestamp: replyTS,
-		})
-	}
-
-	// Nudge all active agents.
-	b.broadcastNudge(ctx, text, beadID)
-
-	// Post confirmation.
-	if b.api != nil {
-		_, _, _ = b.api.PostMessage(channelID,
-			slack.MsgOptionText(
-				fmt.Sprintf(":mega: Broadcast to all agents (tracking: `%s`)", beadID),
-				false),
-			slack.MsgOptionTS(replyTS),
-		)
-	}
-}
-
-// broadcastNudge sends a mention nudge to all active agents.
-func (b *Bot) broadcastNudge(ctx context.Context, text, beadID string) {
-	agents, err := b.daemon.ListAgentBeads(ctx)
-	if err != nil {
-		b.logger.Error("failed to list agents for broadcast nudge", "error", err)
-		return
-	}
-
-	message := fmt.Sprintf("Broadcast mention (bead %s): %s", beadID, text)
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	for _, a := range agents {
-		coopURL := a.Metadata["coop_url"]
-		if coopURL == "" {
-			continue
-		}
-		if err := nudgeCoop(ctx, client, coopURL, message); err != nil {
-			b.logger.Debug("broadcast nudge failed",
-				"agent", a.AgentName, "error", err)
-			continue
-		}
-		b.logger.Info("broadcast nudge sent",
-			"agent", a.AgentName, "bead", beadID)
-	}
 }
 
 // getAgentByThread reverse-maps (channel, thread_ts) to an agent identity
