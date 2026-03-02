@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -63,8 +64,8 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		// In a thread — reverse-lookup which agent owns this thread.
 		agent = b.getAgentByThread(ev.Channel, ev.ThreadTimeStamp)
 		if agent == "" {
-			b.logger.Debug("app_mention in unbound thread (thread-spawn candidate)",
-				"channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp)
+			// Orphan thread — spawn a new ephemeral agent bound to this thread.
+			b.handleThreadSpawn(ctx, ev, text)
 			return
 		}
 	}
@@ -266,6 +267,141 @@ func (b *Bot) resolveAgentFromText(ctx context.Context, text string) (string, st
 		}
 	}
 	return "", text
+}
+
+// handleThreadSpawn spawns an ephemeral agent bound to a Slack thread when
+// @gasboat is mentioned in a thread with no existing agent binding.
+func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionEvent, text string) {
+	channel := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+
+	// Fetch thread context from Slack.
+	threadContext := b.fetchThreadContext(ctx, channel, threadTS)
+
+	// Generate a unique agent name based on the thread timestamp.
+	agentName := "thread-" + sanitizeTS(threadTS)
+
+	// Infer project from channel via router, or use default.
+	project := ""
+	if b.router != nil {
+		if mapped := b.router.GetAgentByChannel(channel); mapped != "" {
+			// Extract project from mapped agent identity if possible.
+			project = projectFromAgentIdentity(mapped)
+		}
+	}
+
+	// Build agent description with thread context.
+	description := fmt.Sprintf("Thread-spawned agent for Slack thread.\n\n"+
+		"## Thread Context\n\n%s\n\n---\n"+
+		"Triggered by: %s", threadContext, text)
+	description = truncateText(description, 4000)
+
+	// Build fields including thread metadata.
+	fields := map[string]string{
+		"agent":                agentName,
+		"mode":                 "job",
+		"role":                 "thread",
+		"project":              project,
+		"slack_thread_channel": channel,
+		"slack_thread_ts":      threadTS,
+		"spawn_source":         "slack-thread",
+	}
+	fieldsJSON, err := json.Marshal(fields)
+	if err != nil {
+		b.logger.Error("failed to marshal agent fields", "error", err)
+		return
+	}
+
+	labels := []string{"slack-thread"}
+	if project != "" {
+		labels = append(labels, "project:"+project)
+	}
+
+	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
+		Title:       agentName,
+		Type:        "agent",
+		Description: description,
+		Fields:      json.RawMessage(fieldsJSON),
+		Labels:      labels,
+	})
+	if err != nil {
+		b.logger.Error("failed to create thread-spawned agent bead",
+			"channel", channel, "thread_ts", threadTS, "error", err)
+		return
+	}
+
+	b.logger.Info("thread-spawn: created agent bead",
+		"bead", beadID, "agent", agentName,
+		"channel", channel, "thread_ts", threadTS)
+
+	// Record thread→agent mapping in state.
+	if b.state != nil {
+		_ = b.state.SetThreadAgent(channel, threadTS, agentName)
+	}
+
+	// Post confirmation reply in thread.
+	if b.api != nil {
+		_, _, _ = b.api.PostMessage(channel,
+			slack.MsgOptionText(
+				fmt.Sprintf(":zap: Spinning up an agent to help here... (tracking: `%s`)", beadID),
+				false),
+			slack.MsgOptionTS(threadTS),
+		)
+	}
+}
+
+// fetchThreadContext retrieves thread messages from Slack, filtering out bot
+// messages to keep the context clean for the new agent.
+func (b *Bot) fetchThreadContext(ctx context.Context, channel, threadTS string) string {
+	msgs, _, _, err := b.api.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		ChannelID: channel,
+		Timestamp: threadTS,
+		Limit:     50,
+	})
+	if err != nil {
+		b.logger.Error("failed to fetch thread context",
+			"channel", channel, "thread_ts", threadTS, "error", err)
+		return "(could not fetch thread context)"
+	}
+
+	var buf strings.Builder
+	for _, msg := range msgs {
+		// Skip bot messages to keep the prompt clean.
+		if msg.BotID != "" || msg.SubType == "bot_message" {
+			continue
+		}
+		author := msg.User
+		if author == "" {
+			author = msg.Username
+		}
+		line := fmt.Sprintf("**%s**: %s\n", author, msg.Text)
+		if buf.Len()+len(line) > 3000 {
+			buf.WriteString("\n_(thread truncated)_\n")
+			break
+		}
+		buf.WriteString(line)
+	}
+
+	if buf.Len() == 0 {
+		return "(empty thread)"
+	}
+	return buf.String()
+}
+
+// sanitizeTS converts a Slack timestamp like "1234567890.123456" to a safe
+// identifier fragment "1234567890-123456".
+func sanitizeTS(ts string) string {
+	return strings.ReplaceAll(ts, ".", "-")
+}
+
+// projectFromAgentIdentity extracts the project name from an agent identity
+// like "gasboat/crew/agent-name" → "gasboat". Returns "" if not project-qualified.
+func projectFromAgentIdentity(identity string) string {
+	parts := strings.Split(identity, "/")
+	if len(parts) >= 2 {
+		return parts[0]
+	}
+	return ""
 }
 
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.

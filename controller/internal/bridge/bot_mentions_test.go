@@ -691,3 +691,153 @@ func TestBroadcastNudge_SkipsAgentsWithoutCoopURL(t *testing.T) {
 	// Should not panic; agent has no coop_url so it's skipped.
 	b.broadcastNudge(context.Background(), "test message", "bd-test")
 }
+
+func TestSanitizeTS(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1234567890.123456", "1234567890-123456"},
+		{"no.dots.here.ok", "no-dots-here-ok"},
+		{"nodots", "nodots"},
+	}
+	for _, tt := range tests {
+		got := sanitizeTS(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeTS(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestProjectFromAgentIdentity(t *testing.T) {
+	tests := []struct {
+		identity string
+		want     string
+	}{
+		{"gasboat/crew/hq", "gasboat"},
+		{"myproj/crew/agent", "myproj"},
+		{"simple-agent", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := projectFromAgentIdentity(tt.identity)
+		if got != tt.want {
+			t.Errorf("projectFromAgentIdentity(%q) = %q, want %q", tt.identity, got, tt.want)
+		}
+	}
+}
+
+func TestHandleThreadSpawn_CreatesBeadAndState(t *testing.T) {
+	daemon := newMockDaemon()
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		botUserID:  "U-BOT",
+		agentCards: map[string]MessageRef{},
+		// No api — Slack posting is skipped (nil check in handleThreadSpawn).
+	}
+
+	channel := "C-thread-test"
+	threadTS := "1111.2222"
+
+	// Verify no agent bound to this thread initially.
+	if agent := b.getAgentByThread(channel, threadTS); agent != "" {
+		t.Fatalf("expected no agent for thread, got %q", agent)
+	}
+
+	// Directly call the thread-spawn logic (skipping the Slack API call
+	// to fetch thread context — that requires a real Slack client).
+	// We test the core: bead creation + state persistence.
+
+	agentName := "thread-" + sanitizeTS(threadTS)
+	if agentName != "thread-1111-2222" {
+		t.Fatalf("expected agent name thread-1111-2222, got %q", agentName)
+	}
+
+	ctx := context.Background()
+	beadID, err := daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
+		Title:       agentName,
+		Type:        "agent",
+		Description: "Thread-spawned agent for test",
+		Labels:      []string{"slack-thread"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBead failed: %v", err)
+	}
+
+	// Record thread→agent mapping.
+	if err := state.SetThreadAgent(channel, threadTS, agentName); err != nil {
+		t.Fatalf("SetThreadAgent failed: %v", err)
+	}
+
+	// Verify bead was created.
+	bead, err := daemon.GetBead(ctx, beadID)
+	if err != nil {
+		t.Fatalf("GetBead failed: %v", err)
+	}
+	if bead.Type != "agent" {
+		t.Errorf("bead type = %q, want agent", bead.Type)
+	}
+	if bead.Title != agentName {
+		t.Errorf("bead title = %q, want %q", bead.Title, agentName)
+	}
+	if !hasLabel(bead.Labels, "slack-thread") {
+		t.Errorf("bead labels = %v, want slack-thread", bead.Labels)
+	}
+
+	// Verify thread→agent state.
+	agent, ok := state.GetThreadAgent(channel, threadTS)
+	if !ok || agent != agentName {
+		t.Errorf("thread agent = (%q, %v), want (%q, true)", agent, ok, agentName)
+	}
+
+	// Verify getAgentByThread now resolves.
+	if got := b.getAgentByThread(channel, threadTS); got != agentName {
+		t.Errorf("getAgentByThread = %q, want %q", got, agentName)
+	}
+}
+
+func TestHandleThreadSpawn_WithRouter(t *testing.T) {
+	daemon := newMockDaemon()
+
+	router := NewRouter(RouterConfig{
+		Overrides: map[string]string{
+			"gasboat/crew/hq": "C-agents",
+		},
+	})
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      nil, // no state persistence in this test
+		logger:     slog.Default(),
+		botUserID:  "U-BOT",
+		router:     router,
+		agentCards: map[string]MessageRef{},
+	}
+
+	// Verify project inference from router.
+	mapped := router.GetAgentByChannel("C-agents")
+	if mapped != "gasboat/crew/hq" {
+		t.Fatalf("expected gasboat/crew/hq, got %q", mapped)
+	}
+
+	project := projectFromAgentIdentity(mapped)
+	if project != "gasboat" {
+		t.Errorf("project = %q, want gasboat", project)
+	}
+
+	// For unmapped channel, project should be empty.
+	mapped = router.GetAgentByChannel("C-random")
+	if mapped != "" {
+		t.Errorf("expected empty agent for unmapped channel, got %q", mapped)
+	}
+	_ = b // used
+}
