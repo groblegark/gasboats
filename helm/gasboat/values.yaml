@@ -825,3 +825,55 @@ jiraBridge:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+
+# =============================================================================
+# GitLab Bridge — standalone beads→GitLab MR merge sync bridge
+# Watches GitLab for MR merges (webhook + polling) and updates bead fields.
+# Runs independently from the agent controller (separate deployment).
+# =============================================================================
+gitlabBridge:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboat/gitlab-bridge
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  # GitLab connection and polling config
+  gitlab:
+    # GitLab instance URL (required, e.g., "https://gitlab.com")
+    baseURL: ""
+    # Direct API token (for dev/testing)
+    apiToken: ""
+    # K8s secret name with key: api-token (for production)
+    secretName: ""
+    # Webhook secret for X-Gitlab-Token verification
+    webhookSecret: ""
+    # K8s secret name with key: webhook-secret (for production)
+    webhookSecretName: ""
+    # GitLab group ID to poll for merged MRs (required)
+    groupID: ""
+    # Polling interval (e.g., "5m", "10m")
+    pollInterval: "5m"
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

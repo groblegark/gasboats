@@ -1,4 +1,4 @@
-.PHONY: build build-bridge build-jira-bridge build-advice-viewer test lint e2e image image-agent image-bridge image-jira-bridge image-advice-viewer image-all push push-agent push-bridge push-jira-bridge push-advice-viewer push-all helm-package helm-template release release-dry-run clean
+.PHONY: build build-bridge build-jira-bridge build-gitlab-bridge build-advice-viewer test lint e2e image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-all push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-all helm-package helm-template release release-dry-run clean
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -17,6 +17,9 @@ build-bridge:
 
 build-jira-bridge:
 	cd controller && go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/jira-bridge ./cmd/jira-bridge/
+
+build-gitlab-bridge:
+	cd controller && go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/gitlab-bridge ./cmd/gitlab-bridge/
 
 build-advice-viewer:
 	cd controller && go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/advice-viewer ./cmd/advice-viewer/
@@ -64,6 +67,14 @@ image-jira-bridge:
 		-t $(REGISTRY)/jira-bridge:latest \
 		-f images/jira-bridge/Dockerfile .
 
+image-gitlab-bridge:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		-t $(REGISTRY)/gitlab-bridge:$(VERSION) \
+		-t $(REGISTRY)/gitlab-bridge:latest \
+		-f images/gitlab-bridge/Dockerfile .
+
 image-advice-viewer:
 	docker build \
 		--build-arg VERSION=$(VERSION) \
@@ -72,7 +83,7 @@ image-advice-viewer:
 		-t $(REGISTRY)/advice-viewer:latest \
 		-f images/advice-viewer/Dockerfile .
 
-image-all: image image-agent image-bridge image-jira-bridge image-advice-viewer
+image-all: image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer
 
 push: image
 	docker push $(REGISTRY)/controller:$(VERSION)
@@ -90,11 +101,15 @@ push-jira-bridge: image-jira-bridge
 	docker push $(REGISTRY)/jira-bridge:$(VERSION)
 	docker push $(REGISTRY)/jira-bridge:latest
 
+push-gitlab-bridge: image-gitlab-bridge
+	docker push $(REGISTRY)/gitlab-bridge:$(VERSION)
+	docker push $(REGISTRY)/gitlab-bridge:latest
+
 push-advice-viewer: image-advice-viewer
 	docker push $(REGISTRY)/advice-viewer:$(VERSION)
 	docker push $(REGISTRY)/advice-viewer:latest
 
-push-all: push push-agent push-bridge push-jira-bridge push-advice-viewer
+push-all: push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer
 
 # ── Helm ────────────────────────────────────────────────────────────────
 

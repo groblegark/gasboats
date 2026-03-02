@@ -1,0 +1,108 @@
+{{- if .Values.gitlabBridge.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gasboat.fullname" . }}-gitlab-bridge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gitlab-bridge
+spec:
+  replicas: {{ .Values.gitlabBridge.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "gasboat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gitlab-bridge
+  template:
+    metadata:
+      labels:
+        {{- include "gasboat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gitlab-bridge
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: gitlab-bridge
+          image: "{{ .Values.gitlabBridge.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.gitlabBridge.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.gitlabBridge.image.pullPolicy "global" .Values.global) }}
+          ports:
+            - name: http
+              containerPort: 8092
+              protocol: TCP
+          env:
+            # Beads daemon connection
+            - name: BEADS_HTTP_ADDR
+              value: "http://{{ include "gasboat.beads.host" . }}:{{ include "gasboat.beads.httpPort" . }}"
+            # GitLab connection
+            {{- if .Values.gitlabBridge.gitlab.baseURL }}
+            - name: GITLAB_BASE_URL
+              value: {{ .Values.gitlabBridge.gitlab.baseURL | quote }}
+            {{- end }}
+            {{- if .Values.gitlabBridge.gitlab.apiToken }}
+            - name: GITLAB_API_TOKEN
+              value: {{ .Values.gitlabBridge.gitlab.apiToken | quote }}
+            {{- else if .Values.gitlabBridge.gitlab.secretName }}
+            - name: GITLAB_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitlabBridge.gitlab.secretName }}
+                  key: api-token
+            {{- end }}
+            {{- if .Values.gitlabBridge.gitlab.webhookSecret }}
+            - name: GITLAB_WEBHOOK_SECRET
+              value: {{ .Values.gitlabBridge.gitlab.webhookSecret | quote }}
+            {{- else if .Values.gitlabBridge.gitlab.webhookSecretName }}
+            - name: GITLAB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitlabBridge.gitlab.webhookSecretName }}
+                  key: webhook-secret
+            {{- end }}
+            {{- if .Values.gitlabBridge.gitlab.groupID }}
+            - name: GITLAB_GROUP_ID
+              value: {{ .Values.gitlabBridge.gitlab.groupID | quote }}
+            {{- end }}
+            {{- if .Values.gitlabBridge.gitlab.pollInterval }}
+            - name: GITLAB_POLL_INTERVAL
+              value: {{ .Values.gitlabBridge.gitlab.pollInterval | quote }}
+            {{- end }}
+            - name: LISTEN_ADDR
+              value: ":8092"
+            - name: STATE_PATH
+              value: "/data/gitlab-bridge-state.json"
+            {{- if .Values.gitlabBridge.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ .Values.gitlabBridge.logLevel | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: state
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.gitlabBridge.resources | nindent 12 }}
+      volumes:
+        - name: state
+          emptyDir: {}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.gitlabBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
+      {{- with .Values.gitlabBridge.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gitlabBridge.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
