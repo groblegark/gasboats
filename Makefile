@@ -43,6 +43,7 @@ image:
 
 image-agent:
 	docker build \
+		--platform linux/amd64 \
 		-t $(REGISTRY)/agent:$(VERSION) \
 		-t $(REGISTRY)/agent:latest \
 		-f images/agent/Dockerfile .
