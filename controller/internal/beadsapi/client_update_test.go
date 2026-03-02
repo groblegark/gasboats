@@ -105,6 +105,66 @@ func TestUpdateBeadFields_HandlesNilExistingFields(t *testing.T) {
 	}
 }
 
+func TestUpdateBeadFields_CoercesBooleans(t *testing.T) {
+	var patchBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			bead := beadJSON{
+				ID:     "bd-bool",
+				Fields: json.RawMessage(`{"existing":"keep"}`),
+			}
+			_ = json.NewEncoder(w).Encode(bead)
+
+		case r.Method == http.MethodPatch:
+			patchBody, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{baseURL: srv.URL, httpClient: srv.Client()}
+	err := c.UpdateBeadFields(context.Background(), "bd-bool", map[string]string{
+		"mr_merged":  "true",
+		"mr_approved": "false",
+		"mr_state":    "merged",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Parse the PATCH body and verify booleans are JSON booleans, not strings.
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(patchBody, &body); err != nil {
+		t.Fatalf("failed to unmarshal PATCH body: %v", err)
+	}
+	fieldsRaw := body["fields"]
+
+	// Unmarshal to map[string]any to check types.
+	var fields map[string]any
+	if err := json.Unmarshal(fieldsRaw, &fields); err != nil {
+		t.Fatalf("failed to unmarshal fields: %v", err)
+	}
+
+	// mr_merged should be boolean true, not string "true".
+	if v, ok := fields["mr_merged"].(bool); !ok || !v {
+		t.Errorf("expected mr_merged=true (bool), got %v (%T)", fields["mr_merged"], fields["mr_merged"])
+	}
+	// mr_approved should be boolean false.
+	if v, ok := fields["mr_approved"].(bool); !ok || v {
+		t.Errorf("expected mr_approved=false (bool), got %v (%T)", fields["mr_approved"], fields["mr_approved"])
+	}
+	// mr_state should remain a string.
+	if v, ok := fields["mr_state"].(string); !ok || v != "merged" {
+		t.Errorf("expected mr_state=\"merged\" (string), got %v (%T)", fields["mr_state"], fields["mr_state"])
+	}
+	// existing should remain a string.
+	if v, ok := fields["existing"].(string); !ok || v != "keep" {
+		t.Errorf("expected existing=\"keep\" (string), got %v (%T)", fields["existing"], fields["existing"])
+	}
+}
+
 // --- UpdateBeadNotes tests ---
 
 func TestUpdateBeadNotes_SendsCorrectBody(t *testing.T) {
