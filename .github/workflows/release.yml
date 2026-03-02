@@ -122,12 +122,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger gastown rebuild
+      - name: Trigger gasboat rebuild
         if: success()
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_PAT }}
         run: |
-          gh api repos/groblegark/gastown/dispatches \
+          gh api repos/groblegark/gasboat/dispatches \
             -f event_type=coop-release \
             -f client_payload[tag]=${{ github.ref_name }} || true
 
