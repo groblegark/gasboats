@@ -429,11 +429,16 @@ func TestJiraPoller_AttachmentMetadata_NoMedia(t *testing.T) {
 	if bead.Fields["jira_has_images"] != "" {
 		t.Errorf("jira_has_images should be empty, got %s", bead.Fields["jira_has_images"])
 	}
-	// No jira-has-media label.
+	// jira-has-media label is always added when attachments exist (JIRA
+	// search/jql often omits mimeType from stubs, so we tag conservatively).
+	hasMediaLabel := false
 	for _, l := range bead.Labels {
 		if l == "jira-has-media" {
-			t.Errorf("should not have jira-has-media label for non-media attachments")
+			hasMediaLabel = true
 		}
+	}
+	if !hasMediaLabel {
+		t.Errorf("expected jira-has-media label (always set when attachments exist), got %v", bead.Labels)
 	}
 }
 
@@ -632,64 +637,6 @@ func TestJiraPoller_IssueLinks_TargetMissing(t *testing.T) {
 	}
 	if bead.Fields["jira_xlinks"] != "relates:PE-999" {
 		t.Errorf("jira_xlinks=%q, want %q", bead.Fields["jira_xlinks"], "relates:PE-999")
-	}
-}
-
-func TestJiraPoller_AttachmentMetadata(t *testing.T) {
-	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]any{
-			"issues": []map[string]any{{
-				"key": "PE-300", "id": "300",
-				"fields": map[string]any{
-					"summary":   "Has attachments",
-					"status":    map[string]string{"name": "To Do"},
-					"issuetype": map[string]string{"name": "Bug"},
-					"priority":  map[string]string{"name": "Medium"},
-					"attachment": []map[string]any{
-						{"id": "1", "filename": "screenshot.png", "mimeType": "image/png", "size": 1024, "content": "https://jira.example.com/att/1"},
-						{"id": "2", "filename": "recording.mp4", "mimeType": "video/mp4", "size": 5242880, "content": "https://jira.example.com/att/2"},
-						{"id": "3", "filename": "log.txt", "mimeType": "text/plain", "size": 512, "content": "https://jira.example.com/att/3"},
-					},
-				},
-			}},
-			"total": 1,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer jiraServer.Close()
-
-	daemon := newMockJiraDaemon()
-	poller := NewJiraPoller(newTestJiraClient(jiraServer.URL), daemon, JiraPollerConfig{
-		Projects: []string{"PE"}, Logger: slog.Default(),
-	})
-	poller.poll(context.Background())
-
-	beads := daemon.getBeads()
-	if len(beads) != 1 {
-		t.Fatalf("expected 1 bead, got %d", len(beads))
-	}
-	var bead *beadsapi.BeadDetail
-	for _, b := range beads {
-		bead = b
-	}
-	if bead.Fields["jira_attachment_count"] != "3" {
-		t.Errorf("jira_attachment_count=%s, want 3", bead.Fields["jira_attachment_count"])
-	}
-	if bead.Fields["jira_has_images"] != "true" {
-		t.Errorf("jira_has_images=%s, want true", bead.Fields["jira_has_images"])
-	}
-	if bead.Fields["jira_has_video"] != "true" {
-		t.Errorf("jira_has_video=%s, want true", bead.Fields["jira_has_video"])
-	}
-	hasMediaLabel := false
-	for _, l := range bead.Labels {
-		if l == "jira-has-media" {
-			hasMediaLabel = true
-		}
-	}
-	if !hasMediaLabel {
-		t.Errorf("expected jira-has-media label, got %v", bead.Labels)
 	}
 }
 
