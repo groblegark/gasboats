@@ -793,6 +793,7 @@ tasks:
 
       # whisper-cli (audio transcription for JIRA video attachments)
       WHISPER_CPP_VERSION=1.8.3
+      sudo apt-get -y update && sudo apt-get -y install --no-install-recommends cmake g++
       curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
         | tar -xz -C /tmp
       cmake -S /tmp/whisper.cpp-${WHISPER_CPP_VERSION} -B /tmp/whisper-build \

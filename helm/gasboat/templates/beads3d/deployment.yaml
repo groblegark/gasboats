@@ -49,7 +49,7 @@ spec:
       {{- end }}
       containers:
         - name: beads3d
-          image: "{{ .Values.beads3d.image.repository }}:{{ .Values.beads3d.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.beads3d.image.repository }}:{{ if .Values.beads3d.image.tag }}{{ .Values.beads3d.image.tag }}{{ else }}{{ .Chart.AppVersion }}{{ end }}"
           imagePullPolicy: {{ .Values.beads3d.image.pullPolicy }}
           ports:
             - name: http
