@@ -146,11 +146,11 @@ func runLocal(ctx context.Context, agentName, agentBeadID, role, dir, agentComma
 	coopURL := fmt.Sprintf("http://127.0.0.1:%d", coopPort)
 	fmt.Printf("[gb agent start] Starting coop on port %d...\n", coopPort)
 
-	// Materialize workspace .claude/settings.json via gb setup claude.
-	// Local mode: don't write user-level settings (empty claudeDir) to
-	// avoid overwriting the developer's personal ~/.claude/settings.json.
+	// Materialize settings via gb setup claude.
+	// In local mode the daemon is typically unavailable, so this falls
+	// back to runSetupClaudeDefaults which only writes workspace hooks.
 	fmt.Printf("[gb agent start] Materializing hooks (gb setup claude)...\n")
-	if err := runSetupClaude(ctx, dir, role, ""); err != nil {
+	if err := runSetupClaude(ctx, dir, role); err != nil {
 		fmt.Fprintf(os.Stderr, "[gb agent start] config beads not found, installing defaults...\n")
 		if err2 := runSetupClaudeDefaults(dir); err2 != nil {
 			fmt.Fprintf(os.Stderr, "[gb agent start] warning: could not write .claude/settings.json: %v\n", err2)
