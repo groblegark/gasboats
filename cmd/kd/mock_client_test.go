@@ -17,6 +17,10 @@ type mockBeadsClient struct {
 
 	// Call tracking.
 	CreateBeadCalls    []*client.CreateBeadRequest
+	UpdateBeadCalls    []struct {
+		ID  string
+		Req *client.UpdateBeadRequest
+	}
 	GetBeadCalls       []string
 	AddDepCalls        []*client.AddDependencyRequest
 	CloseBeadCalls     []struct{ ID, ClosedBy string }
@@ -34,6 +38,7 @@ type mockBeadsClient struct {
 	// Error injection.
 	CreateErr    error
 	GetErr       error
+	UpdateErr    error
 	AddDepErr    error
 	CloseErr     error
 	DeleteErr    error
@@ -103,7 +108,19 @@ func (m *mockBeadsClient) ListBeads(_ context.Context, req *client.ListBeadsRequ
 	return &client.ListBeadsResponse{}, nil
 }
 
-func (m *mockBeadsClient) UpdateBead(_ context.Context, id string, _ *client.UpdateBeadRequest) (*model.Bead, error) {
+func (m *mockBeadsClient) UpdateBead(_ context.Context, id string, req *client.UpdateBeadRequest) (*model.Bead, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.UpdateBeadCalls = append(m.UpdateBeadCalls, struct {
+		ID  string
+		Req *client.UpdateBeadRequest
+	}{id, req})
+	if m.UpdateErr != nil {
+		return nil, m.UpdateErr
+	}
+	if b, ok := m.Beads[id]; ok {
+		return b, nil
+	}
 	return &model.Bead{ID: id}, nil
 }
 

@@ -27,6 +27,8 @@ func init() {
 	formulaCmd.AddCommand(formulaCreateCmd)
 	formulaCmd.AddCommand(formulaListCmd)
 	formulaCmd.AddCommand(formulaShowCmd)
+	formulaCmd.AddCommand(formulaDumpCmd)
+	formulaCmd.AddCommand(formulaUpdateCmd)
 	formulaCmd.AddCommand(formulaApplyCmd)
 	formulaCmd.AddCommand(newPourCmd())
 	formulaCmd.AddCommand(newWispCmd())
