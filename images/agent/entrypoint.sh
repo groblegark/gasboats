@@ -319,17 +319,22 @@ if [ "${MATERIALIZED}" = "0" ]; then
 fi
 
 # ── MCP server configuration ─────────────────────────────────────────────
-# Inject Playwright MCP server into user-level settings if the binary is
-# available and the settings file doesn't already have it configured.
-# This covers the daemon-materialized path (gb setup claude) in addition
-# to the fallback path above.
-if command -v playwright-mcp &>/dev/null && [ -f "${CLAUDE_DIR}/settings.json" ]; then
-    if ! jq -e '.mcpServers.playwright' "${CLAUDE_DIR}/settings.json" >/dev/null 2>&1; then
+# Inject Playwright MCP server into project-level .mcp.json if the binary
+# is available. Claude Code reads MCP servers from ~/.claude.json (user
+# scope) or {workspace}/.mcp.json (project scope) — NOT from
+# ~/.claude/settings.json. We use the project-scope file so existing
+# .mcp.json configs (e.g. Mezmo in monorepo) are preserved via merge.
+MCP_FILE="${WORKSPACE}/.mcp.json"
+if command -v playwright-mcp &>/dev/null; then
+    if [ ! -f "${MCP_FILE}" ]; then
+        echo '{"mcpServers":{}}' > "${MCP_FILE}"
+    fi
+    if ! jq -e '.mcpServers.playwright' "${MCP_FILE}" >/dev/null 2>&1; then
         MCP_JSON='{"playwright":{"command":"playwright-mcp","args":["--headless","--no-sandbox"]}}'
         jq --argjson m "${MCP_JSON}" '.mcpServers = ((.mcpServers // {}) * $m)' \
-            "${CLAUDE_DIR}/settings.json" > "${CLAUDE_DIR}/settings.json.tmp" && \
-            mv "${CLAUDE_DIR}/settings.json.tmp" "${CLAUDE_DIR}/settings.json"
-        echo "[entrypoint] Injected Playwright MCP server into user settings"
+            "${MCP_FILE}" > "${MCP_FILE}.tmp" && \
+            mv "${MCP_FILE}.tmp" "${MCP_FILE}"
+        echo "[entrypoint] Injected Playwright MCP server into ${MCP_FILE}"
     fi
 fi
 
