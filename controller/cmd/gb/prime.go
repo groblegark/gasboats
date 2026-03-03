@@ -53,7 +53,8 @@ func runPrime(cmd *cobra.Command, args []string) error {
 	agentID := resolvePrimeAgentIdentity(cmd)
 
 	// 1. Workflow context.
-	outputWorkflowContext(w)
+	role := os.Getenv("BOAT_ROLE")
+	outputWorkflowContext(w, role)
 
 	// 2. Advice.
 	if !primeNoAdvice && agentID != "" {
@@ -92,8 +93,11 @@ func resolvePrimeAgentIdentity(cmd *cobra.Command) string {
 }
 
 // outputWorkflowContext writes the core workflow context section.
-func outputWorkflowContext(w io.Writer) {
-	ctx := `# Beads Workflow Context
+// The role parameter controls which sections are included:
+//   - "polecat": omits Finding Work / Starting work sections, uses single-task lifecycle
+//   - all others (crew, captain, ""): full workflow context
+func outputWorkflowContext(w io.Writer, role string) {
+	header := `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`gb prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this when configured
@@ -118,7 +122,12 @@ func outputWorkflowContext(w io.Writer) {
 - Persistence you don't need beats lost context
 - Git workflow: beads auto-synced by Postgres backend
 - Session management: check ` + "`gb ready`" + ` for available work
+`
+	fmt.Fprint(w, header)
 
+	// Finding Work and Starting work sections — omitted for polecat.
+	if role != "polecat" {
+		findingWork := `
 ## Essential Commands
 
 ### Finding Work
@@ -167,7 +176,20 @@ kd create "Implement feature X" --type=feature
 kd create "Write tests for X" --type=task
 kd dep add <tests-id> <feature-id>  # Tests depend on Feature
 ` + "```" + `
+`
+		fmt.Fprint(w, findingWork)
+	} else {
+		polecatCommands := `
+## Essential Commands
 
+- ` + "`kd show <id>`" + ` - View your assigned task details
+- ` + "`kd close <id>`" + ` - Mark your task complete
+- ` + "`gb done`" + ` - Despawn after completing your task
+`
+		fmt.Fprint(w, polecatCommands)
+	}
+
+	decisions := `
 ## Human Decisions
 
 When you need human input (approval, choices, clarification), create a decision checkpoint.
@@ -209,7 +231,34 @@ Two complementary mechanisms restore context after interruptions:
 - Run by agents after compaction, ` + "`/clear`" + `, or a new session
 - Injects fresh workflow context: assignment, roster, advice, auto-assign
 - Hooks auto-call this on SessionStart — run manually if context is stale
+`
+	fmt.Fprint(w, decisions)
 
+	// Lifecycle section — polecat gets single-task language, others get full.
+	if role == "polecat" {
+		lifecycle := `
+## Single-Task Lifecycle
+
+You are a **single-task ephemeral agent**. Your lifecycle is simple:
+
+1. Check your pre-assigned task (` + "`BOAT_TASK_ID`" + ` or ` + "`kd list --status=in_progress`" + `)
+2. Do the work thoroughly (commit, push)
+3. Close the bead: ` + "`kd close <bead-id>`" + `
+4. Despawn: ` + "`gb done`" + `
+
+` + "```bash" + `
+kd show <bead-id>          # review your assigned task
+# ... do the work ...
+kd close <bead-id>         # close completed work
+gb done                    # despawn — do NOT look for more work
+` + "```" + `
+
+**Do NOT** run ` + "`gb ready`" + ` or look for additional tasks. You exist for one task only.
+**Do NOT** just exit without calling ` + "`gb done`" + ` — exiting alone triggers an automatic restart.
+`
+		fmt.Fprint(w, lifecycle)
+	} else {
+		lifecycle := `
 ## Agents Are Ephemeral
 
 Agents are ephemeral by default: start up, do the work, then despawn. Do NOT linger or idle-loop waiting for more work.
@@ -226,7 +275,11 @@ gb done                # signal entrypoint not to restart this pod
 
 **Do NOT** just exit without calling ` + "`gb done`" + ` — exiting alone triggers an automatic restart.
 If there is more work in the ready queue, you MAY claim another task before stopping.
+`
+		fmt.Fprint(w, lifecycle)
+	}
 
+	stopGate := `
 ## Stop Gate Contract
 
 The **decision gate** is the Slack operator's re-entry handle.
@@ -239,7 +292,7 @@ The **decision gate** is the Slack operator's re-entry handle.
   1. ` + "`gb done`" + ` — polite despawn when you have finished your work (preferred)
   2. ` + "`gb yield`" + ` — blocks until a human resolves your decision bead (use when genuinely blocked)
 `
-	fmt.Fprint(w, ctx)
+	fmt.Fprint(w, stopGate)
 }
 
 // outputJackSection fetches active/expired jacks and outputs warnings.

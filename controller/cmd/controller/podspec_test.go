@@ -11,6 +11,28 @@ import (
 	"gasboat/controller/internal/subscriber"
 )
 
+func TestModeForRole(t *testing.T) {
+	tests := []struct {
+		mode string
+		role string
+		want string
+	}{
+		{"", "captain", "crew"},
+		{"", "crew", "crew"},
+		{"", "job", "job"},
+		{"", "polecat", "job"},
+		{"", "unknown", "crew"},
+		{"crew", "polecat", "crew"}, // explicit mode takes precedence
+		{"job", "crew", "job"},      // explicit mode takes precedence
+	}
+	for _, tc := range tests {
+		got := modeForRole(tc.mode, tc.role)
+		if got != tc.want {
+			t.Errorf("modeForRole(%q, %q) = %q, want %q", tc.mode, tc.role, got, tc.want)
+		}
+	}
+}
+
 func TestOverrideOrAppendSecretEnv_OverridesExisting(t *testing.T) {
 	envs := []podmanager.SecretEnvSource{
 		{EnvName: "GITHUB_TOKEN", SecretName: "global-gh", SecretKey: "token"},

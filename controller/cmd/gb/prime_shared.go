@@ -9,6 +9,11 @@ import (
 	"os"
 )
 
+// primeRole returns the agent role from BOAT_ROLE env var.
+func primeRole() string {
+	return os.Getenv("BOAT_ROLE")
+}
+
 // outputPrimeForHook generates prime output wrapped in a system-reminder tag.
 // This is called by bus emit on SessionStart and by hook prime.
 func outputPrimeForHook(w io.Writer, agentID string) {
@@ -17,7 +22,7 @@ func outputPrimeForHook(w io.Writer, agentID string) {
 	// Thread context — prepended for thread-spawned agents.
 	outputSlackThreadContext(w)
 
-	outputWorkflowContext(w)
+	outputWorkflowContext(w, primeRole())
 	if agentID != "" {
 		outputAdvice(w, agentID)
 	}

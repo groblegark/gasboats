@@ -108,6 +108,18 @@ func setupPVC(cfg k8sConfig) error {
 	return nil
 }
 
+// roleBlurb returns a role-specific identity description for CLAUDE.md.
+func roleBlurb(role, projectLine string) string {
+	switch role {
+	case "captain":
+		return "You are the **captain** — a persistent team lead" + projectLine + ". You coordinate crew agents, assign work, review output, and ensure project objectives are met. You persist across sessions."
+	case "polecat":
+		return "You are a **polecat** — a single-task ephemeral agent" + projectLine + ". You were spawned for one specific task. Complete it, push your work, close the bead, and call `gb done`. Do NOT look for more work."
+	default: // crew and others
+		return "You are a **crew** agent — a persistent team member" + projectLine + ". Pick up tasks from the ready queue, complete them thoroughly, push your work, and move to the next task. You persist across sessions."
+	}
+}
+
 // writeClaudeMD writes CLAUDE.md into the workspace if it doesn't already
 // exist, then appends the dev-tools table if the guard string is absent.
 func writeClaudeMD(cfg k8sConfig) {
@@ -120,7 +132,7 @@ func writeClaudeMD(cfg k8sConfig) {
 		}
 		content := fmt.Sprintf(`# Gasboat Agent: %s
 
-You are the **%s** agent%s.
+%s
 Agent name: %s
 
 ## Quick Reference
@@ -154,7 +166,7 @@ When you hit a Stop hook block, you MUST create a decision checkpoint:
    `+"```"+`
 3. Run `+"`"+`gb yield`+"`"+` — **blocks until human responds. Do NOT run in background. Do NOT return control. Just wait.**
 4. When `+"`"+`gb yield`+"`"+` returns, act on the response
-`, cfg.role, cfg.role, projectLine, cfg.agent)
+`, cfg.role, roleBlurb(cfg.role, projectLine), cfg.agent)
 
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			fmt.Printf("[gb agent start] warning: write CLAUDE.md: %v\n", err)
