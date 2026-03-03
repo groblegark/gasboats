@@ -951,3 +951,29 @@ tasks:
       echo "Re-tagged kbeads:latest → kbeads:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
+
+  - key: retag-beads3d
+    use: [code, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -euo pipefail
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      echo "Copying beads3d:latest → beads3d:${TAG}"
+      crane cp ghcr.io/groblegark/beads3d:latest "ghcr.io/groblegark/beads3d:${TAG}"
+
+      # Verify the tag was actually created
+      crane digest "ghcr.io/groblegark/beads3d:${TAG}" > /dev/null
+      echo "Verified beads3d:${TAG} exists"
+
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "ghcr.io/groblegark/beads3d:${TAG}" "$APP_VERSION"
+        crane digest "ghcr.io/groblegark/beads3d:${APP_VERSION}" > /dev/null
+        echo "Verified beads3d:${APP_VERSION} exists"
+      fi
+      echo "Re-tagged beads3d:latest → beads3d:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
