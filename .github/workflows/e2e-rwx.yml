@@ -51,7 +51,9 @@ jobs:
 
       - name: Install RWX CLI
         run: |
-          curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          curl -fsSL https://github.com/rwx-cloud/cli/releases/latest/download/rwx-linux-x86_64 -o /usr/local/bin/rwx || \
+            curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          chmod +x /usr/local/bin/rwx
           rwx --version
 
       - name: Dispatch gasboat-e2e
@@ -91,7 +93,9 @@ jobs:
 
       - name: Install RWX CLI
         run: |
-          curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          curl -fsSL https://github.com/rwx-cloud/cli/releases/latest/download/rwx-linux-x86_64 -o /usr/local/bin/rwx || \
+            curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          chmod +x /usr/local/bin/rwx
 
       - name: Wait for E2E results and file bugs
         env:
