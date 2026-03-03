@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -76,6 +77,13 @@ func runStop(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Check delivery: if the agent has unpushed commits, block stop.
+	if !stopForce {
+		if err := checkDelivery(); err != nil {
+			return err
+		}
+	}
+
 	// Add a comment to the agent bead explaining the stop reason.
 	reason := stopReason
 	if reason == "" {
@@ -137,6 +145,66 @@ func requestCoopShutdown() {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "Note: coop shutdown returned status %d\n", resp.StatusCode)
 	}
+}
+
+// checkDelivery verifies that the agent has pushed its work before stopping.
+// Returns an error if there are unpushed commits on the current branch.
+func checkDelivery() error {
+	// Find the workspace directory — check common agent workspace paths.
+	workspace := os.Getenv("WORKSPACE")
+	if workspace == "" {
+		workspace = os.Getenv("HOME") + "/workspace"
+	}
+
+	// Check if it's a git repo.
+	gitDir := filepath.Join(workspace, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return nil // not a git repo, nothing to check
+	}
+
+	// Check for unpushed commits: compare HEAD with upstream.
+	// git rev-list @{u}..HEAD counts commits ahead of upstream.
+	cmd := exec.Command("git", "-C", workspace, "rev-list", "--count", "@{u}..HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		// No upstream set — check if there are any local commits at all.
+		cmd2 := exec.Command("git", "-C", workspace, "log", "--oneline", "-1")
+		if out2, err2 := cmd2.Output(); err2 == nil && len(strings.TrimSpace(string(out2))) > 0 {
+			// There are commits but no upstream — agent never pushed.
+			branch := currentBranch(workspace)
+			if branch == "main" || branch == "master" {
+				fmt.Fprintf(os.Stderr, "Warning: you have local commits on '%s' that were never pushed to a feature branch.\n", branch)
+				fmt.Fprintf(os.Stderr, "Create a branch, push it, and open a PR before stopping.\n")
+				fmt.Fprintf(os.Stderr, "Use --force to override.\n")
+				return fmt.Errorf("unpushed commits on %s — create a branch + PR, or use --force", branch)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: branch '%s' has no upstream. Push with: git push -u origin %s\n", branch, branch)
+			fmt.Fprintf(os.Stderr, "Use --force to override.\n")
+			return fmt.Errorf("unpushed branch '%s' — push and create a PR, or use --force", branch)
+		}
+		return nil // no commits at all, fine
+	}
+
+	count := strings.TrimSpace(string(out))
+	if count != "0" {
+		branch := currentBranch(workspace)
+		fmt.Fprintf(os.Stderr, "Warning: %s unpushed commit(s) on branch '%s'.\n", count, branch)
+		fmt.Fprintf(os.Stderr, "Push your branch and create a PR before stopping.\n")
+		fmt.Fprintf(os.Stderr, "Use --force to override.\n")
+		return fmt.Errorf("%s unpushed commit(s) on '%s' — push and create a PR, or use --force", count, branch)
+	}
+
+	return nil
+}
+
+// currentBranch returns the current git branch name in the given directory.
+func currentBranch(dir string) string {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // retireAgentSessions renames all .jsonl session logs under ~/.claude/projects/

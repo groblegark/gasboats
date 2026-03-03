@@ -379,6 +379,18 @@ Rules:
 - If you receive a nudge that your claimed bead was updated, run \`kd show <id>\`
 - If \`gb ready\` shows nothing, check \`kd list --no-blockers\` for your project
 
+## Delivery Protocol
+
+**CRITICAL**: Never push directly to \`main\`. Always deliver work via a pull request:
+
+1. Create a feature branch: \`git checkout -b <descriptive-branch-name>\`
+2. Commit your changes with a clear message
+3. Push the branch: \`git push -u origin <branch-name>\`
+4. Create a PR: \`gh pr create --title "..." --body "..."\`
+5. Post the PR URL in your Slack thread so humans can review
+
+If you finish without creating a PR, your work is invisible. A commit on main without review is a liability.
+
 ## Checkpoint Protocol (Stop Hook)
 
 When the stop hook blocks, you MUST create a decision checkpoint before stopping.
@@ -575,11 +587,11 @@ inject_initial_prompt() {
         task_hint=" You have been pre-assigned to task \`${assigned_task}\`. Run \`kd show ${assigned_task}\` for details, then \`kd claim ${assigned_task}\` to start work on it."
     fi
 
-    # Custom prompt: if BOAT_PROMPT is set, use it as the initial nudge instead
-    # of the default workflow instructions. This is set via /spawn "PROMPT TEXT".
+    # Custom prompt: if BOAT_PROMPT is set, wrap it with standard agent protocols
+    # so ad-hoc agents still create beads, branches, and PRs.
     local nudge_msg
     if [ -n "${BOAT_PROMPT:-}" ]; then
-        nudge_msg="${BOAT_PROMPT}"
+        nudge_msg="You have been spawned with an ad-hoc task. Before starting: (1) Create a bead to track your work: \`kd create --type task --title '<short title>' --description '<your task description>' --project ${PROJECT:-gasboat}\` then claim it with \`kd claim <id>\`. (2) Run \`gb news\` to check what teammates are working on — do not duplicate in-progress work. (3) When done, deliver via a feature branch + PR (never push to main). Here is your task: ${BOAT_PROMPT}"
     else
         nudge_msg="Check \`gb ready\` for your workflow steps and begin working.${project_hint}${task_hint} IMPORTANT: (1) Run \`gb news\` first to see what your teammates are already working on — do not duplicate in-progress work. (2) Run \`kd claim <id>\` BEFORE starting any task — this atomically marks it in_progress so no other agent picks it up simultaneously."
     fi

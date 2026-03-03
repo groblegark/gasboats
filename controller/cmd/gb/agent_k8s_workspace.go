@@ -129,6 +129,18 @@ Agent name: %s
 - `+"`"+`gb mail inbox`+"`"+` — Check messages
 - `+"`"+`kd show <issue>`+"`"+` — View specific issue details
 
+## Delivery Protocol
+
+**CRITICAL**: Never push directly to `+"`"+`main`+"`"+`. Always deliver work via a pull request:
+
+1. Create a feature branch: `+"`"+`git checkout -b <descriptive-branch-name>`+"`"+`
+2. Commit your changes with a clear message
+3. Push the branch: `+"`"+`git push -u origin <branch-name>`+"`"+`
+4. Create a PR: `+"`"+`gh pr create --title "..." --body "..."`+"`"+`
+5. Post the PR URL in your Slack thread so humans can review
+
+If you finish without creating a PR, your work is invisible. A commit on main without review is a liability.
+
 ## Checkpoint Protocol (Stop Hook)
 
 When you hit a Stop hook block, you MUST create a decision checkpoint:
