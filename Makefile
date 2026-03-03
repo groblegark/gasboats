@@ -1,4 +1,4 @@
-.PHONY: build build-bridge build-jira-bridge build-gitlab-bridge build-advice-viewer test lint e2e image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-all push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-all helm-package helm-template release release-dry-run clean
+.PHONY: build build-bridge build-jira-bridge build-gitlab-bridge build-advice-viewer test lint e2e verify image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-all push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-all helm-package helm-template release release-dry-run clean
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -129,6 +129,9 @@ release:
 
 release-dry-run:
 	./scripts/release.sh --dry-run
+
+verify:
+	./scripts/verify-deploy.sh --version=$(VERSION)
 
 # ── Clean ───────────────────────────────────────────────────────────────
 
