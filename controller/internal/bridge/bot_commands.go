@@ -113,16 +113,7 @@ func (b *Bot) handleSpawnCommand(ctx context.Context, cmd slack.SlashCommand) {
 
 	// Validate project exists.
 	if project != "" {
-		projects, err := b.daemon.ListProjectBeads(ctx)
-		if err != nil {
-			b.logger.Error("failed to list projects for validation", "error", err)
-		} else if _, ok := projects[project]; !ok {
-			names := make([]string, 0, len(projects))
-			for name := range projects {
-				names = append(names, name)
-			}
-			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Unknown project %q — available: %s", project, strings.Join(names, ", ")), false))
+		if !b.validateProject(ctx, cmd, project) {
 			return
 		}
 	}
@@ -173,16 +164,7 @@ func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, 
 
 	// Validate project exists.
 	if project != "" {
-		projects, err := b.daemon.ListProjectBeads(ctx)
-		if err != nil {
-			b.logger.Error("failed to list projects for validation", "error", err)
-		} else if _, ok := projects[project]; !ok {
-			names := make([]string, 0, len(projects))
-			for name := range projects {
-				names = append(names, name)
-			}
-			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Unknown project %q — available: %s", project, strings.Join(names, ", ")), false))
+		if !b.validateProject(ctx, cmd, project) {
 			return
 		}
 	}
@@ -227,6 +209,27 @@ func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, 
 	text += fmt.Sprintf("\nBead: `%s` · Use `/roster` to check status.", beadID)
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 		slack.MsgOptionText(text, false))
+}
+
+// validateProject checks whether a project name is known and sends an ephemeral
+// error if not. Returns true if the project is valid (or validation failed
+// silently), false if an error was sent to the user.
+func (b *Bot) validateProject(ctx context.Context, cmd slack.SlashCommand, project string) bool {
+	projects, err := b.daemon.ListProjectBeads(ctx)
+	if err != nil {
+		b.logger.Error("failed to list projects for validation", "error", err)
+		return true // allow through on error
+	}
+	if _, ok := projects[project]; !ok {
+		names := make([]string, 0, len(projects))
+		for name := range projects {
+			names = append(names, name)
+		}
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(fmt.Sprintf(":x: Unknown project %q — available: %s", project, strings.Join(names, ", ")), false))
+		return false
+	}
+	return true
 }
 
 // generateAgentName creates a valid agent name from a task description by
