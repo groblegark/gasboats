@@ -239,6 +239,36 @@ func (c *JiraClient) AddRemoteLink(ctx context.Context, key, linkURL, title stri
 	return nil
 }
 
+// AddLabels adds labels to a JIRA issue, preserving existing labels.
+func (c *JiraClient) AddLabels(ctx context.Context, key string, labels []string) error {
+	updates := make([]map[string]string, len(labels))
+	for i, l := range labels {
+		updates[i] = map[string]string{"add": l}
+	}
+	body := map[string]any{
+		"update": map[string]any{
+			"labels": updates,
+		},
+	}
+	path := "/rest/api/3/issue/" + url.PathEscape(key)
+	if err := c.doJSON(ctx, http.MethodPut, path, body, nil); err != nil {
+		return fmt.Errorf("JIRA add labels to %s: %w", key, err)
+	}
+	return nil
+}
+
+// AssignIssue sets the assignee of a JIRA issue by account ID.
+func (c *JiraClient) AssignIssue(ctx context.Context, key, accountID string) error {
+	body := map[string]any{
+		"accountId": accountID,
+	}
+	path := "/rest/api/3/issue/" + url.PathEscape(key) + "/assignee"
+	if err := c.doJSON(ctx, http.MethodPut, path, body, nil); err != nil {
+		return fmt.Errorf("JIRA assign issue %s: %w", key, err)
+	}
+	return nil
+}
+
 // DownloadAttachment fetches a JIRA attachment by URL and writes it to w.
 // The contentURL is the full URL from JiraAttachment.Content.
 func (c *JiraClient) DownloadAttachment(ctx context.Context, contentURL string, w io.Writer) error {

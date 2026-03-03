@@ -21,6 +21,7 @@ type JiraSync struct {
 	jira               *JiraClient
 	logger             *slog.Logger
 	disableTransitions bool
+	botAccountID       string // optional JIRA account ID for self-assignment
 
 	mu   sync.Mutex
 	seen map[string]time.Time // dedup key → last sync time
@@ -31,6 +32,7 @@ type JiraSyncConfig struct {
 	Jira               *JiraClient
 	Logger             *slog.Logger
 	DisableTransitions bool
+	BotAccountID       string // optional: JIRA account ID for self-assignment
 }
 
 // NewJiraSync creates a new JIRA sync-back watcher.
@@ -39,6 +41,7 @@ func NewJiraSync(cfg JiraSyncConfig) *JiraSync {
 		jira:               cfg.Jira,
 		logger:             cfg.Logger,
 		disableTransitions: cfg.DisableTransitions,
+		botAccountID:       cfg.BotAccountID,
 		seen:               make(map[string]time.Time),
 	}
 }
@@ -62,6 +65,40 @@ func (s *JiraSync) handleUpdated(ctx context.Context, data []byte) {
 	jiraKey := jiraKeyFromBead(*bead)
 	if jiraKey == "" {
 		return
+	}
+
+	// Sync agent claim — post comment, add label, transition, and optionally assign.
+	if bead.Status == "in_progress" && bead.Assignee != "" {
+		dedupKey := "claimed:" + bead.ID + ":" + bead.Assignee
+		if !s.isDuplicate(dedupKey) {
+			s.logger.Info("syncing agent claim to JIRA",
+				"bead", bead.ID, "jira_key", jiraKey, "assignee", bead.Assignee)
+
+			comment := "Gasboat agent " + bead.Assignee + " is working on this issue."
+			if err := s.jira.AddComment(ctx, jiraKey, comment); err != nil {
+				s.logger.Error("failed to add JIRA claim comment",
+					"jira_key", jiraKey, "error", err)
+			}
+
+			if err := s.jira.AddLabels(ctx, jiraKey, []string{"gasboat"}); err != nil {
+				s.logger.Error("failed to add gasboat label",
+					"jira_key", jiraKey, "error", err)
+			}
+
+			if !s.disableTransitions {
+				if err := s.jira.TransitionIssue(ctx, jiraKey, "In Progress"); err != nil {
+					s.logger.Warn("failed to transition JIRA issue to In Progress",
+						"jira_key", jiraKey, "error", err)
+				}
+			}
+
+			if s.botAccountID != "" {
+				if err := s.jira.AssignIssue(ctx, jiraKey, s.botAccountID); err != nil {
+					s.logger.Warn("failed to assign JIRA issue to bot",
+						"jira_key", jiraKey, "error", err)
+				}
+			}
+		}
 	}
 
 	// Check for MR URL field — sync it as a remote link to JIRA.

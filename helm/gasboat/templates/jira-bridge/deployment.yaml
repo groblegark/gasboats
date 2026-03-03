@@ -86,6 +86,10 @@ spec:
             - name: JIRA_DISABLE_TRANSITIONS
               value: "true"
             {{- end }}
+            {{- if .Values.jiraBridge.jira.botAccountID }}
+            - name: JIRA_BOT_ACCOUNT_ID
+              value: {{ .Values.jiraBridge.jira.botAccountID | quote }}
+            {{- end }}
             - name: JIRA_LISTEN_ADDR
               value: ":8091"
             - name: STATE_PATH

@@ -136,6 +136,7 @@ func main() {
 		Jira:               jiraClient,
 		Logger:             logger,
 		DisableTransitions: cfg.jiraDisableTransitions,
+		BotAccountID:       cfg.jiraBotAccountID,
 	})
 	jiraSync.RegisterHandlers(sseStream)
 
@@ -174,6 +175,7 @@ type config struct {
 	jiraProjectMap         map[string]string // JIRA prefix (upper) → boat project name
 	jiraPollInterval       time.Duration
 	jiraDisableTransitions bool
+	jiraBotAccountID       string // optional: JIRA account ID for self-assignment
 	listenAddr             string
 	logLevel               string
 	statePath              string
@@ -200,6 +202,7 @@ func parseConfig() *config {
 		jiraProjectMap:         parseBoatProjects(os.Getenv("BOAT_PROJECTS")),
 		jiraPollInterval:       pollInterval,
 		jiraDisableTransitions: disableTransitions == "true" || disableTransitions == "1",
+		jiraBotAccountID:       os.Getenv("JIRA_BOT_ACCOUNT_ID"),
 		listenAddr:             envOrDefault("JIRA_LISTEN_ADDR", ":8091"),
 		logLevel:               envOrDefault("LOG_LEVEL", "info"),
 		statePath:              envOrDefault("STATE_PATH", "/tmp/jira-bridge-state.json"),

@@ -116,6 +116,87 @@ func newTestJiraClient(url string) *JiraClient {
 	})
 }
 
+func TestJiraClient_AddLabels(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		gotMethod string
+		gotBody   map[string]any
+	)
+
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotMethod = r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer jiraServer.Close()
+
+	client := newTestJiraClient(jiraServer.URL)
+	err := client.AddLabels(context.Background(), "PE-123", []string{"gasboat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotMethod != "PUT" {
+		t.Errorf("expected PUT, got %s", gotMethod)
+	}
+	update, ok := gotBody["update"].(map[string]any)
+	if !ok {
+		t.Fatal("expected update field in body")
+	}
+	labels, ok := update["labels"].([]any)
+	if !ok || len(labels) != 1 {
+		t.Fatalf("expected 1 label update, got %v", update["labels"])
+	}
+	entry, ok := labels[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected label entry to be map")
+	}
+	if entry["add"] != "gasboat" {
+		t.Errorf("expected label add:gasboat, got %v", entry["add"])
+	}
+}
+
+func TestJiraClient_AssignIssue(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		gotMethod string
+		gotPath   string
+		gotBody   map[string]any
+	)
+
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer jiraServer.Close()
+
+	client := newTestJiraClient(jiraServer.URL)
+	err := client.AssignIssue(context.Background(), "PE-456", "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotMethod != "PUT" {
+		t.Errorf("expected PUT, got %s", gotMethod)
+	}
+	if gotPath != "/rest/api/3/issue/PE-456/assignee" {
+		t.Errorf("unexpected path: %s", gotPath)
+	}
+	if gotBody["accountId"] != "abc123" {
+		t.Errorf("expected accountId abc123, got %v", gotBody["accountId"])
+	}
+}
+
 func TestJiraPoller_CreateBead(t *testing.T) {
 	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/search/jql" {
