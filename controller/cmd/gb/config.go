@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"gasboat/controller/internal/beadsapi"
 	"os"
 	"sort"
 
@@ -26,6 +28,57 @@ var configNamespaces = []string{
 	"view",
 }
 
+// configEntry is the dump/load serialization format.
+type configEntry struct {
+	Key   string          `json:"key"`
+	Value json.RawMessage `json:"value"`
+}
+
+// configDumper is the interface needed by dumpConfigs (subset of beadsapi.Client).
+type configDumper interface {
+	ListConfigs(ctx context.Context, namespace string) ([]beadsapi.ConfigEntry, error)
+}
+
+// configLoader is the interface needed by loadConfigs (subset of beadsapi.Client).
+type configLoader interface {
+	SetConfig(ctx context.Context, key string, value []byte) error
+}
+
+// dumpConfigs fetches all config entries across known namespaces.
+func dumpConfigs(ctx context.Context, client configDumper, namespaces []string) ([]configEntry, error) {
+	var entries []configEntry
+	for _, ns := range namespaces {
+		configs, err := client.ListConfigs(ctx, ns)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[config] warning: failed to list %s: %v\n", ns, err)
+			continue
+		}
+		for _, c := range configs {
+			entries = append(entries, configEntry{Key: c.Key, Value: c.Value})
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Key < entries[j].Key
+	})
+
+	return entries, nil
+}
+
+// loadConfigs restores config entries to the daemon.
+func loadConfigs(ctx context.Context, client configLoader, entries []configEntry) (restored int, errors int) {
+	for _, e := range entries {
+		if err := client.SetConfig(ctx, e.Key, e.Value); err != nil {
+			fmt.Fprintf(os.Stderr, "[config] warning: failed to set %s: %v\n", e.Key, err)
+			errors++
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[config] restored %s\n", e.Key)
+		restored++
+	}
+	return restored, errors
+}
+
 var configDumpCmd = &cobra.Command{
 	Use:   "dump",
 	Short: "Dump all config beads as JSON (pipe to file for backup)",
@@ -37,28 +90,10 @@ Example:
   gb config dump > configs-backup.json
   gb config dump | jq .`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-
-		type entry struct {
-			Key   string          `json:"key"`
-			Value json.RawMessage `json:"value"`
+		entries, err := dumpConfigs(cmd.Context(), daemon, configNamespaces)
+		if err != nil {
+			return err
 		}
-
-		var entries []entry
-		for _, ns := range configNamespaces {
-			configs, err := daemon.ListConfigs(ctx, ns)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[config] warning: failed to list %s: %v\n", ns, err)
-				continue
-			}
-			for _, c := range configs {
-				entries = append(entries, entry{Key: c.Key, Value: c.Value})
-			}
-		}
-
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Key < entries[j].Key
-		})
 
 		data, err := json.MarshalIndent(entries, "", "  ")
 		if err != nil {
@@ -81,31 +116,18 @@ Example:
   gb config load configs-backup.json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-
 		data, err := os.ReadFile(args[0])
 		if err != nil {
 			return fmt.Errorf("reading file: %w", err)
 		}
 
-		type entry struct {
-			Key   string          `json:"key"`
-			Value json.RawMessage `json:"value"`
-		}
-		var entries []entry
+		var entries []configEntry
 		if err := json.Unmarshal(data, &entries); err != nil {
 			return fmt.Errorf("parsing JSON: %w", err)
 		}
 
-		for _, e := range entries {
-			if err := daemon.SetConfig(ctx, e.Key, e.Value); err != nil {
-				fmt.Fprintf(os.Stderr, "[config] warning: failed to set %s: %v\n", e.Key, err)
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "[config] restored %s\n", e.Key)
-		}
-
-		fmt.Fprintf(os.Stderr, "[config] loaded %d entries\n", len(entries))
+		restored, _ := loadConfigs(cmd.Context(), daemon, entries)
+		fmt.Fprintf(os.Stderr, "[config] loaded %d entries\n", restored)
 		return nil
 	},
 }
