@@ -105,15 +105,16 @@ func TestUpdateBeadFields_HandlesNilExistingFields(t *testing.T) {
 	}
 }
 
-func TestUpdateBeadFields_CoercesBooleans(t *testing.T) {
+func TestUpdateBeadFields_PreservesExistingTypes(t *testing.T) {
 	var patchBody []byte
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet:
+			// Server returns mr_merged as boolean true and stop_requested as string.
 			bead := beadJSON{
-				ID:     "bd-bool",
-				Fields: json.RawMessage(`{"existing":"keep"}`),
+				ID:     "bd-types",
+				Fields: json.RawMessage(`{"mr_merged":true,"stop_requested":"false","existing":"keep"}`),
 			}
 			_ = json.NewEncoder(w).Encode(bead)
 
@@ -125,41 +126,43 @@ func TestUpdateBeadFields_CoercesBooleans(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{baseURL: srv.URL, httpClient: srv.Client()}
-	err := c.UpdateBeadFields(context.Background(), "bd-bool", map[string]string{
-		"mr_merged":  "true",
-		"mr_approved": "false",
-		"mr_state":    "merged",
+	err := c.UpdateBeadFields(context.Background(), "bd-types", map[string]string{
+		"mr_merged":      "false",        // existing boolean — should stay boolean
+		"stop_requested": "true",         // existing string — should stay string
+		"new_field":      "true",         // new field — should be string (no coercion)
+		"mr_state":       "merged",       // new field — should be string
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Parse the PATCH body and verify booleans are JSON booleans, not strings.
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(patchBody, &body); err != nil {
 		t.Fatalf("failed to unmarshal PATCH body: %v", err)
 	}
-	fieldsRaw := body["fields"]
 
-	// Unmarshal to map[string]any to check types.
 	var fields map[string]any
-	if err := json.Unmarshal(fieldsRaw, &fields); err != nil {
+	if err := json.Unmarshal(body["fields"], &fields); err != nil {
 		t.Fatalf("failed to unmarshal fields: %v", err)
 	}
 
-	// mr_merged should be boolean true, not string "true".
-	if v, ok := fields["mr_merged"].(bool); !ok || !v {
-		t.Errorf("expected mr_merged=true (bool), got %v (%T)", fields["mr_merged"], fields["mr_merged"])
+	// mr_merged was boolean in existing — update should preserve boolean type.
+	if v, ok := fields["mr_merged"].(bool); !ok || v {
+		t.Errorf("expected mr_merged=false (bool), got %v (%T)", fields["mr_merged"], fields["mr_merged"])
 	}
-	// mr_approved should be boolean false.
-	if v, ok := fields["mr_approved"].(bool); !ok || v {
-		t.Errorf("expected mr_approved=false (bool), got %v (%T)", fields["mr_approved"], fields["mr_approved"])
+	// stop_requested was string in existing — should stay string.
+	if v, ok := fields["stop_requested"].(string); !ok || v != "true" {
+		t.Errorf("expected stop_requested=\"true\" (string), got %v (%T)", fields["stop_requested"], fields["stop_requested"])
 	}
-	// mr_state should remain a string.
+	// new_field is new — should be string (no coercion for new fields).
+	if v, ok := fields["new_field"].(string); !ok || v != "true" {
+		t.Errorf("expected new_field=\"true\" (string), got %v (%T)", fields["new_field"], fields["new_field"])
+	}
+	// mr_state is new — should be string.
 	if v, ok := fields["mr_state"].(string); !ok || v != "merged" {
 		t.Errorf("expected mr_state=\"merged\" (string), got %v (%T)", fields["mr_state"], fields["mr_state"])
 	}
-	// existing should remain a string.
+	// existing should remain untouched.
 	if v, ok := fields["existing"].(string); !ok || v != "keep" {
 		t.Errorf("expected existing=\"keep\" (string), got %v (%T)", fields["existing"], fields["existing"])
 	}
