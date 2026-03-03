@@ -90,13 +90,13 @@ func configs() map[string]any {
 				{Name: "image", Type: "string"},
 				{Name: "mock_scenario", Type: "string"},
 				// Agent stop/gate control written by gb stop and gb yield.
-				{Name: "stop_requested", Type: "string"},
+				{Name: "stop_requested", Type: "boolean"},
 				{Name: "gate_satisfied_by", Type: "string"},
 				// Advice subscription overrides.
 				{Name: "advice_subscriptions", Type: "string[]"},
 				{Name: "advice_subscriptions_exclude", Type: "string[]"},
-				// Auto-assignment control: "true" (default) or "false".
-				{Name: "auto_assign", Type: "string"},
+				// Auto-assignment control: "true" or "false" (default).
+				{Name: "auto_assign", Type: "boolean"},
 			},
 		},
 		"type:mail": TypeConfig{

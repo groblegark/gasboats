@@ -76,16 +76,16 @@ func setupTestDaemon(t *testing.T, agentBead *mockBead, projectBeads []mockBead)
 	}
 }
 
-func TestIsAutoAssignEnabled_DefaultEnabled(t *testing.T) {
-	// No agent bead, no project bead — default is enabled.
+func TestIsAutoAssignEnabled_DefaultDisabled(t *testing.T) {
+	// No agent bead, no project bead — default is disabled (agents pull work).
 	cleanup := setupTestDaemon(t, nil, nil)
 	defer cleanup()
 
 	t.Setenv("KD_AGENT_ID", "")
 
 	got := isAutoAssignEnabled(context.Background(), "testproj")
-	if !got {
-		t.Error("expected auto_assign to be enabled by default")
+	if got {
+		t.Error("expected auto_assign to be disabled by default")
 	}
 }
 
