@@ -130,6 +130,7 @@ func init() {
 	rootCmd.AddCommand(undeferCmd)
 
 	// Views
+	rootCmd.AddCommand(orphansCmd)
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(contextCmd)
 	rootCmd.AddCommand(watchCmd)
