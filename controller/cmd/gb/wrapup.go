@@ -1,0 +1,229 @@
+package main
+
+// wrapup.go — Structured wrap-up message schema for agent despawn.
+//
+// When agents call gb stop (or gb done), they provide a wrap-up message
+// summarizing their session. The wrap-up is stored as a JSON-serialized
+// string in the agent bead's "wrapup" field, making it queryable and
+// parseable by other tools (bridges, dashboards, successor agents).
+//
+// ## Storage approach
+//
+// The wrap-up is stored as a single JSON string in bead fields["wrapup"].
+// This was chosen over alternatives because:
+//   - Comments are immutable append-only text — not structured or queryable
+//   - Child data beads add complexity and an extra entity to track
+//   - A single JSON field is atomic, readable via kd show, and extensible
+//
+// The existing --reason flag is preserved for backward compatibility: if
+// --reason is provided without --wrapup, behavior is unchanged (a plain
+// comment is added). When --wrapup is provided, the structured wrap-up
+// is stored AND a human-readable summary comment is also added.
+//
+// ## Extensibility via advice
+//
+// The WrapUpRequirements struct defines which fields are required vs
+// optional, and can specify custom fields. Advice beads with category
+// "wrapup" can override these defaults per role/rig/agent scope. The
+// requirements are injected into agent context via gb prime so agents
+// know what's expected before they reach gb stop.
+//
+// ## Field reference (stored in bead fields["wrapup"])
+//
+//   accomplishments  — What the agent did this session (required by default)
+//   blockers         — What's preventing further progress (optional)
+//   handoff_notes    — Context for the next agent picking up this work (optional)
+//   beads_closed     — List of bead IDs closed during this session (auto-populated)
+//   pull_requests    — List of PR URLs created during this session (optional)
+//   custom           — Arbitrary key-value pairs for advice-driven extensions
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// WrapUp is the structured wrap-up message stored on agent beads at stop time.
+// It is serialized to JSON and stored in bead fields["wrapup"].
+type WrapUp struct {
+	// Accomplishments summarizes what the agent did this session.
+	// Required by default (enforced by WrapUpRequirements).
+	Accomplishments string `json:"accomplishments"`
+
+	// Blockers lists anything preventing further progress on claimed work.
+	// Optional by default.
+	Blockers string `json:"blockers,omitempty"`
+
+	// HandoffNotes provides context for the next agent or human picking
+	// up this work — what state things are in, what to do next.
+	// Optional by default.
+	HandoffNotes string `json:"handoff_notes,omitempty"`
+
+	// BeadsClosed is auto-populated with IDs of beads the agent closed
+	// during this session. Populated by gb stop from the agent's activity.
+	BeadsClosed []string `json:"beads_closed,omitempty"`
+
+	// PullRequests lists URLs of PRs created during this session.
+	// Optional — agents can include this for visibility.
+	PullRequests []string `json:"pull_requests,omitempty"`
+
+	// Custom holds arbitrary key-value pairs for advice-driven extensions.
+	// Advice beads can declare custom required/optional fields that agents
+	// must populate. Keys are field names, values are their content.
+	Custom map[string]string `json:"custom,omitempty"`
+
+	// Timestamp is set automatically when the wrap-up is created.
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// WrapUpRequirements defines what a wrap-up must contain. Loaded from
+// advice beads with category "wrapup" and merged by scope precedence
+// (global < rig < role < agent). See prime_advice.go for injection.
+type WrapUpRequirements struct {
+	// Required lists field names that must be non-empty in the wrap-up.
+	// Default: ["accomplishments"]
+	Required []string `json:"required"`
+
+	// Optional lists field names that are encouraged but not enforced.
+	// Default: ["blockers", "handoff_notes", "pull_requests"]
+	Optional []string `json:"optional"`
+
+	// CustomFields defines additional fields beyond the built-in set.
+	// Each entry specifies a field name and whether it's required.
+	CustomFields []CustomFieldDef `json:"custom_fields,omitempty"`
+
+	// Enforce controls whether gb stop blocks on incomplete wrap-ups.
+	// "hard" = error if required fields missing (default for production)
+	// "soft" = warn but allow stop
+	// "none" = no validation
+	Enforce string `json:"enforce"`
+}
+
+// CustomFieldDef describes an advice-driven custom field for wrap-ups.
+type CustomFieldDef struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
+}
+
+// DefaultWrapUpRequirements returns the baseline requirements used when
+// no advice bead overrides are present.
+func DefaultWrapUpRequirements() WrapUpRequirements {
+	return WrapUpRequirements{
+		Required: []string{"accomplishments"},
+		Optional: []string{"blockers", "handoff_notes", "pull_requests"},
+		Enforce:  "soft",
+	}
+}
+
+// Validate checks a WrapUp against the given requirements. Returns a list
+// of validation errors (empty if valid). Does not return an error for
+// enforce="none".
+func (r WrapUpRequirements) Validate(w *WrapUp) []string {
+	if r.Enforce == "none" {
+		return nil
+	}
+
+	var issues []string
+	for _, field := range r.Required {
+		if !wrapUpFieldPresent(w, field) {
+			issues = append(issues, fmt.Sprintf("required field %q is empty", field))
+		}
+	}
+	for _, cf := range r.CustomFields {
+		if cf.Required && (w.Custom == nil || w.Custom[cf.Name] == "") {
+			issues = append(issues, fmt.Sprintf("required custom field %q is empty", cf.Name))
+		}
+	}
+	return issues
+}
+
+// wrapUpFieldPresent checks whether a named field has a non-empty value.
+func wrapUpFieldPresent(w *WrapUp, field string) bool {
+	switch field {
+	case "accomplishments":
+		return w.Accomplishments != ""
+	case "blockers":
+		return w.Blockers != ""
+	case "handoff_notes":
+		return w.HandoffNotes != ""
+	case "beads_closed":
+		return len(w.BeadsClosed) > 0
+	case "pull_requests":
+		return len(w.PullRequests) > 0
+	default:
+		// Check custom fields.
+		return w.Custom != nil && w.Custom[field] != ""
+	}
+}
+
+// MarshalWrapUp serializes a WrapUp to a JSON string suitable for storage
+// in bead fields["wrapup"].
+func MarshalWrapUp(w *WrapUp) (string, error) {
+	if w.Timestamp.IsZero() {
+		w.Timestamp = time.Now().UTC()
+	}
+	data, err := json.Marshal(w)
+	if err != nil {
+		return "", fmt.Errorf("marshalling wrap-up: %w", err)
+	}
+	return string(data), nil
+}
+
+// UnmarshalWrapUp deserializes a WrapUp from a JSON string (as stored in
+// bead fields["wrapup"]).
+func UnmarshalWrapUp(s string) (*WrapUp, error) {
+	var w WrapUp
+	if err := json.Unmarshal([]byte(s), &w); err != nil {
+		return nil, fmt.Errorf("unmarshalling wrap-up: %w", err)
+	}
+	return &w, nil
+}
+
+// WrapUpToComment renders a human-readable summary of the wrap-up for
+// storage as a bead comment (in addition to the structured field).
+func WrapUpToComment(w *WrapUp) string {
+	var b []byte
+	b = append(b, "gb stop wrap-up:\n"...)
+
+	b = append(b, "\nAccomplishments: "...)
+	b = append(b, w.Accomplishments...)
+
+	if w.Blockers != "" {
+		b = append(b, "\nBlockers: "...)
+		b = append(b, w.Blockers...)
+	}
+	if w.HandoffNotes != "" {
+		b = append(b, "\nHandoff: "...)
+		b = append(b, w.HandoffNotes...)
+	}
+	if len(w.BeadsClosed) > 0 {
+		b = append(b, "\nBeads closed: "...)
+		for i, id := range w.BeadsClosed {
+			if i > 0 {
+				b = append(b, ", "...)
+			}
+			b = append(b, id...)
+		}
+	}
+	if len(w.PullRequests) > 0 {
+		b = append(b, "\nPRs: "...)
+		for i, url := range w.PullRequests {
+			if i > 0 {
+				b = append(b, ", "...)
+			}
+			b = append(b, url...)
+		}
+	}
+	for k, v := range w.Custom {
+		b = append(b, "\n"...)
+		b = append(b, k...)
+		b = append(b, ": "...)
+		b = append(b, v...)
+	}
+
+	return string(b)
+}
+
+// WrapUpFieldName is the bead field key where the structured wrap-up is stored.
+const WrapUpFieldName = "wrapup"
