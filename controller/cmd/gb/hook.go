@@ -137,6 +137,18 @@ var hookStopGateCmd = &cobra.Command{
 			os.Exit(2)
 		}
 
+		// Check wrap-up completeness if agent has stop_requested=true.
+		if agentBeadID != "" {
+			if blocked, reason := checkWrapUpGate(cmd.Context(), agentBeadID); blocked {
+				blockJSON, _ := json.Marshal(map[string]string{
+					"decision": "block",
+					"reason":   reason,
+				})
+				fmt.Fprintf(os.Stderr, "%s\n", blockJSON)
+				os.Exit(2)
+			}
+		}
+
 		return nil
 	},
 }
@@ -193,6 +205,42 @@ func emitHookWithRetry(ctx context.Context, req beadsapi.EmitHookRequest) (*bead
 		}
 	}
 	return nil, lastErr
+}
+
+// checkWrapUpGate checks whether the agent has provided a required wrap-up
+// message. Returns (blocked, reason) — blocked=true means the stop should
+// be prevented.
+//
+// Only blocks if ALL of:
+//  1. The agent bead has stop_requested=true (agent is trying to stop)
+//  2. The wrapup-config enforce level is "hard"
+//  3. The agent bead has no "wrapup" field
+func checkWrapUpGate(ctx context.Context, agentBeadID string) (bool, string) {
+	bead, err := daemon.GetBead(ctx, agentBeadID)
+	if err != nil {
+		return false, "" // can't check — don't block
+	}
+
+	// Only enforce during stop.
+	if bead.Fields["stop_requested"] != "true" {
+		return false, ""
+	}
+
+	// Check if wrap-up already provided.
+	if bead.Fields[WrapUpFieldName] != "" {
+		return false, "" // wrap-up present — no block
+	}
+
+	// Load requirements.
+	reqs := LoadWrapUpRequirements(ctx, daemon, agentBeadID)
+	if reqs.Enforce != "hard" {
+		return false, "" // not hard enforcement — don't block
+	}
+
+	reason := "Wrap-up message required before stopping. Use:\n" +
+		"  gb stop --wrapup '{\"accomplishments\":\"...\"}'\n" +
+		"Required fields: " + strings.Join(reqs.Required, ", ")
+	return true, reason
 }
 
 // outputClaimReminder checks if the agent has any in-progress claimed work or
