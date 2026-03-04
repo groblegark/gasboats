@@ -143,6 +143,7 @@ tasks:
       - controller/go.mod
       - controller/go.sum
       - controller/**/*.html
+      - controller/**/*.md
     outputs:
       artifacts:
         - key: gb-binary
