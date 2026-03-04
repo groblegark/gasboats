@@ -350,39 +350,37 @@ func (c *Client) FindAgentBead(ctx context.Context, agentName string) (*BeadDeta
 
 // UpdateBeadFields updates typed fields on a bead via a read-modify-write cycle.
 // The daemon replaces the full fields JSON, so we must merge with existing fields.
-// Boolean-valued strings ("true"/"false") are coerced to JSON booleans to satisfy
-// server-side field type validation.
+// Existing field types are preserved from the server response: if a field was
+// stored as a JSON boolean, "true"/"false" updates keep it boolean; string
+// fields stay strings. New fields are sent as strings.
 func (c *Client) UpdateBeadFields(ctx context.Context, beadID string, fields map[string]string) error {
-	// Read current fields.
-	detail, err := c.GetBead(ctx, beadID)
-	if err != nil {
+	// Fetch raw bead to preserve existing field types.
+	var bead beadJSON
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/beads/"+url.PathEscape(beadID), nil, &bead); err != nil {
 		return fmt.Errorf("reading bead %s for field update: %w", beadID, err)
 	}
 
-	// Merge new fields into existing, coercing types for JSON encoding.
-	existing := detail.Fields
-	if existing == nil {
-		existing = make(map[string]string)
+	// Parse existing fields preserving JSON types (bool stays bool, string stays string).
+	var existing map[string]any
+	if len(bead.Fields) > 0 {
+		_ = json.Unmarshal(bead.Fields, &existing)
 	}
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+
+	// Merge new fields, preserving the type of existing values.
 	for k, v := range fields {
+		if prev, ok := existing[k]; ok {
+			if _, isBool := prev.(bool); isBool {
+				existing[k] = (v == "true")
+				continue
+			}
+		}
 		existing[k] = v
 	}
 
-	// Build a typed map for JSON marshal — coerce "true"/"false" to booleans
-	// so the beads daemon's field type validation accepts them.
-	typed := make(map[string]any, len(existing))
-	for k, v := range existing {
-		switch v {
-		case "true":
-			typed[k] = true
-		case "false":
-			typed[k] = false
-		default:
-			typed[k] = v
-		}
-	}
-
-	merged, err := json.Marshal(typed)
+	merged, err := json.Marshal(existing)
 	if err != nil {
 		return fmt.Errorf("marshalling merged fields for %s: %w", beadID, err)
 	}
