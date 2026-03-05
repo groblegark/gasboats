@@ -338,25 +338,17 @@ func (b *Bot) NotifyAgentTaskUpdate(_ context.Context, agentName string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Collect card identities matching agentName exactly or by short name.
-	// This handles the case where the task assignee is the short name (e.g. "matt-1")
-	// but the card was registered under the full path ("gasboat/crew/matt-1").
+	// Canonicalize to short name — all map keys use short names.
+	agent := extractAgentName(agentName)
+
 	b.mu.Lock()
-	short := extractAgentName(agentName)
-	var candidates []string
-	for agent := range b.agentCards {
-		if agent == agentName || extractAgentName(agent) == short {
-			candidates = append(candidates, agent)
-		}
-	}
-	// Refresh the last-seen timestamp so the card shows recent activity.
-	now := time.Now()
-	for _, agent := range candidates {
-		b.agentSeen[agent] = now
+	_, hasCard := b.agentCards[agent]
+	if hasCard {
+		b.agentSeen[agent] = time.Now()
 	}
 	b.mu.Unlock()
 
-	for _, agent := range candidates {
+	if hasCard {
 		b.updateAgentCard(ctx, agent)
 	}
 }
@@ -534,6 +526,9 @@ func (b *Bot) resolveChannel(agent string) string {
 // the bead. If coop is unreachable (pod already dead), it falls back to an
 // immediate hard-close.
 func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error {
+	// Canonicalize to short name so map lookups are consistent.
+	agentName = extractAgentName(agentName)
+
 	// Use a detached context for the kill operation — Slack's slash command
 	// context expires after ~3s, but graceful shutdown + bead close can take longer.
 	killCtx, killCancel := context.WithTimeout(context.Background(), 45*time.Second)

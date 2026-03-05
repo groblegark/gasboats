@@ -138,12 +138,14 @@ func NewBot(cfg BotConfig) *Bot {
 	}
 
 	// Hydrate hot caches from persisted state.
+	// Canonicalize agent identity keys to short names during hydration
+	// to prevent identity drift (full path vs short name).
 	if cfg.State != nil {
 		for id, ref := range cfg.State.AllDecisionMessages() {
 			b.messages[id] = ref
 		}
 		for agent, ref := range cfg.State.AllAgentCards() {
-			b.agentCards[agent] = ref
+			b.agentCards[extractAgentName(agent)] = ref
 		}
 	}
 
@@ -151,7 +153,7 @@ func NewBot(cfg BotConfig) *Bot {
 	if b.agentThreadingEnabled() {
 		for _, ref := range b.messages {
 			if ref.Agent != "" {
-				b.agentPending[ref.Agent]++
+				b.agentPending[extractAgentName(ref.Agent)]++
 			}
 		}
 	}
@@ -563,7 +565,7 @@ func (b *Bot) updateMessageResolved(ctx context.Context, beadID, chosen, rationa
 	// thread under the resolved decision message.
 	b.mu.Lock()
 	ref, hadRef := b.messages[beadID]
-	agent := ref.Agent
+	agent := extractAgentName(ref.Agent)
 	if hadRef && b.agentThreadingEnabled() && agent != "" {
 		if b.agentPending[agent] > 0 {
 			b.agentPending[agent]--

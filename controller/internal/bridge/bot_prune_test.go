@@ -3,11 +3,14 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"gasboat/controller/internal/beadsapi"
+
+	"github.com/slack-go/slack"
 )
 
 // TestPruneStaleAgentCards_RemovesClosedAgents verifies that agent cards for
@@ -242,5 +245,158 @@ func TestNotifyAgentSpawn_AllowsOpenBead(t *testing.T) {
 	// Agent state should have been recorded.
 	if state, ok := bot.agentState["live-agent"]; !ok || state != "spawning" {
 		t.Errorf("expected agent state 'spawning', got %q (exists=%v)", state, ok)
+	}
+}
+
+// TestAgentIdentityDrift_FullPathNormalized verifies that agent identities
+// are canonicalized to short names across spawn, state update, and task update
+// events, preventing duplicate map entries from full paths vs short names.
+func TestAgentIdentityDrift_FullPathNormalized(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.beads["agent-1"] = &beadsapi.BeadDetail{
+		ID:       "agent-1",
+		Type:     "agent",
+		Status:   "open",
+		Title:    "my-agent",
+		Assignee: "gasboat/crew/my-agent",
+		Fields:   map[string]string{"agent": "gasboat/crew/my-agent", "agent_state": "spawning"},
+	}
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C123"
+
+	// Spawn event uses full path in Assignee — should be stored under short name.
+	bot.NotifyAgentSpawn(context.Background(), BeadEvent{
+		ID:       "agent-1",
+		Type:     "agent",
+		Title:    "my-agent",
+		Assignee: "gasboat/crew/my-agent",
+		Fields:   map[string]string{"agent": "gasboat/crew/my-agent"},
+	})
+
+	if _, ok := bot.agentState["my-agent"]; !ok {
+		t.Error("expected agentState keyed by short name 'my-agent'")
+	}
+	if _, ok := bot.agentState["gasboat/crew/my-agent"]; ok {
+		t.Error("agentState should not have full path key")
+	}
+
+	// State update event also uses full path — should update the same entry.
+	bot.NotifyAgentState(context.Background(), BeadEvent{
+		Assignee: "gasboat/crew/my-agent",
+		Fields:   map[string]string{"agent": "gasboat/crew/my-agent", "agent_state": "working"},
+	})
+
+	if state := bot.agentState["my-agent"]; state != "working" {
+		t.Errorf("expected agentState[my-agent]=working, got %q", state)
+	}
+	if len(bot.agentState) != 1 {
+		t.Errorf("expected exactly 1 agentState entry, got %d (identity drift!)", len(bot.agentState))
+	}
+
+	// Task update with full path — should still find the card by short name.
+	bot.NotifyAgentTaskUpdate(context.Background(), "gasboat/crew/my-agent")
+
+	// Verify no duplicate entries were created in any map.
+	if len(bot.agentSeen) != 1 {
+		t.Errorf("expected exactly 1 agentSeen entry, got %d (identity drift!)", len(bot.agentSeen))
+	}
+}
+
+// TestAgentIdentityDrift_KillAgentWithFullPath verifies that killAgent
+// canonicalizes the agent name and correctly removes the card even when
+// called with a full path identity.
+func TestAgentIdentityDrift_KillAgentWithFullPath(t *testing.T) {
+	daemon := newMockDaemon()
+	// Mock FindAgentBead looks up by agent name — store under short name
+	// because killAgent now canonicalizes before calling FindAgentBead.
+	daemon.beads["kill-me"] = &beadsapi.BeadDetail{
+		ID:       "agent-2",
+		Type:     "agent",
+		Status:   "open",
+		Title:    "kill-me",
+		Assignee: "gasboat/crew/kill-me",
+		Fields:   map[string]string{"agent": "kill-me"},
+	}
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// Card stored under short name (as it would be after the spawn fix).
+	bot.agentCards["kill-me"] = MessageRef{ChannelID: "C123", Timestamp: "1111.1111"}
+	bot.agentState["kill-me"] = "working"
+	bot.agentPending["kill-me"] = 2
+
+	// Kill with full path identity — should still find and clean up the card.
+	err := bot.killAgent(context.Background(), "gasboat/crew/kill-me", true)
+	if err != nil {
+		t.Fatalf("killAgent failed: %v", err)
+	}
+
+	if _, ok := bot.agentCards["kill-me"]; ok {
+		t.Error("agent card should have been removed")
+	}
+	if _, ok := bot.agentState["kill-me"]; ok {
+		t.Error("agent state should have been removed")
+	}
+	if _, ok := bot.agentPending["kill-me"]; ok {
+		t.Error("agent pending should have been removed")
+	}
+}
+
+// TestAgentIdentityDrift_HydrationNormalizesKeys verifies that NewBot
+// canonicalizes agent identity keys when hydrating from persisted state,
+// preventing drift from stale full-path keys in the state file.
+func TestAgentIdentityDrift_HydrationNormalizesKeys(t *testing.T) {
+	state, err := NewStateManager("")
+	if err != nil {
+		t.Fatalf("NewStateManager: %v", err)
+	}
+
+	// Simulate persisted state with full-path keys (pre-fix data).
+	_ = state.SetAgentCard("gasboat/crew/old-agent", MessageRef{
+		ChannelID: "C123",
+		Timestamp: "1111.1111",
+		Agent:     "gasboat/crew/old-agent",
+	})
+	_ = state.SetDecisionMessage("dec-1", MessageRef{
+		ChannelID: "C123",
+		Timestamp: "2222.2222",
+		Agent:     "gasboat/crew/old-agent",
+	})
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := NewBot(BotConfig{
+		BotToken:      "xoxb-test",
+		AppToken:      "xapp-test",
+		Channel:       "C123",
+		ThreadingMode: "agent",
+		State:         state,
+		Logger:        slog.Default(),
+	})
+	// Override Slack API client to use our test server.
+	bot.api = slack.New("xoxb-test", slack.OptionAPIURL(slackSrv.URL+"/"))
+
+	// Agent card should be stored under short name after hydration.
+	if _, ok := bot.agentCards["old-agent"]; !ok {
+		t.Error("expected agentCards keyed by short name 'old-agent' after hydration")
+	}
+	if _, ok := bot.agentCards["gasboat/crew/old-agent"]; ok {
+		t.Error("agentCards should not have full path key after hydration")
+	}
+
+	// Pending count should use short name.
+	if count := bot.agentPending["old-agent"]; count != 1 {
+		t.Errorf("expected agentPending[old-agent]=1, got %d", count)
+	}
+	if count := bot.agentPending["gasboat/crew/old-agent"]; count != 0 {
+		t.Errorf("expected agentPending[gasboat/crew/old-agent]=0, got %d", count)
 	}
 }

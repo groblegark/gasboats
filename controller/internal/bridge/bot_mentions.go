@@ -98,6 +98,10 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		replyTS = ev.TimeStamp
 	}
 
+	// Canonicalize to short name so map lookups (agentPodName, etc.)
+	// and stored refs use consistent keys.
+	agent = extractAgentName(agent)
+
 	// Resolve sender display name.
 	username := ev.User
 	if user, err := b.api.GetUserInfo(ev.User); err == nil {

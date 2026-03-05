@@ -39,7 +39,7 @@ func decisionQuestion(fields map[string]string) string {
 func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 	question := decisionQuestion(bead.Fields)
 	optionsRaw := bead.Fields["options"]
-	agent := bead.Assignee
+	agent := extractAgentName(bead.Assignee)
 
 	// Parse options — try JSON array of objects first, then strings.
 	type optionObj struct {
@@ -291,7 +291,7 @@ func (b *Bot) UpdateDecision(ctx context.Context, beadID, chosen string) error {
 // NotifyEscalation posts a highlighted notification for an escalated decision.
 func (b *Bot) NotifyEscalation(ctx context.Context, bead BeadEvent) error {
 	question := decisionQuestion(bead.Fields)
-	agent := bead.Assignee
+	agent := extractAgentName(bead.Assignee)
 
 	text := fmt.Sprintf(":rotating_light: *ESCALATED: %s*\n%s", beadTitle(bead.ID, bead.Title), question)
 
@@ -356,14 +356,14 @@ func (b *Bot) DismissDecision(ctx context.Context, beadID string) error {
 	}
 
 	// Clean up tracking and update agent card.
+	agent := extractAgentName(ref.Agent)
 	b.mu.Lock()
 	delete(b.messages, beadID)
-	if b.agentThreadingEnabled() && ref.Agent != "" {
-		if b.agentPending[ref.Agent] > 0 {
-			b.agentPending[ref.Agent]--
+	if b.agentThreadingEnabled() && agent != "" {
+		if b.agentPending[agent] > 0 {
+			b.agentPending[agent]--
 		}
 	}
-	agent := ref.Agent
 	b.mu.Unlock()
 
 	if b.state != nil {
