@@ -86,12 +86,17 @@ func (m *mockDaemon) CreateBead(_ context.Context, req beadsapi.CreateBeadReques
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := fmt.Sprintf("bd-chat-%d", len(m.beads)+1)
+	var fields map[string]string
+	if len(req.Fields) > 0 {
+		_ = json.Unmarshal(req.Fields, &fields)
+	}
 	m.beads[id] = &beadsapi.BeadDetail{
 		ID:       id,
 		Title:    req.Title,
 		Type:     req.Type,
 		Assignee: req.Assignee,
 		Labels:   req.Labels,
+		Fields:   fields,
 	}
 	return id, nil
 }

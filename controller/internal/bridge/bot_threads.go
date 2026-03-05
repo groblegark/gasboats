@@ -2,12 +2,26 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/slack-go/slack"
 )
+
+// maxFileProxySize is the maximum file size (50MB) the proxy will stream.
+const maxFileProxySize = 50 * 1024 * 1024
+
+// SlackFileInfo represents file metadata exposed to agents via the thread API.
+type SlackFileInfo struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Mimetype string `json:"mimetype"`
+	Size     int    `json:"size"`
+	ProxyURL string `json:"proxy_url"`
+}
 
 // SlackThreadAPI serves the Slack thread read/reply API endpoints.
 // These endpoints allow agents to read thread messages and post replies
@@ -26,14 +40,16 @@ func NewSlackThreadAPI(api *slack.Client, logger *slog.Logger) *SlackThreadAPI {
 func (a *SlackThreadAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/slack/threads", a.handleGetThreadMessages)
 	mux.HandleFunc("/api/slack/threads/reply", a.handlePostReply)
+	mux.HandleFunc("/api/slack/files/", a.handleFileProxy)
 }
 
 // ThreadMessage represents a single message in a Slack thread.
 type ThreadMessage struct {
-	Author    string `json:"author"`
-	Text      string `json:"text"`
-	Timestamp string `json:"timestamp"`
-	IsBot     bool   `json:"is_bot"`
+	Author    string          `json:"author"`
+	Text      string          `json:"text"`
+	Timestamp string          `json:"timestamp"`
+	IsBot     bool            `json:"is_bot"`
+	Files     []SlackFileInfo `json:"files,omitempty"`
 }
 
 // handleGetThreadMessages handles GET /api/slack/threads?channel={channel}&ts={ts}&limit={n}.
@@ -80,16 +96,77 @@ func (a *SlackThreadAPI) handleGetThreadMessages(w http.ResponseWriter, r *http.
 		if author == "" {
 			author = msg.Username
 		}
-		result = append(result, ThreadMessage{
+		tm := ThreadMessage{
 			Author:    author,
 			Text:      msg.Text,
 			Timestamp: msg.Timestamp,
 			IsBot:     false,
-		})
+		}
+		for _, f := range msg.Files {
+			tm.Files = append(tm.Files, SlackFileInfo{
+				ID:       f.ID,
+				Name:     f.Name,
+				Mimetype: f.Mimetype,
+				Size:     f.Size,
+				ProxyURL: "/api/slack/files/" + f.ID,
+			})
+		}
+		result = append(result, tm)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// handleFileProxy handles GET /api/slack/files/{file_id}.
+// It fetches file metadata from Slack and streams the file content to the caller.
+func (a *SlackThreadAPI) handleFileProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract file ID from path: /api/slack/files/{file_id}
+	fileID := strings.TrimPrefix(r.URL.Path, "/api/slack/files/")
+	if fileID == "" {
+		http.Error(w, `{"error":"file_id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get file metadata from Slack.
+	file, _, _, err := a.api.GetFileInfo(fileID, 0, 0)
+	if err != nil {
+		a.logger.Error("failed to get file info", "file_id", fileID, "error", err)
+		http.Error(w, `{"error":"file not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if file.Size > maxFileProxySize {
+		http.Error(w, `{"error":"file too large"}`, http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	downloadURL := file.URLPrivateDownload
+	if downloadURL == "" {
+		downloadURL = file.URLPrivate
+	}
+	if downloadURL == "" {
+		http.Error(w, `{"error":"file has no download URL"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", file.Mimetype)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, file.Name))
+	if file.Size > 0 {
+		w.Header().Set("Content-Length", strconv.Itoa(file.Size))
+	}
+
+	// GetFileContext handles Bearer auth internally.
+	if err := a.api.GetFileContext(r.Context(), downloadURL, w); err != nil {
+		a.logger.Error("failed to download file", "file_id", fileID, "error", err)
+		// Headers already sent; nothing we can do for the client.
+		return
+	}
 }
 
 // replyRequest is the request body for POST /api/slack/threads/reply.

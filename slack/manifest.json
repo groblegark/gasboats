@@ -69,7 +69,8 @@
         "groups:history",
         "pins:read",
         "pins:write",
-        "users:read"
+        "users:read",
+        "files:read"
       ]
     }
   },

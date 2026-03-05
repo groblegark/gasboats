@@ -16,6 +16,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -328,6 +329,16 @@ func (b *Bot) handleChatForward(ctx context.Context, ev *slackevents.MessageEven
 	slackTag := fmt.Sprintf("[slack:%s:%s]", ev.Channel, ev.TimeStamp)
 	description := fmt.Sprintf("Message from %s in Slack:\n\n%s\n\n---\n%s", username, ev.Text, slackTag)
 
+	// Enrich with file attachments if present.
+	files := b.fetchMessageFiles(ctx, ev.Channel, ev.TimeStamp)
+	description += formatAttachmentsSection(files)
+
+	// Build fields JSON with attachment metadata.
+	var fieldsJSON json.RawMessage
+	if fileFields := slackFilesToFields(files); fileFields != nil {
+		fieldsJSON, _ = json.Marshal(fileFields)
+	}
+
 	// Create tracking bead assigned to the agent.
 	agentName := extractAgentName(agent)
 	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
@@ -338,6 +349,7 @@ func (b *Bot) handleChatForward(ctx context.Context, ev *slackevents.MessageEven
 		Assignee:    agentName,
 		Labels:      []string{"slack-chat"},
 		Priority:    2,
+		Fields:      fieldsJSON,
 	})
 	if err != nil {
 		b.logger.Error("failed to create chat bead",

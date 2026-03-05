@@ -770,3 +770,54 @@ func TestResolveAgentThread_NotFound(t *testing.T) {
 	}
 }
 
+func TestThreadBoundMention_InactiveAgent_ClearsMapping(t *testing.T) {
+	daemon := newMockDaemon()
+	// Do NOT seed the agent in daemon — simulates an inactive/closed agent.
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	channel := "C-thread-test"
+	threadTS := "1111.2222"
+	agentName := "thread-1111-2222"
+
+	// Pre-populate thread→agent mapping (as if the agent was previously spawned).
+	_ = state.SetThreadAgent(channel, threadTS, agentName)
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		botUserID:  "U-BOT",
+		agentCards: map[string]MessageRef{},
+	}
+
+	// Verify the mapping exists.
+	agent, ok := state.GetThreadAgent(channel, threadTS)
+	if !ok || agent != agentName {
+		t.Fatalf("expected thread agent %q, got %q (ok=%v)", agentName, agent, ok)
+	}
+
+	// getAgentByThread finds the agent from state.
+	got := b.getAgentByThread(channel, threadTS)
+	if got != agentName {
+		t.Fatalf("getAgentByThread = %q, want %q", got, agentName)
+	}
+
+	// But FindAgentBead fails (agent is inactive/closed).
+	_, findErr := daemon.FindAgentBead(context.Background(), extractAgentName(agentName))
+	if findErr == nil {
+		t.Fatal("expected FindAgentBead to fail for inactive agent")
+	}
+
+	// Simulate what handleAppMention now does: clear stale mapping.
+	_ = state.RemoveThreadAgent(channel, threadTS)
+
+	// Verify the mapping is cleared.
+	if _, ok := state.GetThreadAgent(channel, threadTS); ok {
+		t.Error("expected thread agent mapping to be removed after inactive agent detected")
+	}
+}

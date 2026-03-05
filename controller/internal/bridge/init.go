@@ -176,6 +176,9 @@ func configs() map[string]any {
 				{Name: "jira_attachment_count", Type: "string"},
 				{Name: "jira_has_images", Type: "string"},
 				{Name: "jira_has_video", Type: "string"},
+				// Slack attachment fields — set by slack-bridge when files are shared.
+				{Name: "slack_attachment_count", Type: "string"},
+				{Name: "slack_has_images", Type: "string"},
 				// GitLab bridge fields — set by gitlab-bridge when MR events are detected.
 				{Name: "mr_merged", Type: "string"},
 				{Name: "mr_state", Type: "enum", Values: []string{"opened", "closed", "merged", "locked"}},

@@ -92,6 +92,20 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 			b.handleThreadSpawn(ctx, ev, text)
 			return
 		}
+
+		// Validate the thread-bound agent is still active (mirrors Priority 1 validation).
+		agentBead, err := b.daemon.FindAgentBead(ctx, extractAgentName(agent))
+		if err != nil {
+			b.logger.Info("mention: thread-bound agent no longer active",
+				"agent", agent, "channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp, "error", err)
+			// Agent is gone — clear stale mapping and spawn a replacement.
+			if b.state != nil {
+				_ = b.state.RemoveThreadAgent(ev.Channel, ev.ThreadTimeStamp)
+			}
+			b.handleThreadSpawn(ctx, ev, text)
+			return
+		}
+		agentPodName = beadsapi.ParseNotes(agentBead.Notes)["pod_name"]
 	}
 
 	if replyTS == "" {
@@ -117,6 +131,16 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	slackTag := fmt.Sprintf("[slack:%s:%s]", ev.Channel, replyTS)
 	description := fmt.Sprintf("Mention from %s in Slack:\n\n%s\n\n---\n%s", username, text, slackTag)
 
+	// Enrich with file attachments if present.
+	files := b.fetchMessageFiles(ctx, ev.Channel, ev.TimeStamp)
+	description += formatAttachmentsSection(files)
+
+	// Build fields JSON with attachment metadata.
+	var fieldsJSON json.RawMessage
+	if fileFields := slackFilesToFields(files); fileFields != nil {
+		fieldsJSON, _ = json.Marshal(fileFields)
+	}
+
 	// Create tracking bead assigned to the agent.
 	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
 		Title:       title,
@@ -126,6 +150,7 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		Assignee:    extractAgentName(agent),
 		Labels:      []string{"slack-mention"},
 		Priority:    2,
+		Fields:      fieldsJSON,
 	})
 	if err != nil {
 		b.logger.Error("failed to create mention bead",
@@ -145,8 +170,8 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		})
 	}
 
-	// Nudge the agent.
-	b.nudgeAgentForMention(ctx, agent, text, beadID)
+	// Nudge the agent via coop.
+	nudgeErr := b.nudgeAgentForMention(ctx, agent, text, beadID)
 
 	// Post confirmation threaded under the original message.
 	// If pod name wasn't set from FindAgentBead (text resolution), try the cache.
@@ -156,10 +181,14 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		b.mu.Unlock()
 	}
 	agentDisplay := coopmuxAgentLink(b.coopmuxPublicURL, agentPodName, extractAgentName(agent))
+	var confirmText string
+	if nudgeErr != nil {
+		confirmText = fmt.Sprintf(":warning: Created task for %s but nudge failed (tracking: `%s`). The agent will pick it up on its next cycle.", agentDisplay, beadID)
+	} else {
+		confirmText = fmt.Sprintf(":mega: Forwarded to %s (tracking: `%s`)", agentDisplay, beadID)
+	}
 	_, _, _ = b.api.PostMessage(ev.Channel,
-		slack.MsgOptionText(
-			fmt.Sprintf(":mega: Forwarded to %s (tracking: `%s`)", agentDisplay, beadID),
-			false),
+		slack.MsgOptionText(confirmText, false),
 		slack.MsgOptionTS(replyTS),
 	)
 }
@@ -261,11 +290,11 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 	// Generate a unique agent name based on the thread timestamp.
 	agentName := "thread-" + sanitizeTS(threadTS)
 
-	// Infer project from channel via router, or use default.
-	project := ""
-	if b.router != nil {
+	// Infer project from channel via project beads' slack_channel field
+	// (same lookup /spawn uses), falling back to router override.
+	project := b.projectFromChannel(ctx, channel)
+	if project == "" && b.router != nil {
 		if mapped := b.router.GetAgentByChannel(channel); mapped != "" {
-			// Extract project from mapped agent identity if possible.
 			project = projectFromAgentIdentity(mapped)
 		}
 	}
@@ -355,6 +384,10 @@ func (b *Bot) fetchThreadContext(ctx context.Context, channel, threadTS string) 
 			author = msg.Username
 		}
 		line := fmt.Sprintf("**%s**: %s\n", author, msg.Text)
+		// Annotate messages that have file attachments.
+		for _, f := range msg.Files {
+			line += fmt.Sprintf("  [attachment: %s (%s) — /api/slack/files/%s]\n", f.Name, f.Mimetype, f.ID)
+		}
 		if buf.Len()+len(line) > 3000 {
 			buf.WriteString("\n_(thread truncated)_\n")
 			break
@@ -419,6 +452,74 @@ func isValidThreadBinding(channel, threadTS string) bool {
 	return true
 }
 
+// fetchMessageFiles re-fetches a single message to extract its Files array.
+// Both AppMentionEvent and MessageEvent in slack-go lack a Files field,
+// so we call GetConversationReplies with Limit:1+Inclusive to get the full message.
+func (b *Bot) fetchMessageFiles(ctx context.Context, channel, ts string) []slack.File {
+	if b.api == nil {
+		return nil
+	}
+	msgs, _, _, err := b.api.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		ChannelID: channel,
+		Timestamp: ts,
+		Limit:     1,
+		Inclusive:  true,
+	})
+	if err != nil {
+		b.logger.Debug("failed to fetch message files", "channel", channel, "ts", ts, "error", err)
+		return nil
+	}
+	for _, msg := range msgs {
+		if msg.Timestamp == ts {
+			return msg.Files
+		}
+	}
+	return nil
+}
+
+// formatAttachmentsSection builds a markdown "## Attachments" block for bead descriptions.
+func formatAttachmentsSection(files []slack.File) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var buf strings.Builder
+	buf.WriteString("\n\n## Attachments\n")
+	for _, f := range files {
+		proxyURL := "/api/slack/files/" + f.ID
+		buf.WriteString(fmt.Sprintf("- **%s** (%s, %s) — `%s`\n", f.Name, f.Mimetype, formatFileSize(f.Size), proxyURL))
+	}
+	return buf.String()
+}
+
+// formatFileSize returns a human-readable file size string.
+func formatFileSize(bytes int) string {
+	switch {
+	case bytes >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	case bytes >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+// slackFilesToFields returns bead fields for attachment metadata.
+func slackFilesToFields(files []slack.File) map[string]string {
+	if len(files) == 0 {
+		return nil
+	}
+	fields := map[string]string{
+		"slack_attachment_count": fmt.Sprintf("%d", len(files)),
+	}
+	for _, f := range files {
+		if strings.HasPrefix(f.Mimetype, "image/") {
+			fields["slack_has_images"] = "true"
+			break
+		}
+	}
+	return fields
+}
+
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
 func stripBotMention(text, botUserID string) string {
 	mention := fmt.Sprintf("<@%s>", botUserID)
@@ -427,7 +528,7 @@ func stripBotMention(text, botUserID string) string {
 }
 
 // nudgeAgentForMention delivers a mention nudge to the target agent with retry.
-func (b *Bot) nudgeAgentForMention(ctx context.Context, agent, text, beadID string) {
+func (b *Bot) nudgeAgentForMention(ctx context.Context, agent, text, beadID string) error {
 	agentName := extractAgentName(agent)
 
 	message := fmt.Sprintf("Slack mention (bead %s): %s", beadID, text)
@@ -435,9 +536,10 @@ func (b *Bot) nudgeAgentForMention(ctx context.Context, agent, text, beadID stri
 	if err := NudgeAgent(ctx, b.daemon, client, b.logger, agentName, message); err != nil {
 		b.logger.Error("failed to nudge agent for mention",
 			"agent", agentName, "bead", beadID, "error", err)
-		return
+		return err
 	}
 
 	b.logger.Info("nudged agent for mention",
 		"agent", agentName, "bead", beadID)
+	return nil
 }

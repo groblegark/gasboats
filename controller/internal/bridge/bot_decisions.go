@@ -117,21 +117,26 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 
 		if len(optObjs) > 0 {
 			for i, opt := range optObjs {
-				label := opt.Label
-				if label == "" {
-					label = opt.Short
+				// Build display: Short is the concise title, Label is the description.
+				// Show both when available so the option title is visible.
+				title := opt.Short
+				if title == "" {
+					title = opt.ID
 				}
-				if label == "" {
-					label = opt.ID
-				}
+				desc := opt.Label
 
-				optText := fmt.Sprintf("*%d. %s*", i+1, label)
+				var optText string
+				if desc != "" && desc != title {
+					optText = fmt.Sprintf("*%d. %s*\n%s", i+1, title, desc)
+				} else {
+					optText = fmt.Sprintf("*%d. %s*", i+1, title)
+				}
 				if opt.Description != "" {
-					desc := opt.Description
-					if len(desc) > 150 {
-						desc = desc[:147] + "..."
+					d := opt.Description
+					if len(d) > 150 {
+						d = d[:147] + "..."
 					}
-					optText += fmt.Sprintf("\n%s", desc)
+					optText += fmt.Sprintf("\n%s", d)
 				}
 				if opt.ArtifactType != "" {
 					optText += fmt.Sprintf("\n_Requires: %s_", opt.ArtifactType)
