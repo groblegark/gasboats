@@ -210,7 +210,7 @@ func parseConfig() *config {
 		jiraBotAccountID:          os.Getenv("JIRA_BOT_ACCOUNT_ID"),
 		listenAddr:             envOrDefault("JIRA_LISTEN_ADDR", ":8091"),
 		logLevel:               envOrDefault("LOG_LEVEL", "info"),
-		statePath:              envOrDefault("STATE_PATH", "/tmp/jira-bridge-state.json"),
+		statePath:              envOrDefault("STATE_PATH", "/data/jira-bridge-state.json"),
 	}
 }
 

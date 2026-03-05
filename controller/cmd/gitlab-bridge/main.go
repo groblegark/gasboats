@@ -205,7 +205,7 @@ func parseConfig() *config {
 		pollInterval:        pollInterval,
 		listenAddr:          envOrDefault("LISTEN_ADDR", ":8092"),
 		logLevel:            envOrDefault("LOG_LEVEL", "info"),
-		statePath:           envOrDefault("STATE_PATH", "/tmp/gitlab-bridge-state.json"),
+		statePath:           envOrDefault("STATE_PATH", "/data/gitlab-bridge-state.json"),
 	}
 }
 
