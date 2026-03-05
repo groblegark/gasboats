@@ -297,6 +297,11 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	b.updateAgentCard(ctx, agent)
+
+	// Post wrapup as a thread reply on the agent card for terminal states.
+	if (state == "done" || state == "failed") && bead.Fields["wrapup"] != "" {
+		b.postCardWrapUpReply(ctx, agent, bead)
+	}
 }
 
 // postThreadStateReply posts a state transition message in the agent's bound
@@ -319,6 +324,11 @@ func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bea
 	// Append close reason if available.
 	if reason := bead.Fields["close_reason"]; reason != "" {
 		text += fmt.Sprintf("\n> %s", truncateText(reason, 500))
+	}
+
+	// Append structured wrapup if available.
+	if wrapupJSON := bead.Fields["wrapup"]; wrapupJSON != "" {
+		text += formatWrapUpSlack(wrapupJSON)
 	}
 
 	_, _, err := b.api.PostMessageContext(ctx, channel,

@@ -729,3 +729,50 @@ func TestBuildAgentCardBlocks_NoImageTag(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatWrapUpSlack_FullWrapUp(t *testing.T) {
+	wrapupJSON := `{"accomplishments":"Closed 3 bugs","blockers":"API key pending","handoff_notes":"Check PR #42","beads_closed":["kd-1","kd-2"],"pull_requests":["https://github.com/org/repo/pull/42"]}`
+	result := formatWrapUpSlack(wrapupJSON)
+
+	if !strings.Contains(result, "*Accomplishments:* Closed 3 bugs") {
+		t.Errorf("expected accomplishments in output, got: %s", result)
+	}
+	if !strings.Contains(result, "*Blockers:* API key pending") {
+		t.Errorf("expected blockers in output, got: %s", result)
+	}
+	if !strings.Contains(result, "*Handoff:* Check PR #42") {
+		t.Errorf("expected handoff notes in output, got: %s", result)
+	}
+	if !strings.Contains(result, "*Beads closed:* kd-1, kd-2") {
+		t.Errorf("expected beads closed in output, got: %s", result)
+	}
+	if !strings.Contains(result, "*PRs:* https://github.com/org/repo/pull/42") {
+		t.Errorf("expected pull requests in output, got: %s", result)
+	}
+}
+
+func TestFormatWrapUpSlack_AccomplishmentsOnly(t *testing.T) {
+	wrapupJSON := `{"accomplishments":"Fixed login flow"}`
+	result := formatWrapUpSlack(wrapupJSON)
+
+	if !strings.Contains(result, "*Accomplishments:* Fixed login flow") {
+		t.Errorf("expected accomplishments in output, got: %s", result)
+	}
+	if strings.Contains(result, "Blockers") {
+		t.Errorf("should not contain blockers when empty, got: %s", result)
+	}
+}
+
+func TestFormatWrapUpSlack_InvalidJSON(t *testing.T) {
+	result := formatWrapUpSlack("not valid json")
+	if !strings.Contains(result, "not valid json") {
+		t.Errorf("expected raw text fallback for invalid JSON, got: %s", result)
+	}
+}
+
+func TestFormatWrapUpSlack_EmptyWrapUp(t *testing.T) {
+	result := formatWrapUpSlack(`{}`)
+	if result != "" {
+		t.Errorf("expected empty string for empty wrapup, got: %q", result)
+	}
+}
