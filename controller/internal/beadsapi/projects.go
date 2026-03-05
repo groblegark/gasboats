@@ -47,9 +47,10 @@ type ProjectInfo struct {
 	MemoryRequest string // Kubernetes quantity string, e.g. "512Mi"
 	MemoryLimit   string // Kubernetes quantity string, e.g. "2Gi"
 
-	// SlackChannel is the Slack channel ID associated with this project.
+	// SlackChannels is a list of Slack channel IDs associated with this project.
 	// Used to infer the default project when /spawn is invoked from a channel.
-	SlackChannel string
+	// Populated from the comma-separated "slack_channel" field on project beads.
+	SlackChannels []string
 
 	// EnvOverrides holds extra env vars parsed from the env_json bead field.
 	// Keys absent or empty in the JSON are silently skipped.
@@ -87,7 +88,7 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			CPULimit:       fields["cpu_limit"],
 			MemoryRequest:  fields["memory_request"],
 			MemoryLimit:    fields["memory_limit"],
-			SlackChannel:   fields["slack_channel"],
+			SlackChannels:  parseSlackChannels(fields["slack_channel"]),
 		}
 		// Parse per-project secrets from JSON field.
 		if raw := fields["secrets"]; raw != "" {
@@ -126,4 +127,35 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 	}
 
 	return rigs, nil
+}
+
+// parseSlackChannels splits a comma-separated channel ID string into a slice.
+// Handles single values ("C123") and multi-values ("C123,C456, C789").
+// Returns nil for empty input.
+func parseSlackChannels(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	channels := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			channels = append(channels, p)
+		}
+	}
+	if len(channels) == 0 {
+		return nil
+	}
+	return channels
+}
+
+// HasChannel reports whether the project is associated with the given Slack channel.
+func (p ProjectInfo) HasChannel(channelID string) bool {
+	for _, ch := range p.SlackChannels {
+		if ch == channelID {
+			return true
+		}
+	}
+	return false
 }

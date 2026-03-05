@@ -153,7 +153,9 @@ func (m *mockDaemon) ListProjectBeads(_ context.Context) (map[string]beadsapi.Pr
 		if b.Type == "project" {
 			info := beadsapi.ProjectInfo{Name: b.Title}
 			if b.Fields != nil {
-				info.SlackChannel = b.Fields["slack_channel"]
+				if ch := b.Fields["slack_channel"]; ch != "" {
+					info.SlackChannels = []string{ch}
+				}
 			}
 			result[b.Title] = info
 		}

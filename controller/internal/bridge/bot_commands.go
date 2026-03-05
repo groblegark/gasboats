@@ -441,7 +441,8 @@ func generateSpawnName(project string) string {
 }
 
 // projectFromChannel resolves a Slack channel ID to a project name by checking
-// the slack_channel field on project beads.
+// the slack_channel field on project beads. Supports multiple comma-separated
+// channels per project.
 func (b *Bot) projectFromChannel(ctx context.Context, channelID string) string {
 	projects, err := b.daemon.ListProjectBeads(ctx)
 	if err != nil {
@@ -449,7 +450,7 @@ func (b *Bot) projectFromChannel(ctx context.Context, channelID string) string {
 		return ""
 	}
 	for name, info := range projects {
-		if info.SlackChannel == channelID {
+		if info.HasChannel(channelID) {
 			return name
 		}
 	}
