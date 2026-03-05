@@ -43,24 +43,21 @@ tasks:
       IMAGE_TASK_ID: ${{ init.image-claude-task-id }}
 
   # ── push-coopmux ─────────────────────────────────────────────────────
+  # Coopmux uses calver only (tagged from gasboat release path).
+  # The bare calver tag (e.g. :2026.63.6) is what gasboat Helm uses.
   - key: push-coopmux
     use: ghcr-auth
     run: |
       REF_NAME="${REF_NAME#refs/tags/}"; REF_NAME="${REF_NAME#refs/heads/}"
-      SHORT_SHA="${COMMIT_SHA:0:7}"
 
-      rwx image push $IMAGE_TASK_ID \
-        --to ghcr.io/groblegark/coop:coopmux-sha-${SHORT_SHA} \
-        --to ghcr.io/groblegark/coop:coopmux
-
-      if [[ "$REF_NAME" == v* ]]; then
-        VERSION="${REF_NAME#v}"
-        rwx image push $IMAGE_TASK_ID --to ghcr.io/groblegark/coop:coopmux-${VERSION}
-      elif [[ "$REF_NAME" == 20* ]]; then
-        # Bare calver tag for gasboat helm appVersion fallback
+      if [[ "$REF_NAME" == 20* ]]; then
         rwx image push $IMAGE_TASK_ID \
-          --to ghcr.io/groblegark/coop:coopmux-${REF_NAME} \
           --to ghcr.io/groblegark/coop:${REF_NAME}
+      else
+        # Non-calver builds (main branch) get a sha tag for debugging
+        SHORT_SHA="${COMMIT_SHA:0:7}"
+        rwx image push $IMAGE_TASK_ID \
+          --to ghcr.io/groblegark/coop:coopmux-sha-${SHORT_SHA}
       fi
     env:
       COMMIT_SHA: ${{ init.commit-sha }}
