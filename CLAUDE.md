@@ -74,7 +74,10 @@ When multiple agents are running, always follow this sequence to avoid duplicati
 One canonical path. Template: `kd template apply kd-GwMFKXnPvR --var version=YYYY.DDD.N`
 
 ```bash
-make release                          # bump Chart.yaml, commit, tag
+# 1. Tag coop with the gasboat calver (coop CI builds + pushes the image)
+cd ~/coop && git tag <TAG> && git push origin <TAG>
+# 2. Release gasboat
+cd ~/gasboat && make release          # bump Chart.yaml, commit, tag
 git push origin main <TAG>            # triggers CI (build + push images + push chart)
 gh release create <TAG> --generate-notes  # publish release notes
 # RWX E2E auto-dispatches on tag; failures become bug beads
@@ -163,15 +166,15 @@ Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`
 
 ### External Dependencies (coopmux, kbeads, beads3d)
 
-These are images from other repos, re-tagged with gasboat's calver during RWX CI:
+Sister-project images are tagged with the gasboat calver so all images share the same version:
 
-| Image | Source | RWX task | Helm default tag |
-|---|---|---|---|
-| `ghcr.io/groblegark/coop:coopmux` | groblegark/coop | `retag-coopmux` | `Chart.AppVersion` |
-| `ghcr.io/groblegark/kbeads:latest` | groblegark/kbeads | `retag-kbeads` | `Chart.AppVersion` |
-| `ghcr.io/groblegark/beads3d:latest` | groblegark/beads3d | `retag-beads3d` | `Chart.AppVersion` |
+| Image | Source | How it gets the gasboat calver |
+|---|---|---|
+| `ghcr.io/groblegark/coop:<calver>` | groblegark/coop | Tag coop with gasboat calver → coop CI pushes image |
+| `ghcr.io/groblegark/kbeads:<calver>` | groblegark/kbeads | `retag-kbeads` copies `:latest` → `:<calver>` |
+| `ghcr.io/groblegark/beads3d:<calver>` | groblegark/beads3d | `retag-beads3d` copies `:latest` → `:<calver>` |
 
-The re-tag tasks copy the rolling tag (e.g. `:coopmux`, `:latest`) to the calver tag (e.g. `:2026.62.6`) so all images in the deployment share the same version.
+**Coopmux** is tagged directly at the source (coop repo) with the gasboat calver before the gasboat release. This ensures a deterministic, pinned image — no rolling tags.
 
 ## Commits
 

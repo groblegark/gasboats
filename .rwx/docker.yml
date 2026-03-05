@@ -923,35 +923,9 @@ tasks:
 
   # ═══════════════════════════════════════════════════════════════════════
   # Re-tag external images at gasboat calver — one tag for everything.
-  # Copies the current rolling tag so helm appVersion works for all images.
+  # Coopmux is NOT re-tagged here — coop is tagged with the gasboat calver
+  # directly, so ghcr.io/groblegark/coop:<calver> is pushed by coop's own CI.
   # ═══════════════════════════════════════════════════════════════════════
-
-  # ── Re-tag coopmux → gasboat calver ───────────────────────────────────
-  - key: retag-coopmux
-    use: [code, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
-    cache: false
-    run: |
-      set -euo pipefail
-      TAG="${REF_NAME#refs/tags/}"
-      TAG="${TAG#refs/heads/}"
-
-      echo "Copying coop:coopmux → coop:${TAG}"
-      crane cp ghcr.io/groblegark/coop:coopmux "ghcr.io/groblegark/coop:${TAG}"
-
-      # Verify the tag was actually created
-      crane digest "ghcr.io/groblegark/coop:${TAG}" > /dev/null
-      echo "Verified coop:${TAG} exists"
-
-      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
-      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
-        crane tag "ghcr.io/groblegark/coop:${TAG}" "$APP_VERSION"
-        crane digest "ghcr.io/groblegark/coop:${APP_VERSION}" > /dev/null
-        echo "Verified coop:${APP_VERSION} exists"
-      fi
-      echo "Re-tagged coop:coopmux → coop:${TAG}"
-    env:
-      REF_NAME: ${{ init.ref-name }}
 
   # ── Re-tag kbeads → gasboat calver ───────────────────────────────────
   - key: retag-kbeads
