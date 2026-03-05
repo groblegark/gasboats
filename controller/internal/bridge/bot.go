@@ -296,13 +296,43 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 		// Decision thread replies (resolve the decision).
 		b.handleThreadReply(ctx, ev)
 
+		isMention := strings.Contains(ev.Text, fmt.Sprintf("<@%s>", b.botUserID))
+
+		// In private channels (group), Slack does not send a separate
+		// app_mention event — the message event is all we get. Synthesize
+		// an AppMentionEvent so the mention handler fires.
+		if isMention && ev.ChannelType == "group" {
+			b.handleAppMention(ctx, &slackevents.AppMentionEvent{
+				User:            ev.User,
+				Text:            ev.Text,
+				TimeStamp:       ev.TimeStamp,
+				ThreadTimeStamp: ev.ThreadTimeStamp,
+				Channel:         ev.Channel,
+				BotID:           ev.BotID,
+			})
+			return
+		}
+
 		// Forward to bound agent if this thread belongs to one.
 		// Skip messages containing @mention — those are handled by app_mention event.
-		if !strings.Contains(ev.Text, fmt.Sprintf("<@%s>", b.botUserID)) {
+		if !isMention {
 			if agent := b.getAgentByThread(ev.Channel, ev.ThreadTimeStamp); agent != "" {
 				b.handleThreadForward(ctx, ev, agent)
 			}
 		}
+		return
+	}
+
+	// In private channels (group), Slack does not send app_mention events.
+	// Synthesize one for top-level mentions so the bot responds.
+	if ev.ChannelType == "group" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", b.botUserID)) {
+		b.handleAppMention(ctx, &slackevents.AppMentionEvent{
+			User:      ev.User,
+			Text:      ev.Text,
+			TimeStamp: ev.TimeStamp,
+			Channel:   ev.Channel,
+			BotID:     ev.BotID,
+		})
 		return
 	}
 
