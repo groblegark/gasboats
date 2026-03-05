@@ -8,10 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// envVarPattern matches ${VAR_NAME} placeholders for environment variable expansion.
+var envVarPattern = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
 //go:embed claudemd_default.md
 var defaultClaudeMDTemplate string
@@ -133,6 +137,10 @@ func defaultUserSettings() map[string]any {
 // writeMCPConfig writes project-level MCP config to {workspace}/.mcp.json.
 // If the file already exists (e.g. from a cloned repo), mcpServers entries
 // are merged without overwriting existing servers.
+//
+// Environment variable placeholders (${VAR}) in config values are expanded
+// from the pod environment before writing. This allows config beads to
+// reference secrets injected via K8s (e.g. ${MEZMO_SERVICE_KEY}).
 func writeMCPConfig(workspace string, config map[string]any) error {
 	outPath := filepath.Join(workspace, ".mcp.json")
 
@@ -165,14 +173,32 @@ func writeMCPConfig(workspace string, config map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("marshalling MCP config: %w", err)
 	}
-	data = append(data, '\n')
 
-	if err := os.WriteFile(outPath, data, 0644); err != nil {
+	// Expand ${VAR} placeholders from the environment.
+	expanded := expandEnvVars(string(data))
+	out := []byte(expanded)
+	out = append(out, '\n')
+
+	if err := os.WriteFile(outPath, out, 0644); err != nil {
 		return fmt.Errorf("writing MCP config: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "[setup] wrote MCP config to %s\n", outPath)
 	return nil
+}
+
+// expandEnvVars expands ${VAR} placeholders in s from the environment.
+// Unresolved placeholders (empty env var) are replaced with an empty string
+// and a warning is logged.
+func expandEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		varName := match[2 : len(match)-1] // strip ${ and }
+		val := os.Getenv(varName)
+		if val == "" {
+			fmt.Fprintf(os.Stderr, "[setup] warning: env var %s not set (placeholder unresolved)\n", varName)
+		}
+		return val
+	})
 }
 
 // defaultMCPConfig returns a fallback MCP config with Playwright if the

@@ -458,6 +458,16 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 		})
 	}
 
+	// Mezmo MCP service key for observability log analysis inside agent pods.
+	if cfg.MezmoServiceKeySecret != "" {
+		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
+			EnvName:    "MEZMO_SERVICE_KEY",
+			SecretName: cfg.MezmoServiceKeySecret,
+			SecretKey:  "token",
+		})
+	}
+
+
 	// Slack bridge URL for agent gb slack commands.
 	if cfg.SlackBridgeURL != "" {
 		spec.Env["SLACK_BRIDGE_URL"] = cfg.SlackBridgeURL

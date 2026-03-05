@@ -225,6 +225,11 @@ agents:
 
   # K8s secret with RWX access token for RWX API calls in agent pods (dispatches, triggers)
   rwxAccessTokenSecret: ""
+
+  # K8s secret with Mezmo MCP service key for observability log analysis in agent pods.
+  # The secret must contain a "token" key with the Mezmo service key value.
+  # Can also be provisioned via config bead credentials system.
+  mezmoServiceKeySecret: ""
   rwxAccessTokenExternalSecret:
     enabled: false
     secretStoreName: "secretstore"

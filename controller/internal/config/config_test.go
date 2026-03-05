@@ -191,6 +191,7 @@ func TestParse_SecretEnvVars(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN_SECRET", "gh-token")
 	t.Setenv("GITLAB_TOKEN_SECRET", "gl-token")
 	t.Setenv("RWX_ACCESS_TOKEN_SECRET", "rwx-token")
+	t.Setenv("MEZMO_SERVICE_KEY_SECRET", "mezmo-key")
 	t.Setenv("NATS_TOKEN_SECRET", "nats-token")
 	t.Setenv("COOPMUX_TOKEN_SECRET", "coopmux-token")
 
@@ -205,6 +206,7 @@ func TestParse_SecretEnvVars(t *testing.T) {
 		"GithubTokenSecret":      cfg.GithubTokenSecret,
 		"GitlabTokenSecret":      cfg.GitlabTokenSecret,
 		"RwxAccessTokenSecret":   cfg.RwxAccessTokenSecret,
+		"MezmoServiceKeySecret":  cfg.MezmoServiceKeySecret,
 		"NatsTokenSecret":        cfg.NatsTokenSecret,
 		"CoopmuxTokenSecret":     cfg.CoopmuxTokenSecret,
 	}
@@ -217,6 +219,7 @@ func TestParse_SecretEnvVars(t *testing.T) {
 		"GithubTokenSecret":      "gh-token",
 		"GitlabTokenSecret":      "gl-token",
 		"RwxAccessTokenSecret":   "rwx-token",
+		"MezmoServiceKeySecret":  "mezmo-key",
 		"NatsTokenSecret":        "nats-token",
 		"CoopmuxTokenSecret":     "coopmux-token",
 	}

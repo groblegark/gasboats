@@ -170,6 +170,10 @@ spec:
             - name: RWX_ACCESS_TOKEN_SECRET
               value: {{ .Values.agents.rwxAccessTokenSecret }}
             {{- end }}
+            {{- if .Values.agents.mezmoServiceKeySecret }}
+            - name: MEZMO_SERVICE_KEY_SECRET
+              value: {{ .Values.agents.mezmoServiceKeySecret }}
+            {{- end }}
             {{- if .Values.agents.logLevel }}
             - name: LOG_LEVEL
               value: {{ .Values.agents.logLevel }}

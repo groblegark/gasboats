@@ -642,6 +642,92 @@ func TestDefaultMCPConfig_PlaywrightNotFound(t *testing.T) {
 	}
 }
 
+func TestExpandEnvVars(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		envs   map[string]string
+		want   string
+	}{
+		{
+			name:  "single var",
+			input: `Bearer ${MEZMO_SERVICE_KEY}`,
+			envs:  map[string]string{"MEZMO_SERVICE_KEY": "sts_abc123"},
+			want:  `Bearer sts_abc123`,
+		},
+		{
+			name:  "multiple vars",
+			input: `${FOO} and ${BAR}`,
+			envs:  map[string]string{"FOO": "hello", "BAR": "world"},
+			want:  `hello and world`,
+		},
+		{
+			name:  "unset var becomes empty",
+			input: `Bearer ${MISSING_KEY}`,
+			envs:  map[string]string{},
+			want:  `Bearer `,
+		},
+		{
+			name:  "no placeholders",
+			input: `plain text with $dollars`,
+			envs:  map[string]string{},
+			want:  `plain text with $dollars`,
+		},
+		{
+			name:  "bare $VAR not expanded",
+			input: `$NOT_EXPANDED`,
+			envs:  map[string]string{"NOT_EXPANDED": "oops"},
+			want:  `$NOT_EXPANDED`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.envs {
+				t.Setenv(k, v)
+			}
+			got := expandEnvVars(tt.input)
+			if got != tt.want {
+				t.Errorf("expandEnvVars(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteMCPConfig_ExpandsEnvVars(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("MEZMO_SERVICE_KEY", "sts_test_key_123")
+
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			"mezmo": map[string]any{
+				"type": "http",
+				"url":  "https://mcp.mezmo.com/mcp",
+				"headers": map[string]any{
+					"Authorization": "Bearer ${MEZMO_SERVICE_KEY}",
+				},
+			},
+		},
+	}
+
+	if err := writeMCPConfig(workspace, config); err != nil {
+		t.Fatalf("writeMCPConfig: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+	if strings.Contains(content, "${MEZMO_SERVICE_KEY}") {
+		t.Error("expected ${MEZMO_SERVICE_KEY} to be expanded")
+	}
+	if !strings.Contains(content, "sts_test_key_123") {
+		t.Error("expected expanded value sts_test_key_123 in output")
+	}
+}
+
 func TestRunSetupClaudeDefaults_PlaywrightFallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)

@@ -138,6 +138,10 @@ type Config struct {
 	// Injected as RWX_ACCESS_TOKEN in agent pods for RWX API calls (dispatches, triggers).
 	RwxAccessTokenSecret string
 
+	// MezmoServiceKeySecret is the K8s secret containing a Mezmo MCP service key (env: MEZMO_SERVICE_KEY_SECRET).
+	// Injected as MEZMO_SERVICE_KEY in agent pods for Mezmo observability MCP server auth.
+	MezmoServiceKeySecret string
+
 	// --- Coopmux ---
 
 	// CoopmuxURL is the URL of the coopmux service (env: COOPMUX_URL).
@@ -284,6 +288,7 @@ func Parse() *Config {
 		GithubTokenSecret:      os.Getenv("GITHUB_TOKEN_SECRET"),
 		GitlabTokenSecret:      os.Getenv("GITLAB_TOKEN_SECRET"),
 		RwxAccessTokenSecret:   os.Getenv("RWX_ACCESS_TOKEN_SECRET"),
+		MezmoServiceKeySecret: os.Getenv("MEZMO_SERVICE_KEY_SECRET"),
 
 		// Coopmux
 		CoopmuxURL:         os.Getenv("COOPMUX_URL"),
