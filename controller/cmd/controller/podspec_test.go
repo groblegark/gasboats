@@ -90,9 +90,8 @@ func TestRepoNameFromURL(t *testing.T) {
 	}
 }
 
-func TestApplyCommonConfig_PerProjectSecretOverride(t *testing.T) {
+func TestApplyCommonConfig_PerProjectSecrets(t *testing.T) {
 	cfg := &config.Config{
-		GithubTokenSecret: "global-gh-token",
 		ProjectCache: map[string]config.ProjectCacheEntry{
 			"myproject": {
 				Secrets: []beadsapi.SecretEntry{
@@ -107,7 +106,7 @@ func TestApplyCommonConfig_PerProjectSecretOverride(t *testing.T) {
 	}
 	applyCommonConfig(cfg, spec)
 
-	// GITHUB_TOKEN should be overridden to project-specific secret.
+	// GITHUB_TOKEN should come from project bead secrets.
 	found := false
 	for _, se := range spec.SecretEnv {
 		if se.EnvName == "GITHUB_TOKEN" {
@@ -125,12 +124,12 @@ func TestApplyCommonConfig_PerProjectSecretOverride(t *testing.T) {
 	}
 }
 
-func TestApplyCommonConfig_PerProjectSecretAdditive(t *testing.T) {
+func TestApplyCommonConfig_PerProjectMultipleSecrets(t *testing.T) {
 	cfg := &config.Config{
-		GithubTokenSecret: "global-gh-token",
 		ProjectCache: map[string]config.ProjectCacheEntry{
 			"myproject": {
 				Secrets: []beadsapi.SecretEntry{
+					{Env: "GITHUB_TOKEN", Secret: "myproject-gh-token", Key: "token"},
 					{Env: "JIRA_API_TOKEN", Secret: "myproject-jira", Key: "api-token"},
 				},
 			},
@@ -142,22 +141,20 @@ func TestApplyCommonConfig_PerProjectSecretAdditive(t *testing.T) {
 	}
 	applyCommonConfig(cfg, spec)
 
-	// Both GITHUB_TOKEN (global) and JIRA_API_TOKEN (project) should be present.
 	envNames := map[string]bool{}
 	for _, se := range spec.SecretEnv {
 		envNames[se.EnvName] = true
 	}
 	if !envNames["GITHUB_TOKEN"] {
-		t.Error("expected GITHUB_TOKEN from global config")
+		t.Error("expected GITHUB_TOKEN from project config")
 	}
 	if !envNames["JIRA_API_TOKEN"] {
 		t.Error("expected JIRA_API_TOKEN from project config")
 	}
 }
 
-func TestApplyCommonConfig_GitCredentialOverride(t *testing.T) {
+func TestApplyCommonConfig_GitCredentialFromProjectBead(t *testing.T) {
 	cfg := &config.Config{
-		GitCredentialsSecret: "global-git-creds",
 		ProjectCache: map[string]config.ProjectCacheEntry{
 			"myproject": {
 				Secrets: []beadsapi.SecretEntry{
@@ -177,10 +174,9 @@ func TestApplyCommonConfig_GitCredentialOverride(t *testing.T) {
 	}
 }
 
-func TestApplyCommonConfig_NoProjectOverrides(t *testing.T) {
+func TestApplyCommonConfig_NoProjectSecrets(t *testing.T) {
 	cfg := &config.Config{
-		GithubTokenSecret: "global-gh-token",
-		ProjectCache:      map[string]config.ProjectCacheEntry{},
+		ProjectCache: map[string]config.ProjectCacheEntry{},
 	}
 	spec := &podmanager.AgentPodSpec{
 		Project: "myproject",
@@ -188,18 +184,9 @@ func TestApplyCommonConfig_NoProjectOverrides(t *testing.T) {
 	}
 	applyCommonConfig(cfg, spec)
 
-	// Should still have the global GITHUB_TOKEN.
-	found := false
-	for _, se := range spec.SecretEnv {
-		if se.EnvName == "GITHUB_TOKEN" {
-			found = true
-			if se.SecretName != "global-gh-token" {
-				t.Errorf("expected global-gh-token, got %s", se.SecretName)
-			}
-		}
-	}
-	if !found {
-		t.Error("expected GITHUB_TOKEN from global config")
+	// No secrets should be injected when project has no secrets.
+	if len(spec.SecretEnv) != 0 {
+		t.Errorf("expected 0 SecretEnv, got %d", len(spec.SecretEnv))
 	}
 }
 

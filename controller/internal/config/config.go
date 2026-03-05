@@ -105,42 +105,16 @@ type Config struct {
 	ClaudeTeamsMemoryLimit   string // env: CLAUDE_TEAMS_MEMORY_LIMIT
 
 	// --- Secrets & Credentials ---
+	//
+	// Per-project secrets (Claude OAuth, git credentials, GitHub/GitLab tokens,
+	// RWX token, Mezmo key, AWS credentials, etc.) are declared on project beads
+	// via the "secrets" JSON field and auto-wired by applyCommonConfig +
+	// secretreconciler. Only controller-level secrets remain here.
 
 	// ClaudeOAuthSecret is the K8s secret containing Claude OAuth credentials (env: CLAUDE_OAUTH_SECRET).
 	// Mounted as ~/.claude/.credentials.json in agent pods for Max/Corp accounts.
+	// This is a volume mount (not SecretEnv), so it cannot be handled by config beads.
 	ClaudeOAuthSecret string
-
-	// ClaudeOAuthTokenSecret is the K8s secret containing a Claude OAuth access token
-	// (env: CLAUDE_OAUTH_TOKEN_SECRET). The "token" key is injected as
-	// CLAUDE_CODE_OAUTH_TOKEN in agent pods. When set, coop auto-writes
-	// .credentials.json — preferred over the static credentials secret mount.
-	ClaudeOAuthTokenSecret string
-
-	// AnthropicApiKeySecret is the K8s secret containing an Anthropic API key
-	// (env: ANTHROPIC_API_KEY_SECRET). The "key" key is injected as
-	// ANTHROPIC_API_KEY in agent pods. Fallback when OAuth is unavailable.
-	AnthropicApiKeySecret string
-
-	// GitCredentialsSecret is the K8s secret containing git credentials (env: GIT_CREDENTIALS_SECRET).
-	// Keys "username" and "token" are injected as GIT_USERNAME and GIT_TOKEN env vars
-	// in agent pods for git clone/push to GitHub.
-	GitCredentialsSecret string
-
-	// GithubTokenSecret is the K8s secret containing a GitHub token (env: GITHUB_TOKEN_SECRET).
-	// Injected as GITHUB_TOKEN in agent pods for gh CLI operations (releases, GHCR push).
-	GithubTokenSecret string
-
-	// GitlabTokenSecret is the K8s secret containing a GitLab token (env: GITLAB_TOKEN_SECRET).
-	// Injected as GITLAB_TOKEN in agent pods for glab CLI operations and git clone/push.
-	GitlabTokenSecret string
-
-	// RwxAccessTokenSecret is the K8s secret containing an RWX access token (env: RWX_ACCESS_TOKEN_SECRET).
-	// Injected as RWX_ACCESS_TOKEN in agent pods for RWX API calls (dispatches, triggers).
-	RwxAccessTokenSecret string
-
-	// MezmoServiceKeySecret is the K8s secret containing a Mezmo MCP service key (env: MEZMO_SERVICE_KEY_SECRET).
-	// Injected as MEZMO_SERVICE_KEY in agent pods for Mezmo observability MCP server auth.
-	MezmoServiceKeySecret string
 
 	// --- Coopmux ---
 
@@ -280,15 +254,8 @@ func Parse() *Config {
 		ClaudeTeamsMemoryRequest: os.Getenv("CLAUDE_TEAMS_MEMORY_REQUEST"),
 		ClaudeTeamsMemoryLimit:   os.Getenv("CLAUDE_TEAMS_MEMORY_LIMIT"),
 
-		// Secrets & Credentials
-		ClaudeOAuthSecret:      os.Getenv("CLAUDE_OAUTH_SECRET"),
-		ClaudeOAuthTokenSecret: os.Getenv("CLAUDE_OAUTH_TOKEN_SECRET"),
-		AnthropicApiKeySecret:  os.Getenv("ANTHROPIC_API_KEY_SECRET"),
-		GitCredentialsSecret:   os.Getenv("GIT_CREDENTIALS_SECRET"),
-		GithubTokenSecret:      os.Getenv("GITHUB_TOKEN_SECRET"),
-		GitlabTokenSecret:      os.Getenv("GITLAB_TOKEN_SECRET"),
-		RwxAccessTokenSecret:   os.Getenv("RWX_ACCESS_TOKEN_SECRET"),
-		MezmoServiceKeySecret: os.Getenv("MEZMO_SERVICE_KEY_SECRET"),
+		// Secrets & Credentials (only controller-level; per-project secrets via config beads)
+		ClaudeOAuthSecret: os.Getenv("CLAUDE_OAUTH_SECRET"),
 
 		// Coopmux
 		CoopmuxURL:         os.Getenv("COOPMUX_URL"),

@@ -246,44 +246,8 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 	if cfg.ClaudeOAuthSecret != "" {
 		spec.CredentialsSecret = cfg.ClaudeOAuthSecret
 	}
-	// CLAUDE_CODE_OAUTH_TOKEN: preferred auth method — coop auto-writes
-	// .credentials.json when this env var is set. Takes priority over the
-	// static credentials secret mount.
-	if cfg.ClaudeOAuthTokenSecret != "" {
-		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
-			EnvName:    "CLAUDE_CODE_OAUTH_TOKEN",
-			SecretName: cfg.ClaudeOAuthTokenSecret,
-			SecretKey:  "token",
-		})
-	}
-	// ANTHROPIC_API_KEY: fallback when OAuth is unavailable.
-	if cfg.AnthropicApiKeySecret != "" {
-		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
-			EnvName:    "ANTHROPIC_API_KEY",
-			SecretName: cfg.AnthropicApiKeySecret,
-			SecretKey:  "key",
-		})
-	}
 	if cfg.BeadsTokenSecret != "" {
 		spec.DaemonTokenSecret = cfg.BeadsTokenSecret
-	}
-
-	// Git credentials: inject GIT_USERNAME and GIT_TOKEN from secret for clone/push.
-	// Also pass the secret name to init-clone container for private repo clones.
-	if cfg.GitCredentialsSecret != "" {
-		spec.GitCredentialsSecret = cfg.GitCredentialsSecret
-		spec.SecretEnv = append(spec.SecretEnv,
-			podmanager.SecretEnvSource{
-				EnvName:    "GIT_USERNAME",
-				SecretName: cfg.GitCredentialsSecret,
-				SecretKey:  "username",
-			},
-			podmanager.SecretEnvSource{
-				EnvName:    "GIT_TOKEN",
-				SecretName: cfg.GitCredentialsSecret,
-				SecretKey:  "token",
-			},
-		)
 	}
 
 	// Wire git info from project cache (multi-repo aware).
@@ -422,60 +386,14 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 		}
 	}
 
-	// GitHub token for gh CLI (releases, GHCR push) inside agent pods.
-	if cfg.GithubTokenSecret != "" {
-		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
-			EnvName:    "GITHUB_TOKEN",
-			SecretName: cfg.GithubTokenSecret,
-			SecretKey:  "token",
-		})
-	}
-
-	// GitLab token for glab CLI (GLAB_TOKEN) and git clone/push (GITLAB_TOKEN).
-	// Also passed to init-clone for authenticated GitLab repo cloning.
-	if cfg.GitlabTokenSecret != "" {
-		spec.GitlabTokenSecret = cfg.GitlabTokenSecret
-		spec.SecretEnv = append(spec.SecretEnv,
-			podmanager.SecretEnvSource{
-				EnvName:    "GLAB_TOKEN",
-				SecretName: cfg.GitlabTokenSecret,
-				SecretKey:  "token",
-			},
-			podmanager.SecretEnvSource{
-				EnvName:    "GITLAB_TOKEN",
-				SecretName: cfg.GitlabTokenSecret,
-				SecretKey:  "token",
-			},
-		)
-	}
-
-	// RWX access token for RWX API calls (dispatches, triggers) inside agent pods.
-	if cfg.RwxAccessTokenSecret != "" {
-		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
-			EnvName:    "RWX_ACCESS_TOKEN",
-			SecretName: cfg.RwxAccessTokenSecret,
-			SecretKey:  "token",
-		})
-	}
-
-	// Mezmo MCP service key for observability log analysis inside agent pods.
-	if cfg.MezmoServiceKeySecret != "" {
-		spec.SecretEnv = append(spec.SecretEnv, podmanager.SecretEnvSource{
-			EnvName:    "MEZMO_SERVICE_KEY",
-			SecretName: cfg.MezmoServiceKeySecret,
-			SecretKey:  "token",
-		})
-	}
-
-
 	// Slack bridge URL for agent gb slack commands.
 	if cfg.SlackBridgeURL != "" {
 		spec.Env["SLACK_BRIDGE_URL"] = cfg.SlackBridgeURL
 	}
 
-	// Per-project secret overrides: merge project secrets on top of globals.
-	// Matching env names replace the global entry; new env names are additive.
+	// Per-project secrets: inject secret env vars declared on project beads.
 	// Secrets must be named "{project}-*" to prevent cross-project access.
+	// Also updates init-clone credential refs for git-related secrets.
 	if entry, ok := cfg.ProjectCache[spec.Project]; ok {
 		for _, ps := range entry.Secrets {
 			if !strings.HasPrefix(ps.Secret, spec.Project+"-") {

@@ -39,51 +39,18 @@ agents:
     name: gasboat-agent
   agentStorageClass: gp2
   claudeModel: claude-opus-4-6
-  claudeOAuthTokenExternalSecret:
-    enabled: true
-    refreshInterval: 15m
-    remoteRef: gasboat/claude-oauth-token
-    secretStoreKind: ClusterSecretStore
-    secretStoreName: aws-secretsmanager
-    tokenProperty: token
-  claudeOAuthTokenSecret: claude-oauth-token
   clusterAdmin:
     enabled: true
     name: gasboat-agent-cluster-admin
   coopBurstLimit: 3
   coopMaxPods: 0
   enabled: true
-  gitCredentials:
-    externalSecret:
-      enabled: true
-      refreshInterval: 15m
-      remoteRef: gastown/git-credentials
-      secretStoreKind: ClusterSecretStore
-      secretStoreName: aws-secretsmanager
-      tokenProperty: token
-      usernameProperty: username
-    secret: git-credentials
-  githubTokenSecret: gh-cli-token
-  gitlabTokenExternalSecret:
-    enabled: true
-    refreshInterval: 15m
-    remoteRef: gasboat/gitlab-token
-    secretStoreKind: ClusterSecretStore
-    secretStoreName: aws-secretsmanager
-    tokenProperty: token
-  gitlabTokenSecret: gitlab-token
+  # Per-project secrets (Claude OAuth, git, GitHub, GitLab, RWX, etc.) are
+  # declared on project beads and auto-reconciled by the controller.
   image:
     repository: ghcr.io/groblegark/gasboat/controller
   nodeSelector:
     kubernetes.io/arch: amd64
-  rwxAccessTokenExternalSecret:
-    enabled: true
-    refreshInterval: 15m
-    remoteRef: gasboat/rwx-access-token
-    secretStoreKind: ClusterSecretStore
-    secretStoreName: aws-secretsmanager
-    tokenProperty: token
-  rwxAccessTokenSecret: rwx-access-token
 beads:
   image:
     pullPolicy: IfNotPresent

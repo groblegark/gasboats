@@ -104,14 +104,6 @@ spec:
             - name: CLAUDE_OAUTH_SECRET
               value: {{ .Values.agents.claudeOAuthSecret }}
             {{- end }}
-            {{- if .Values.agents.claudeOAuthTokenSecret }}
-            - name: CLAUDE_OAUTH_TOKEN_SECRET
-              value: {{ .Values.agents.claudeOAuthTokenSecret }}
-            {{- end }}
-            {{- if .Values.agents.anthropicApiKeySecret }}
-            - name: ANTHROPIC_API_KEY_SECRET
-              value: {{ .Values.agents.anthropicApiKeySecret }}
-            {{- end }}
             - name: BEADS_TOKEN_SECRET
               value: {{ include "gasboat.beads.tokenSecretName" . }}
             {{- if .Values.beads.tokenSecret }}
@@ -132,10 +124,9 @@ spec:
             - name: NATS_TOKEN_SECRET
               value: {{ .Values.agents.natsTokenSecret }}
             {{- end }}
-            {{- if .Values.agents.gitCredentials.secret }}
-            - name: GIT_CREDENTIALS_SECRET
-              value: {{ .Values.agents.gitCredentials.secret }}
-            {{- end }}
+            {{- /* Per-project secrets (git, GitHub, GitLab, RWX, Mezmo, AWS, etc.)
+                 are now declared on project beads and auto-wired by the
+                 secretreconciler + applyCommonConfig. No hard-coded env vars needed. */}}
             {{- if or .Values.agents.coopmuxURL .Values.coopmux.enabled }}
             - name: COOPMUX_URL
               value: {{ .Values.agents.coopmuxURL | default (include "gasboat.coopmux.serviceURL" .) }}
@@ -157,22 +148,6 @@ spec:
             {{- if .Values.agents.coopBurstLimit }}
             - name: COOP_BURST_LIMIT
               value: {{ .Values.agents.coopBurstLimit | quote }}
-            {{- end }}
-            {{- if .Values.agents.githubTokenSecret }}
-            - name: GITHUB_TOKEN_SECRET
-              value: {{ .Values.agents.githubTokenSecret }}
-            {{- end }}
-            {{- if .Values.agents.gitlabTokenSecret }}
-            - name: GITLAB_TOKEN_SECRET
-              value: {{ .Values.agents.gitlabTokenSecret }}
-            {{- end }}
-            {{- if .Values.agents.rwxAccessTokenSecret }}
-            - name: RWX_ACCESS_TOKEN_SECRET
-              value: {{ .Values.agents.rwxAccessTokenSecret }}
-            {{- end }}
-            {{- if .Values.agents.mezmoServiceKeySecret }}
-            - name: MEZMO_SERVICE_KEY_SECRET
-              value: {{ .Values.agents.mezmoServiceKeySecret }}
             {{- end }}
             {{- if .Values.agents.logLevel }}
             - name: LOG_LEVEL

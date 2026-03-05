@@ -183,45 +183,25 @@ func TestParse_EnvOverrides(t *testing.T) {
 }
 
 func TestParse_SecretEnvVars(t *testing.T) {
+	// Controller-level secrets (not per-project — those come from config beads).
 	t.Setenv("BEADS_TOKEN_SECRET", "beads-token")
 	t.Setenv("CLAUDE_OAUTH_SECRET", "claude-oauth")
-	t.Setenv("CLAUDE_OAUTH_TOKEN_SECRET", "claude-token")
-	t.Setenv("ANTHROPIC_API_KEY_SECRET", "anthropic-key")
-	t.Setenv("GIT_CREDENTIALS_SECRET", "git-creds")
-	t.Setenv("GITHUB_TOKEN_SECRET", "gh-token")
-	t.Setenv("GITLAB_TOKEN_SECRET", "gl-token")
-	t.Setenv("RWX_ACCESS_TOKEN_SECRET", "rwx-token")
-	t.Setenv("MEZMO_SERVICE_KEY_SECRET", "mezmo-key")
 	t.Setenv("NATS_TOKEN_SECRET", "nats-token")
 	t.Setenv("COOPMUX_TOKEN_SECRET", "coopmux-token")
 
 	cfg := Parse()
 
 	checks := map[string]string{
-		"BeadsTokenSecret":       cfg.BeadsTokenSecret,
-		"ClaudeOAuthSecret":      cfg.ClaudeOAuthSecret,
-		"ClaudeOAuthTokenSecret": cfg.ClaudeOAuthTokenSecret,
-		"AnthropicApiKeySecret":  cfg.AnthropicApiKeySecret,
-		"GitCredentialsSecret":   cfg.GitCredentialsSecret,
-		"GithubTokenSecret":      cfg.GithubTokenSecret,
-		"GitlabTokenSecret":      cfg.GitlabTokenSecret,
-		"RwxAccessTokenSecret":   cfg.RwxAccessTokenSecret,
-		"MezmoServiceKeySecret":  cfg.MezmoServiceKeySecret,
-		"NatsTokenSecret":        cfg.NatsTokenSecret,
-		"CoopmuxTokenSecret":     cfg.CoopmuxTokenSecret,
+		"BeadsTokenSecret":   cfg.BeadsTokenSecret,
+		"ClaudeOAuthSecret":  cfg.ClaudeOAuthSecret,
+		"NatsTokenSecret":    cfg.NatsTokenSecret,
+		"CoopmuxTokenSecret": cfg.CoopmuxTokenSecret,
 	}
 	expected := map[string]string{
-		"BeadsTokenSecret":       "beads-token",
-		"ClaudeOAuthSecret":      "claude-oauth",
-		"ClaudeOAuthTokenSecret": "claude-token",
-		"AnthropicApiKeySecret":  "anthropic-key",
-		"GitCredentialsSecret":   "git-creds",
-		"GithubTokenSecret":      "gh-token",
-		"GitlabTokenSecret":      "gl-token",
-		"RwxAccessTokenSecret":   "rwx-token",
-		"MezmoServiceKeySecret":  "mezmo-key",
-		"NatsTokenSecret":        "nats-token",
-		"CoopmuxTokenSecret":     "coopmux-token",
+		"BeadsTokenSecret":   "beads-token",
+		"ClaudeOAuthSecret":  "claude-oauth",
+		"NatsTokenSecret":    "nats-token",
+		"CoopmuxTokenSecret": "coopmux-token",
 	}
 	for name, got := range checks {
 		if got != expected[name] {
