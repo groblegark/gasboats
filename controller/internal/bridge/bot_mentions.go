@@ -520,6 +520,106 @@ func slackFilesToFields(files []slack.File) map[string]string {
 	return fields
 }
 
+// threadNudgeInterval is the minimum time between nudges for the same agent+thread.
+const threadNudgeInterval = 30 * time.Second
+
+// handleThreadForward creates a tracking bead and nudges the bound agent when
+// a non-mention message is posted in an agent thread.
+func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEvent, agent string) {
+	agentName := extractAgentName(agent)
+
+	// Validate the agent is still active.
+	if _, err := b.daemon.FindAgentBead(ctx, agentName); err != nil {
+		b.logger.Debug("thread-forward: agent no longer active",
+			"agent", agentName, "channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp)
+		// Clear stale mapping.
+		if b.state != nil {
+			_ = b.state.RemoveThreadAgent(ev.Channel, ev.ThreadTimeStamp)
+		}
+		return
+	}
+
+	// Resolve sender display name.
+	username := ev.User
+	if b.api != nil {
+		if user, err := b.api.GetUserInfo(ev.User); err == nil {
+			if user.RealName != "" {
+				username = user.RealName
+			} else if user.Name != "" {
+				username = user.Name
+			}
+		}
+	}
+
+	// Build bead description.
+	title := truncateText(fmt.Sprintf("Thread: %s", ev.Text), 80)
+	slackTag := fmt.Sprintf("[slack:%s:%s]", ev.Channel, ev.ThreadTimeStamp)
+	description := fmt.Sprintf("Thread reply from %s in Slack:\n\n%s\n\n---\n%s", username, ev.Text, slackTag)
+
+	// Enrich with file attachments.
+	files := b.fetchMessageFiles(ctx, ev.Channel, ev.TimeStamp)
+	description += formatAttachmentsSection(files)
+
+	var fieldsJSON json.RawMessage
+	if fileFields := slackFilesToFields(files); fileFields != nil {
+		fieldsJSON, _ = json.Marshal(fileFields)
+	}
+
+	// Create tracking bead.
+	beadID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
+		Title:       title,
+		Type:        "task",
+		Kind:        "issue",
+		Description: description,
+		Assignee:    agentName,
+		Labels:      []string{"slack-thread-reply"},
+		Priority:    3,
+		Fields:      fieldsJSON,
+	})
+	if err != nil {
+		b.logger.Error("failed to create thread-forward bead",
+			"channel", ev.Channel, "agent", agentName, "error", err)
+		return
+	}
+
+	b.logger.Info("thread-forward: created tracking bead",
+		"bead", beadID, "agent", agentName, "user", username)
+
+	// Persist message ref for response relay.
+	if b.state != nil {
+		_ = b.state.SetChatMessage(beadID, MessageRef{
+			ChannelID: ev.Channel,
+			Timestamp: ev.ThreadTimeStamp,
+			Agent:     agent,
+		})
+	}
+
+	// Nudge with throttling — avoid flooding the agent in active threads.
+	if !b.shouldThrottleNudge(agentName, ev.ThreadTimeStamp) {
+		message := fmt.Sprintf("Slack thread reply (bead %s): %s", beadID, truncateText(ev.Text, 200))
+		client := &http.Client{Timeout: 10 * time.Second}
+		if err := NudgeAgent(ctx, b.daemon, client, b.logger, agentName, message); err != nil {
+			b.logger.Error("failed to nudge agent for thread forward",
+				"agent", agentName, "bead", beadID, "error", err)
+		}
+	}
+}
+
+// shouldThrottleNudge returns true if a nudge was sent recently for this agent+thread.
+// Updates the last nudge time if not throttled.
+func (b *Bot) shouldThrottleNudge(agent, threadTS string) bool {
+	key := agent + ":" + threadTS
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if last, ok := b.lastThreadNudge[key]; ok && time.Since(last) < threadNudgeInterval {
+		b.logger.Debug("thread-forward: nudge throttled",
+			"agent", agent, "thread_ts", threadTS, "last_nudge_ago", time.Since(last))
+		return true
+	}
+	b.lastThreadNudge[key] = time.Now()
+	return false
+}
+
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
 func stripBotMention(text, botUserID string) string {
 	mention := fmt.Sprintf("<@%s>", botUserID)
