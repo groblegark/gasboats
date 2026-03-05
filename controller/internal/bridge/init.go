@@ -108,6 +108,13 @@ func configs() map[string]any {
 		"type:mail": TypeConfig{
 			Kind: "data",
 		},
+		"type:message": TypeConfig{
+			Kind: "data",
+			Fields: []FieldDef{
+				{Name: "source_agent", Type: "string"},
+				{Name: "text", Type: "string"},
+			},
+		},
 		"type:decision": TypeConfig{
 			Kind: "data",
 			Fields: []FieldDef{
