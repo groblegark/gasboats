@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -307,6 +308,28 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		"Triggered by: %s", threadContext, text)
 	description = truncateText(description, 4000)
 
+	// Try to assign a prewarmed agent from the pool first.
+	// This avoids the ~60-120s cold-start time for new agent pods.
+	if beadID, assignedAgent := b.tryPoolAssign(ctx, channel, threadTS, description, project); beadID != "" {
+		b.logger.Info("thread-spawn: assigned prewarmed agent",
+			"bead", beadID, "agent", assignedAgent,
+			"channel", channel, "thread_ts", threadTS)
+
+		if b.state != nil {
+			_ = b.state.SetThreadAgent(channel, threadTS, assignedAgent)
+		}
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(
+					fmt.Sprintf(":zap: Assigned a prewarmed agent — should be ready in seconds! (tracking: `%s`)", beadID),
+					false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		return
+	}
+
+	// Fallback: cold-start a new agent pod.
 	// Build fields including thread metadata.
 	fields := map[string]string{
 		"agent":                agentName,
@@ -341,7 +364,7 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		return
 	}
 
-	b.logger.Info("thread-spawn: created agent bead",
+	b.logger.Info("thread-spawn: created agent bead (cold-start)",
 		"bead", beadID, "agent", agentName,
 		"channel", channel, "thread_ts", threadTS)
 
@@ -359,6 +382,57 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 			slack.MsgOptionTS(threadTS),
 		)
 	}
+}
+
+// tryPoolAssign attempts to assign a prewarmed agent from the controller's pool.
+// Returns (beadID, agentName) on success, or ("", "") if the pool is unavailable
+// or empty. This is a best-effort optimization — callers should fall back to
+// cold-start on failure.
+func (b *Bot) tryPoolAssign(ctx context.Context, channel, threadTS, description, project string) (string, string) {
+	if b.controllerURL == "" {
+		return "", ""
+	}
+
+	reqBody, err := json.Marshal(map[string]string{
+		"channel":     channel,
+		"thread_ts":   threadTS,
+		"description": description,
+		"project":     project,
+	})
+	if err != nil {
+		return "", ""
+	}
+
+	assignURL := strings.TrimRight(b.controllerURL, "/") + "/api/v1/pool/assign"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, assignURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		b.logger.Debug("pool assign request failed", "error", err)
+		return "", ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b.logger.Debug("pool assign returned non-200", "status", resp.StatusCode)
+		return "", ""
+	}
+
+	var result struct {
+		BeadID    string `json:"bead_id"`
+		AgentName string `json:"agent_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		b.logger.Warn("pool assign: failed to decode response", "error", err)
+		return "", ""
+	}
+
+	return result.BeadID, result.AgentName
 }
 
 // fetchThreadContext retrieves thread messages from Slack, filtering out bot

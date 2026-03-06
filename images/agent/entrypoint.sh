@@ -786,6 +786,30 @@ if [ "${BOAT_STANDBY:-}" = "true" ] && [ -n "${BOAT_AGENT_BEAD_ID:-}" ]; then
 
         if [ "${current_state}" != "prewarmed" ]; then
             echo "[entrypoint] Assignment received (state: ${current_state}), exiting standby"
+
+            # Hydrate env vars from the assigned bead's fields so the nudge
+            # includes thread context (channel, thread_ts, description).
+            if command -v kd &>/dev/null; then
+                bead_json=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null) || true
+                if [ -n "${bead_json}" ]; then
+                    assigned_channel=$(echo "${bead_json}" | jq -r '.fields.slack_thread_channel // empty' 2>/dev/null)
+                    assigned_thread_ts=$(echo "${bead_json}" | jq -r '.fields.slack_thread_ts // empty' 2>/dev/null)
+                    assigned_project=$(echo "${bead_json}" | jq -r '.fields.project // empty' 2>/dev/null)
+                    if [ -n "${assigned_channel}" ]; then
+                        export SLACK_THREAD_CHANNEL="${assigned_channel}"
+                        echo "[entrypoint] Hydrated SLACK_THREAD_CHANNEL=${assigned_channel}"
+                    fi
+                    if [ -n "${assigned_thread_ts}" ]; then
+                        export SLACK_THREAD_TS="${assigned_thread_ts}"
+                        echo "[entrypoint] Hydrated SLACK_THREAD_TS=${assigned_thread_ts}"
+                    fi
+                    if [ -n "${assigned_project}" ] && [ -z "${PROJECT:-}" ]; then
+                        export PROJECT="${assigned_project}"
+                        echo "[entrypoint] Hydrated PROJECT=${assigned_project}"
+                    fi
+                fi
+            fi
+
             break
         fi
 
