@@ -260,6 +260,34 @@ func (b *Bot) resolveAgentFromText(ctx context.Context, text string) (string, st
 	return "", text
 }
 
+// parseProjectOverride extracts a project override from mention text.
+// Supports two syntaxes:
+//   - "project:gasboat fix the helm chart" → ("gasboat", "fix the helm chart")
+//   - "--project gasboat fix the helm chart" → ("gasboat", "fix the helm chart")
+//
+// Returns ("", text) if no override is found.
+func parseProjectOverride(text string) (string, string) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return "", text
+	}
+
+	// Syntax 1: project:<name>
+	if project, ok := strings.CutPrefix(words[0], "project:"); ok && project != "" {
+		remaining := strings.TrimSpace(strings.Join(words[1:], " "))
+		return project, remaining
+	}
+
+	// Syntax 2: --project <name>
+	if words[0] == "--project" && len(words) >= 2 {
+		project := words[1]
+		remaining := strings.TrimSpace(strings.Join(words[2:], " "))
+		return project, remaining
+	}
+
+	return "", text
+}
+
 // handleThreadSpawn spawns an ephemeral agent bound to a Slack thread when
 // @gasboat is mentioned in a thread with no existing agent binding.
 func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionEvent, text string) {
@@ -285,17 +313,23 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		}
 	}
 
+	// Check for explicit project override in the mention text.
+	// Supports "project:<name>" and "--project <name>" syntax.
+	projectOverride, text := parseProjectOverride(text)
+
 	// Fetch thread context from Slack.
 	threadContext := b.fetchThreadContext(ctx, channel, threadTS)
 
 	// Generate a unique agent name based on the thread timestamp.
 	agentName := "thread-" + sanitizeTS(threadTS)
 
-	// Infer project from channel via project beads' slack_channel field
-	// (same lookup /spawn uses), falling back to router override.
-	project := b.projectFromChannel(ctx, channel)
+	// Use explicit project override if provided, otherwise infer from channel.
+	project := projectOverride
+	if project == "" {
+		project = b.projectFromChannel(ctx, channel)
+	}
 	b.logger.Info("thread-spawn: project resolution",
-		"channel", channel, "project", project)
+		"channel", channel, "project", project, "override", projectOverride)
 	if project == "" && b.router != nil {
 		if mapped := b.router.GetAgentByChannel(channel); mapped != "" {
 			project = projectFromAgentIdentity(mapped)

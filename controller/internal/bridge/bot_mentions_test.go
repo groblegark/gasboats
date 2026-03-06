@@ -587,6 +587,76 @@ func TestChat_HandleClosed_IgnoresNonMentionBeads(t *testing.T) {
 	}
 }
 
+func TestParseProjectOverride(t *testing.T) {
+	tests := []struct {
+		name          string
+		text          string
+		wantProject   string
+		wantRemaining string
+	}{
+		{
+			name:          "project: syntax",
+			text:          "project:gasboat fix the helm chart",
+			wantProject:   "gasboat",
+			wantRemaining: "fix the helm chart",
+		},
+		{
+			name:          "--project syntax",
+			text:          "--project gasboat fix the helm chart",
+			wantProject:   "gasboat",
+			wantRemaining: "fix the helm chart",
+		},
+		{
+			name:          "project: no remaining text",
+			text:          "project:monorepo",
+			wantProject:   "monorepo",
+			wantRemaining: "",
+		},
+		{
+			name:          "--project no remaining text",
+			text:          "--project monorepo",
+			wantProject:   "monorepo",
+			wantRemaining: "",
+		},
+		{
+			name:          "no override",
+			text:          "fix the helm chart",
+			wantProject:   "",
+			wantRemaining: "fix the helm chart",
+		},
+		{
+			name:          "empty text",
+			text:          "",
+			wantProject:   "",
+			wantRemaining: "",
+		},
+		{
+			name:          "project: with empty value",
+			text:          "project: something",
+			wantProject:   "",
+			wantRemaining: "project: something",
+		},
+		{
+			name:          "--project with no value",
+			text:          "--project",
+			wantProject:   "",
+			wantRemaining: "--project",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project, remaining := parseProjectOverride(tt.text)
+			if project != tt.wantProject {
+				t.Errorf("project = %q, want %q", project, tt.wantProject)
+			}
+			if remaining != tt.wantRemaining {
+				t.Errorf("remaining = %q, want %q", remaining, tt.wantRemaining)
+			}
+		})
+	}
+}
+
 func TestSanitizeTS(t *testing.T) {
 	tests := []struct {
 		input string
