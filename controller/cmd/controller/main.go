@@ -119,6 +119,12 @@ func main() {
 	// by the standalone slack-bridge binary (cmd/slack-bridge). The controller
 	// only handles K8s pod lifecycle operations. See bd-8x8fy.
 
+	// Create prewarmed agent pool manager (used by HTTP endpoint and run loop).
+	var pool *poolmanager.PoolManager
+	if cfg.PrewarmedPoolEnabled {
+		pool = poolmanager.New(daemon, cfg, logger.With("component", "poolmanager"))
+	}
+
 	// Start lightweight health/version HTTP server.
 	healthAddr := os.Getenv("HEALTH_LISTEN_ADDR")
 	if healthAddr == "" {
@@ -139,7 +145,7 @@ func main() {
 		})
 	})
 	registerAutodestructEndpoints(healthMux, rec, logger)
-
+	healthMux.HandleFunc("POST /api/v1/pool/assign", handlePoolAssign(pool, logger))
 	healthSrv := &http.Server{
 		Addr:              healthAddr,
 		Handler:           healthMux,
@@ -156,7 +162,7 @@ func main() {
 	defer cancel()
 
 	runFn := func(ctx context.Context) {
-		if err := run(ctx, logger, cfg, k8sClient, watcher, pods, status, rec, daemon, secretRec); err != nil {
+		if err := run(ctx, logger, cfg, k8sClient, watcher, pods, status, rec, daemon, secretRec, pool); err != nil {
 			logger.Error("controller stopped", "error", err)
 			os.Exit(1)
 		}
@@ -217,7 +223,7 @@ func runLeaderElection(ctx context.Context, logger *slog.Logger, cfg *config.Con
 
 // run is the main controller loop. It reads beads events and dispatches
 // pod operations. Separated from main() for testability.
-func run(ctx context.Context, logger *slog.Logger, cfg *config.Config, k8sClient kubernetes.Interface, watcher subscriber.Watcher, pods podmanager.Manager, status statusreporter.Reporter, rec *reconciler.Reconciler, daemon *beadsapi.Client, secretRec *secretreconciler.Reconciler) error {
+func run(ctx context.Context, logger *slog.Logger, cfg *config.Config, k8sClient kubernetes.Interface, watcher subscriber.Watcher, pods podmanager.Manager, status statusreporter.Reporter, rec *reconciler.Reconciler, daemon *beadsapi.Client, secretRec *secretreconciler.Reconciler, pool *poolmanager.PoolManager) error {
 	// Run reconciler once at startup to catch beads created during downtime.
 	if rec != nil {
 		logger.Info("running startup reconciliation")
@@ -256,9 +262,8 @@ func run(ctx context.Context, logger *slog.Logger, cfg *config.Config, k8sClient
 	}
 	go runPeriodicSync(ctx, logger, status, rec, daemon, cfg, syncInterval, secretRec)
 
-	// Start prewarmed agent pool manager if enabled.
-	if cfg.PrewarmedPoolEnabled {
-		pool := poolmanager.New(daemon, cfg, logger.With("component", "poolmanager"))
+	// Start prewarmed agent pool reconcile loop if enabled.
+	if pool != nil {
 		go pool.RunLoop(ctx)
 	}
 
@@ -563,4 +568,50 @@ func registerAutodestructEndpoints(mux *http.ServeMux, rec *reconciler.Reconcile
 			"status": status,
 		})
 	}))
+}
+
+// handlePoolAssign returns an HTTP handler for POST /api/v1/pool/assign.
+// It atomically assigns a prewarmed agent from the pool to a thread.
+// Returns 200 with the assigned agent info, or 404 if the pool is empty.
+func handlePoolAssign(pool *poolmanager.PoolManager, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if pool == nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "prewarmed pool is not enabled",
+			})
+			return
+		}
+
+		var req poolmanager.AssignRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "invalid request body: " + err.Error(),
+			})
+			return
+		}
+
+		result, err := pool.AssignPrewarmed(r.Context(), req)
+		if err != nil {
+			if errors.Is(err, poolmanager.ErrPoolEmpty) {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": "no prewarmed agents available",
+				})
+				return
+			}
+			logger.Error("pool assign failed", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }

@@ -58,6 +58,7 @@ func New(daemon *beadsapi.Client, cfg *config.Config, logger *slog.Logger) *Pool
 // prewarmedAgent represents a prewarmed agent bead from the daemon.
 type prewarmedAgent struct {
 	ID        string
+	AgentName string
 	CreatedAt time.Time
 }
 
@@ -138,7 +139,8 @@ func (pm *PoolManager) listPrewarmedAgents(ctx context.Context) ([]prewarmedAgen
 			continue
 		}
 		result = append(result, prewarmedAgent{
-			ID: b.ID,
+			ID:        b.ID,
+			AgentName: b.AgentName,
 			// Use metadata created_at if available, otherwise use zero time
 			// (will not be recycled by TTL until next sync populates it).
 			CreatedAt: parseTime(b.Metadata["created_at"]),
@@ -189,6 +191,86 @@ func (pm *PoolManager) createPrewarmedAgent(ctx context.Context) error {
 		"bead", beadID, "agent", agentName,
 		"project", pm.cfg.Project, "role", pm.cfg.Role)
 	return nil
+}
+
+// AssignRequest holds the parameters for assigning a prewarmed agent.
+type AssignRequest struct {
+	// Thread context for the assigned work.
+	Channel     string `json:"channel"`
+	ThreadTS    string `json:"thread_ts"`
+	Description string `json:"description"`
+	Project     string `json:"project"`
+}
+
+// AssignResult is returned when a prewarmed agent is successfully assigned.
+type AssignResult struct {
+	BeadID    string `json:"bead_id"`
+	AgentName string `json:"agent_name"`
+}
+
+// ErrPoolEmpty is returned when no prewarmed agents are available for assignment.
+var ErrPoolEmpty = fmt.Errorf("no prewarmed agents available")
+
+// AssignPrewarmed atomically picks a prewarmed agent from the pool and
+// transitions it to "assigning" state with the given thread context.
+// Returns ErrPoolEmpty if no prewarmed agents are available.
+func (pm *PoolManager) AssignPrewarmed(ctx context.Context, req AssignRequest) (*AssignResult, error) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	agents, err := pm.listPrewarmedAgents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing prewarmed agents: %w", err)
+	}
+	if len(agents) == 0 {
+		return nil, ErrPoolEmpty
+	}
+
+	// Pick the oldest prewarmed agent (FIFO).
+	pick := agents[0]
+	for _, a := range agents[1:] {
+		if !a.CreatedAt.IsZero() && (pick.CreatedAt.IsZero() || a.CreatedAt.Before(pick.CreatedAt)) {
+			pick = a
+		}
+	}
+
+	// Update the bead: set agent_state to "assigning" and add thread context.
+	fields := map[string]string{
+		"agent_state":  "assigning",
+		"spawn_source": "slack-thread-pool",
+	}
+	if req.Channel != "" {
+		fields["slack_thread_channel"] = req.Channel
+	}
+	if req.ThreadTS != "" {
+		fields["slack_thread_ts"] = req.ThreadTS
+	}
+	if req.Project != "" {
+		fields["project"] = req.Project
+	}
+	if err := pm.daemon.UpdateBeadFields(ctx, pick.ID, fields); err != nil {
+		return nil, fmt.Errorf("updating prewarmed agent %s: %w", pick.ID, err)
+	}
+
+	// Update the bead description with thread context.
+	if req.Description != "" {
+		desc := req.Description
+		if err := pm.daemon.UpdateBead(ctx, pick.ID, beadsapi.UpdateBeadRequest{
+			Description: &desc,
+		}); err != nil {
+			pm.logger.Warn("failed to set description on assigned agent",
+				"agent", pick.ID, "error", err)
+		}
+	}
+
+	pm.logger.Info("assigned prewarmed agent",
+		"bead", pick.ID, "agent", pick.AgentName,
+		"channel", req.Channel, "thread_ts", req.ThreadTS)
+
+	return &AssignResult{
+		BeadID:    pick.ID,
+		AgentName: pick.AgentName,
+	}, nil
 }
 
 // RunLoop runs the pool reconciler periodically until the context is cancelled.
