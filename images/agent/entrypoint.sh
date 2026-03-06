@@ -15,6 +15,24 @@
 #   BEADS_DAEMON_HOST - beads daemon URL
 #   BEADS_DAEMON_PORT - beads daemon port
 #   BOAT_SESSION_RESUME - set to "1" to auto-resume previous Claude session on restart
+#
+# Config beads (type=project) drive per-project agent configuration:
+#   image            - agent container image override
+#   storage_class    - PVC storage class for crew-mode workspaces
+#   service_account  - K8s ServiceAccount override
+#   rtk_enabled      - enable RTK token optimization
+#   cpu_request/cpu_limit/memory_request/memory_limit - pod resource overrides
+#   secrets          - per-project K8s secret → env var mappings (JSON)
+#   env              - per-project plain env vars (JSON)
+#   env_json         - per-project env var overrides (JSON object)
+#   repos            - multi-repo clone definitions (JSON)
+#   slack_channel    - Slack channel(s) for project resolution
+#   auto_assign      - enable/disable auto-assignment for agents
+#   prewarmed_pool   - pool config: {enabled, mode, role, min_size, max_size}
+#
+# All of the above are set on project beads (kd update <project-bead-id> -f key=value)
+# and read by the controller at pod creation time. Do NOT hardcode project-specific
+# behavior in this entrypoint — use config beads instead.
 
 set -euo pipefail
 

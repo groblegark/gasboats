@@ -78,7 +78,7 @@ func configs() map[string]any {
 				{Name: "role", Type: "string"},
 				{Name: "agent", Type: "string"},
 				// Agent lifecycle state written back by the controller.
-				{Name: "agent_state", Type: "enum", Values: []string{"spawning", "working", "done", "failed", "rate_limited"}},
+				{Name: "agent_state", Type: "enum", Values: []string{"idle", "spawning", "working", "done", "failed", "rate_limited"}},
 				// Pod lifecycle state written back by the controller.
 				{Name: "pod_phase", Type: "enum", Values: []string{"pending", "running", "succeeded", "failed"}},
 				{Name: "pod_name", Type: "string"},
@@ -158,6 +158,9 @@ func configs() map[string]any {
 				// Auto-assignment control: "true" (default) or "false".
 				// Inherited by agents unless overridden on the agent bead.
 				{Name: "auto_assign", Type: "string"},
+				// Prewarmed pool configuration (JSON):
+				// {"enabled":bool, "mode":"job"|"crew", "role":"thread", "min_size":int, "max_size":int}
+				{Name: "prewarmed_pool", Type: "json"},
 			},
 		},
 

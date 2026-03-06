@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -355,6 +356,29 @@ func handleEvent(ctx context.Context, logger *slog.Logger, cfg *config.Config, e
 
 	switch event.Type {
 	case subscriber.AgentSpawn:
+		// Enforce max pods limit on event-driven spawns (same guard as reconciler).
+		if cfg.CoopMaxPods > 0 {
+			existing, err := pods.ListAgentPods(ctx, cfg.Namespace, map[string]string{
+				podmanager.LabelApp: podmanager.LabelAppValue,
+			})
+			if err != nil {
+				return fmt.Errorf("listing pods for max check: %w", err)
+			}
+			activeCount := 0
+			for _, p := range existing {
+				if _, ok := p.Labels[podmanager.LabelAgent]; ok &&
+					p.Status.Phase != corev1.PodFailed &&
+					p.Status.Phase != corev1.PodSucceeded {
+					activeCount++
+				}
+			}
+			if activeCount >= cfg.CoopMaxPods {
+				logger.Warn("max concurrent pods reached, rejecting spawn event",
+					"limit", cfg.CoopMaxPods, "active", activeCount, "agent", event.AgentName)
+				return fmt.Errorf("max concurrent pods (%d) reached, cannot spawn %s", cfg.CoopMaxPods, event.AgentName)
+			}
+		}
+
 		spec := buildAgentPodSpec(cfg, event)
 		if err := pods.CreateAgentPod(ctx, spec); err != nil {
 			return err
