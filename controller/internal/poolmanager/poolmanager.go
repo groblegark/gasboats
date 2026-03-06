@@ -68,10 +68,6 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	}
 	m.cfg.ProjectCacheMu.RUnlock()
 
-	if len(pools) == 0 {
-		return nil
-	}
-
 	// List all prewarmed agents once (shared across projects).
 	allAgents, err := m.listPrewarmedAgents(ctx)
 	if err != nil {
@@ -84,9 +80,55 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		byProject[a.Project] = append(byProject[a.Project], a)
 	}
 
-	// Reconcile each project pool.
+	// Build set of enabled project names for fast lookup.
+	enabledProjects := make(map[string]bool, len(pools))
+	for _, pp := range pools {
+		enabledProjects[pp.name] = true
+	}
+
+	// Close prewarmed agents for projects whose pool is now disabled.
+	// This handles the enabled→disabled transition: any prewarmed agents
+	// lingering for a project with no active pool config get closed so
+	// the reconciler deletes their pods.
+	for project, agents := range byProject {
+		if enabledProjects[project] {
+			continue
+		}
+		m.logger.Info("pool disabled for project, closing prewarmed agents",
+			"project", project, "count", len(agents))
+		for _, a := range agents {
+			if err := m.closePrewarmedAgent(ctx, a.ID); err != nil {
+				m.logger.Warn("failed to close prewarmed agent",
+					"bead", a.ID, "project", project, "error", err)
+			}
+		}
+	}
+
+	if len(pools) == 0 {
+		return nil
+	}
+
+	// Reconcile each project pool: scale up to min, cap at max.
 	for _, pp := range pools {
 		active := byProject[pp.name]
+
+		// Enforce max_size: close excess agents if pool was shrunk.
+		if len(active) > pp.cfg.MaxSize {
+			excess := len(active) - pp.cfg.MaxSize
+			m.logger.Info("pool exceeds max_size, closing excess agents",
+				"project", pp.name, "current", len(active),
+				"max", pp.cfg.MaxSize, "closing", excess)
+			// Close oldest first (FIFO order).
+			sortByAge(active)
+			for i := 0; i < excess; i++ {
+				if err := m.closePrewarmedAgent(ctx, active[i].ID); err != nil {
+					m.logger.Warn("failed to close excess agent",
+						"bead", active[i].ID, "project", pp.name, "error", err)
+				}
+			}
+			active = active[excess:]
+		}
+
 		deficit := pp.cfg.MinSize - len(active)
 		if deficit <= 0 {
 			continue
@@ -175,6 +217,28 @@ func (m *Manager) createPrewarmedAgent(ctx context.Context, project string, pool
 		"bead", beadID, "agent", agentName,
 		"project", project, "role", poolCfg.Role)
 	return nil
+}
+
+// closePrewarmedAgent closes a prewarmed agent bead so the reconciler
+// deletes its pod.
+func (m *Manager) closePrewarmedAgent(ctx context.Context, beadID string) error {
+	status := "closed"
+	if err := m.daemon.UpdateBead(ctx, beadID, beadsapi.UpdateBeadRequest{
+		Status: &status,
+	}); err != nil {
+		return fmt.Errorf("closing prewarmed agent bead %s: %w", beadID, err)
+	}
+	m.logger.Info("closed prewarmed agent", "bead", beadID)
+	return nil
+}
+
+// sortByAge sorts prewarmed agents by creation time (oldest first).
+func sortByAge(agents []prewarmedAgent) {
+	for i := 1; i < len(agents); i++ {
+		for j := i; j > 0 && agents[j].CreatedAt.Before(agents[j-1].CreatedAt); j-- {
+			agents[j], agents[j-1] = agents[j-1], agents[j]
+		}
+	}
 }
 
 // AssignRequest holds the parameters for assigning a prewarmed agent.
