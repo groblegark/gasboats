@@ -13,7 +13,12 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 )
+
+// createClaimWindow is how long to buffer a "created" event before posting,
+// to allow a subsequent "claimed" event to merge into a single message.
+const createClaimWindow = 3 * time.Second
 
 // workItemTypes is the set of bead types that represent real work items.
 // Infrastructure types (agent, decision, mail, project, etc.) are excluded.
@@ -30,6 +35,9 @@ type BeadActivityNotifier interface {
 	NotifyBeadCreated(ctx context.Context, bead BeadEvent)
 	// NotifyBeadClaimed is called when an agent claims a bead (status → in_progress).
 	NotifyBeadClaimed(ctx context.Context, bead BeadEvent)
+	// NotifyBeadCreatedAndClaimed is called when an agent creates and then
+	// immediately claims a bead, aggregating both into a single notification.
+	NotifyBeadCreatedAndClaimed(ctx context.Context, bead BeadEvent)
 	// NotifyBeadClosed is called when a bead assigned to an agent is closed.
 	NotifyBeadClosed(ctx context.Context, bead BeadEvent)
 }
@@ -40,14 +48,21 @@ type BeadActivityConfig struct {
 	Logger   *slog.Logger
 }
 
+// pendingCreate tracks a buffered "created" event awaiting possible merge with claim.
+type pendingCreate struct {
+	bead  BeadEvent
+	timer *time.Timer
+}
+
 // BeadActivity watches the kbeads SSE event stream for bead lifecycle events
 // and dispatches notifications to agent Slack threads.
 type BeadActivity struct {
 	notifier BeadActivityNotifier
 	logger   *slog.Logger
 
-	mu   sync.Mutex
-	seen map[string]bool // bead ID:action → already notified (dedup on SSE reconnect)
+	mu      sync.Mutex
+	seen    map[string]bool            // bead ID:action → already notified (dedup on SSE reconnect)
+	pending map[string]*pendingCreate  // bead ID → buffered create event
 }
 
 // NewBeadActivity creates a new bead activity watcher.
@@ -56,6 +71,7 @@ func NewBeadActivity(cfg BeadActivityConfig) *BeadActivity {
 		notifier: cfg.Notifier,
 		logger:   cfg.Logger,
 		seen:     make(map[string]bool),
+		pending:  make(map[string]*pendingCreate),
 	}
 }
 
@@ -84,9 +100,28 @@ func (ba *BeadActivity) handleCreated(ctx context.Context, data []byte) {
 	ba.logger.Debug("bead created by agent",
 		"id", bead.ID, "type", bead.Type, "title", bead.Title, "created_by", bead.CreatedBy)
 
-	if ba.notifier != nil {
-		ba.notifier.NotifyBeadCreated(ctx, *bead)
+	if ba.notifier == nil {
+		return
 	}
+
+	// Buffer the created event briefly — if the agent claims the same bead
+	// within createClaimWindow, we merge into a single notification.
+	beadCopy := *bead
+	timer := time.AfterFunc(createClaimWindow, func() {
+		ba.mu.Lock()
+		_, stillPending := ba.pending[beadCopy.ID]
+		if stillPending {
+			delete(ba.pending, beadCopy.ID)
+		}
+		ba.mu.Unlock()
+		if stillPending {
+			ba.notifier.NotifyBeadCreated(ctx, beadCopy)
+		}
+	})
+
+	ba.mu.Lock()
+	ba.pending[beadCopy.ID] = &pendingCreate{bead: beadCopy, timer: timer}
+	ba.mu.Unlock()
 }
 
 func (ba *BeadActivity) handleClosed(ctx context.Context, data []byte) {
@@ -125,7 +160,25 @@ func (ba *BeadActivity) handleUpdated(ctx context.Context, data []byte) {
 		ba.logger.Debug("bead claimed by agent",
 			"id", bead.ID, "type", bead.Type, "title", bead.Title, "assignee", bead.Assignee)
 
-		if ba.notifier != nil {
+		if ba.notifier == nil {
+			return
+		}
+
+		// Check if there's a pending "created" event for this bead —
+		// if so, merge into a single "created & claimed" notification.
+		ba.mu.Lock()
+		pc, hasPending := ba.pending[bead.ID]
+		if hasPending {
+			pc.timer.Stop()
+			delete(ba.pending, bead.ID)
+		}
+		ba.mu.Unlock()
+
+		if hasPending {
+			ba.logger.Debug("merging create+claim into single notification",
+				"id", bead.ID, "type", bead.Type, "title", bead.Title)
+			ba.notifier.NotifyBeadCreatedAndClaimed(ctx, *bead)
+		} else {
 			ba.notifier.NotifyBeadClaimed(ctx, *bead)
 		}
 	}
