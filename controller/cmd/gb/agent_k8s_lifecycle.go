@@ -89,8 +89,16 @@ func autoBypassStartup(ctx context.Context, coopPort int) {
 }
 
 // injectInitialPrompt waits for the agent to reach idle state, then sends a
-// nudge message to kick off the work session.
+// nudge message to kick off the work session. Prewarmed agents are skipped —
+// they wait in standby until the pool manager sends a work-assignment nudge.
 func injectInitialPrompt(ctx context.Context, coopPort int, role string) {
+	// Prewarmed agents must NOT seek work on their own. They sit idle until
+	// the pool manager assigns them to a Slack thread via a targeted nudge.
+	if os.Getenv("BOAT_AGENT_STATE") == "prewarmed" {
+		fmt.Printf("[gb agent start] prewarmed agent — skipping initial work prompt\n")
+		return
+	}
+
 	base := fmt.Sprintf("http://localhost:%d/api/v1", coopPort)
 	client := &http.Client{Timeout: 3 * time.Second}
 	nudge := "Check `gb ready` for your workflow steps and begin working."
