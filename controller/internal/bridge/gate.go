@@ -23,8 +23,8 @@ var middlewareGVR = schema.GroupVersionResource{
 	Resource: "middlewares",
 }
 
-// GateKeeper manages IP whitelisting on Traefik Middleware CRDs via the K8s API.
-type GateKeeper struct {
+// Bouncer manages IP whitelisting on Traefik Middleware CRDs via the K8s API.
+type Bouncer struct {
 	client    dynamic.Interface
 	namespace string
 	// middlewareNames are the Traefik Middleware CR names to manage.
@@ -34,17 +34,17 @@ type GateKeeper struct {
 	mu             sync.Mutex
 }
 
-// GateKeeperConfig holds configuration for the GateKeeper.
-type GateKeeperConfig struct {
+// BouncerConfig holds configuration for the Bouncer.
+type BouncerConfig struct {
 	Client          dynamic.Interface
 	Namespace       string
 	MiddlewareNames []string
 	Logger          *slog.Logger
 }
 
-// NewGateKeeper creates a new GateKeeper.
-func NewGateKeeper(cfg GateKeeperConfig) *GateKeeper {
-	return &GateKeeper{
+// NewBouncer creates a new Bouncer.
+func NewBouncer(cfg BouncerConfig) *Bouncer {
+	return &Bouncer{
 		client:          cfg.Client,
 		namespace:       cfg.Namespace,
 		middlewareNames: cfg.MiddlewareNames,
@@ -53,7 +53,7 @@ func NewGateKeeper(cfg GateKeeperConfig) *GateKeeper {
 }
 
 // ListIPs returns the current sourceRange from the first managed middleware.
-func (g *GateKeeper) ListIPs(ctx context.Context) ([]string, error) {
+func (g *Bouncer) ListIPs(ctx context.Context) ([]string, error) {
 	if len(g.middlewareNames) == 0 {
 		return nil, fmt.Errorf("no middleware names configured")
 	}
@@ -65,7 +65,7 @@ func (g *GateKeeper) ListIPs(ctx context.Context) ([]string, error) {
 }
 
 // AddIP adds a CIDR to all managed middlewares' sourceRange.
-func (g *GateKeeper) AddIP(ctx context.Context, cidr string) error {
+func (g *Bouncer) AddIP(ctx context.Context, cidr string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -82,7 +82,7 @@ func (g *GateKeeper) AddIP(ctx context.Context, cidr string) error {
 }
 
 // RemoveIP removes a CIDR from all managed middlewares' sourceRange.
-func (g *GateKeeper) RemoveIP(ctx context.Context, cidr string) error {
+func (g *Bouncer) RemoveIP(ctx context.Context, cidr string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -98,7 +98,7 @@ func (g *GateKeeper) RemoveIP(ctx context.Context, cidr string) error {
 	return nil
 }
 
-func (g *GateKeeper) addIPToMiddleware(ctx context.Context, name, cidr string) error {
+func (g *Bouncer) addIPToMiddleware(ctx context.Context, name, cidr string) error {
 	mw, err := g.client.Resource(middlewareGVR).Namespace(g.namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get: %w", err)
@@ -115,7 +115,7 @@ func (g *GateKeeper) addIPToMiddleware(ctx context.Context, name, cidr string) e
 	return g.patchSourceRange(ctx, name, newRange)
 }
 
-func (g *GateKeeper) removeIPFromMiddleware(ctx context.Context, name, cidr string) error {
+func (g *Bouncer) removeIPFromMiddleware(ctx context.Context, name, cidr string) error {
 	mw, err := g.client.Resource(middlewareGVR).Namespace(g.namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get: %w", err)
@@ -141,7 +141,7 @@ func (g *GateKeeper) removeIPFromMiddleware(ctx context.Context, name, cidr stri
 	return g.patchSourceRange(ctx, name, newRange)
 }
 
-func (g *GateKeeper) patchSourceRange(ctx context.Context, name string, sourceRange []string) error {
+func (g *Bouncer) patchSourceRange(ctx context.Context, name string, sourceRange []string) error {
 	patch := map[string]interface{}{
 		"spec": map[string]interface{}{
 			"ipWhiteList": map[string]interface{}{

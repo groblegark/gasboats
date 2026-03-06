@@ -120,26 +120,26 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// Initialize GateKeeper for IP whitelist management if configured.
-	var gate *bridge.GateKeeper
-	if cfg.gateEnabled && cfg.gateNamespace != "" && len(cfg.gateMiddlewares) > 0 {
+	// Initialize Bouncer for IP whitelist management if configured.
+	var bouncer *bridge.Bouncer
+	if cfg.bouncerEnabled && cfg.bouncerNamespace != "" && len(cfg.bouncerMiddlewares) > 0 {
 		k8sCfg, err := rest.InClusterConfig()
 		if err != nil {
-			logger.Warn("gate: failed to get in-cluster config (gate disabled)", "error", err)
+			logger.Warn("bouncer: failed to get in-cluster config (gate disabled)", "error", err)
 		} else {
 			dynClient, err := dynamic.NewForConfig(k8sCfg)
 			if err != nil {
-				logger.Warn("gate: failed to create K8s dynamic client (gate disabled)", "error", err)
+				logger.Warn("bouncer: failed to create K8s dynamic client (gate disabled)", "error", err)
 			} else {
-				gate = bridge.NewGateKeeper(bridge.GateKeeperConfig{
+				bouncer = bridge.NewBouncer(bridge.BouncerConfig{
 					Client:          dynClient,
-					Namespace:       cfg.gateNamespace,
-					MiddlewareNames: cfg.gateMiddlewares,
+					Namespace:       cfg.bouncerNamespace,
+					MiddlewareNames: cfg.bouncerMiddlewares,
 					Logger:          logger,
 				})
-				logger.Info("gate: IP whitelist management enabled",
-					"namespace", cfg.gateNamespace,
-					"middlewares", cfg.gateMiddlewares)
+				logger.Info("bouncer: IP whitelist management enabled",
+					"namespace", cfg.bouncerNamespace,
+					"middlewares", cfg.bouncerMiddlewares)
 			}
 		}
 	}
@@ -153,7 +153,7 @@ func main() {
 			ThreadingMode:    cfg.threadingMode,
 			Daemon:           daemon,
 			State:            state,
-			Gate:             gate,
+			Bouncer:          bouncer,
 			Logger:           logger,
 			Debug:            cfg.debug,
 			GitHubToken:      cfg.githubToken,
@@ -396,9 +396,9 @@ type config struct {
 	coopmuxPublicURL string
 
 	// Gate (IP whitelist management)
-	gateEnabled     bool
-	gateNamespace   string
-	gateMiddlewares []string
+	bouncerEnabled     bool
+	bouncerNamespace   string
+	bouncerMiddlewares []string
 }
 
 func parseConfig() *config {
@@ -446,9 +446,9 @@ func parseConfig() *config {
 
 		coopmuxPublicURL: os.Getenv("COOPMUX_PUBLIC_URL"),
 
-		gateEnabled:     os.Getenv("GATE_ENABLED") == "true",
-		gateNamespace:   envOrDefault("GATE_NAMESPACE", os.Getenv("POD_NAMESPACE")),
-		gateMiddlewares: parseCommaSeparated(os.Getenv("GATE_MIDDLEWARES")),
+		bouncerEnabled:     os.Getenv("BOUNCER_ENABLED") == "true",
+		bouncerNamespace:   envOrDefault("BOUNCER_NAMESPACE", os.Getenv("POD_NAMESPACE")),
+		bouncerMiddlewares: parseCommaSeparated(os.Getenv("BOUNCER_MIDDLEWARES")),
 	}
 }
 

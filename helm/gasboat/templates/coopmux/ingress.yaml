@@ -25,6 +25,9 @@ spec:
         - name: {{ $fullname }}
           port: {{ $servicePort }}
       middlewares:
+        {{- if .Values.coopmux.ingress.ipWhitelist.enabled }}
+        - name: {{ $fullname }}-ipwhitelist
+        {{- end }}
         - name: {{ $fullname }}-root-redirect
     # Dashboard HTML
     - match: Host(`{{ $host }}`) && PathPrefix(`/mux`)
@@ -95,8 +98,6 @@ spec:
   ipWhiteList:
     sourceRange:
       {{- toYaml .Values.coopmux.ingress.ipWhitelist.sourceRange | nindent 6 }}
-    ipStrategy:
-      depth: {{ .Values.coopmux.ingress.ipWhitelist.depth | default 1 }}
 {{- end }}
 {{- if .Values.coopmux.ingress.basicAuth.enabled }}
 ---

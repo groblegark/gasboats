@@ -59,7 +59,7 @@ type Bot struct {
 	imageConfigs  []ImageTrackConfig
 
 	// IP whitelist management (optional).
-	gate *GateKeeper
+	bouncer *Bouncer
 
 	// Coopmux terminal link support.
 	coopmuxPublicURL string // e.g., "https://gasboat.app.e2e.dev.fics.ai/mux"
@@ -98,8 +98,8 @@ type BotConfig struct {
 	ControllerURL string
 	ImageConfigs  []ImageTrackConfig
 
-	// Gate is the optional IP whitelist manager for Traefik middlewares.
-	Gate *GateKeeper
+	// Bouncer is the optional IP whitelist manager for Traefik middlewares.
+	Bouncer *Bouncer
 
 	// CoopmuxPublicURL is the public base URL for the coopmux terminal dashboard
 	// (e.g., "https://gasboat.app.e2e.dev.fics.ai/mux"). When set, agent names
@@ -130,7 +130,7 @@ func NewBot(cfg BotConfig) *Bot {
 		state:            cfg.State,
 		daemon:           cfg.Daemon,
 		router:           cfg.Router,
-		gate:             cfg.Gate,
+		bouncer:          cfg.Bouncer,
 		logger:           cfg.Logger,
 		channel:          cfg.Channel,
 		threadingMode:    cfg.ThreadingMode,

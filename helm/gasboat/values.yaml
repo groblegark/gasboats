@@ -514,9 +514,9 @@ slackBridge:
     # Comma-separated repos to check (default: groblegark/gasboat,groblegark/kbeads,groblegark/coop)
     repos: ""
 
-  # Gate — IP whitelist management via /gate Slack command.
+  # Bouncer — IP whitelist management via /bouncer Slack command.
   # Patches Traefik Middleware CRs to add/remove IPs from sourceRange.
-  gate:
+  bouncer:
     enabled: false
     # Comma-separated Traefik Middleware CR names to manage.
     # These are the *-ipwhitelist middlewares created by the chart.

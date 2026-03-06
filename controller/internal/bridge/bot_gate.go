@@ -8,41 +8,41 @@ import (
 	"github.com/slack-go/slack"
 )
 
-// handleGateCommand manages the IP whitelist on Traefik middlewares.
+// handleBouncerCommand manages the IP whitelist on Traefik middlewares.
 // Usage:
 //
-//	/gate list                — show current whitelist
-//	/gate add <ip>            — add IP (auto-appends /32)
-//	/gate remove <ip>         — remove IP from whitelist
-func (b *Bot) handleGateCommand(ctx context.Context, cmd slack.SlashCommand) {
-	if b.gate == nil {
+//	/bouncer list                — show current whitelist
+//	/bouncer add <ip>            — add IP (auto-appends /32)
+//	/bouncer remove <ip>         — remove IP from whitelist
+func (b *Bot) handleBouncerCommand(ctx context.Context, cmd slack.SlashCommand) {
+	if b.bouncer == nil {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":x: Gate (IP whitelist management) is not configured.", false))
+			slack.MsgOptionText(":x: Bouncer (IP whitelist management) is not configured.", false))
 		return
 	}
 
 	args := strings.Fields(strings.TrimSpace(cmd.Text))
 	if len(args) == 0 {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":gate: Usage: `/gate list` · `/gate add <ip>` · `/gate remove <ip>`", false))
+			slack.MsgOptionText(":door: Usage: `/bouncer list` · `/bouncer add <ip>` · `/bouncer remove <ip>`", false))
 		return
 	}
 
 	switch args[0] {
 	case "list", "ls":
-		b.handleGateList(ctx, cmd)
+		b.handleBouncerList(ctx, cmd)
 	case "add":
-		b.handleGateAdd(ctx, cmd, args[1:])
+		b.handleBouncerAdd(ctx, cmd, args[1:])
 	case "remove", "rm":
-		b.handleGateRemove(ctx, cmd, args[1:])
+		b.handleBouncerRemove(ctx, cmd, args[1:])
 	default:
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":gate: Usage: `/gate list` · `/gate add <ip>` · `/gate remove <ip>`", false))
+			slack.MsgOptionText(":door: Usage: `/bouncer list` · `/bouncer add <ip>` · `/bouncer remove <ip>`", false))
 	}
 }
 
-func (b *Bot) handleGateList(ctx context.Context, cmd slack.SlashCommand) {
-	ips, err := b.gate.ListIPs(ctx)
+func (b *Bot) handleBouncerList(ctx context.Context, cmd slack.SlashCommand) {
+	ips, err := b.bouncer.ListIPs(ctx)
 	if err != nil {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 			slack.MsgOptionText(fmt.Sprintf(":x: Failed to list IPs: %s", err), false))
@@ -50,7 +50,7 @@ func (b *Bot) handleGateList(ctx context.Context, cmd slack.SlashCommand) {
 	}
 	if len(ips) == 0 {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":gate: Whitelist is empty (all traffic blocked).", false))
+			slack.MsgOptionText(":door: Whitelist is empty (all traffic blocked).", false))
 		return
 	}
 	lines := make([]string, len(ips))
@@ -58,13 +58,13 @@ func (b *Bot) handleGateList(ctx context.Context, cmd slack.SlashCommand) {
 		lines[i] = fmt.Sprintf("• `%s`", ip)
 	}
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-		slack.MsgOptionText(fmt.Sprintf(":gate: *IP Whitelist* (%d entries)\n%s", len(ips), strings.Join(lines, "\n")), false))
+		slack.MsgOptionText(fmt.Sprintf(":door: *IP Whitelist* (%d entries)\n%s", len(ips), strings.Join(lines, "\n")), false))
 }
 
-func (b *Bot) handleGateAdd(ctx context.Context, cmd slack.SlashCommand, args []string) {
+func (b *Bot) handleBouncerAdd(ctx context.Context, cmd slack.SlashCommand, args []string) {
 	if len(args) == 0 {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":x: Usage: `/gate add <ip>`", false))
+			slack.MsgOptionText(":x: Usage: `/bouncer add <ip>`", false))
 		return
 	}
 	cidr, err := NormalizeCIDR(args[0])
@@ -73,20 +73,20 @@ func (b *Bot) handleGateAdd(ctx context.Context, cmd slack.SlashCommand, args []
 			slack.MsgOptionText(fmt.Sprintf(":x: %s", err), false))
 		return
 	}
-	if err := b.gate.AddIP(ctx, cidr); err != nil {
+	if err := b.bouncer.AddIP(ctx, cidr); err != nil {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 			slack.MsgOptionText(fmt.Sprintf(":x: Failed to add %s: %s", cidr, err), false))
 		return
 	}
-	b.logger.Info("gate: IP added via Slack", "cidr", cidr, "user", cmd.UserID)
+	b.logger.Info("bouncer: IP added via Slack", "cidr", cidr, "user", cmd.UserID)
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 		slack.MsgOptionText(fmt.Sprintf(":white_check_mark: Added `%s` to whitelist (all services).", cidr), false))
 }
 
-func (b *Bot) handleGateRemove(ctx context.Context, cmd slack.SlashCommand, args []string) {
+func (b *Bot) handleBouncerRemove(ctx context.Context, cmd slack.SlashCommand, args []string) {
 	if len(args) == 0 {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":x: Usage: `/gate remove <ip>`", false))
+			slack.MsgOptionText(":x: Usage: `/bouncer remove <ip>`", false))
 		return
 	}
 	cidr, err := NormalizeCIDR(args[0])
@@ -95,12 +95,12 @@ func (b *Bot) handleGateRemove(ctx context.Context, cmd slack.SlashCommand, args
 			slack.MsgOptionText(fmt.Sprintf(":x: %s", err), false))
 		return
 	}
-	if err := b.gate.RemoveIP(ctx, cidr); err != nil {
+	if err := b.bouncer.RemoveIP(ctx, cidr); err != nil {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 			slack.MsgOptionText(fmt.Sprintf(":x: Failed to remove %s: %s", cidr, err), false))
 		return
 	}
-	b.logger.Info("gate: IP removed via Slack", "cidr", cidr, "user", cmd.UserID)
+	b.logger.Info("bouncer: IP removed via Slack", "cidr", cidr, "user", cmd.UserID)
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 		slack.MsgOptionText(fmt.Sprintf(":white_check_mark: Removed `%s` from whitelist (all services).", cidr), false))
 }

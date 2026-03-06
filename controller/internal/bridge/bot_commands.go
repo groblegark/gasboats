@@ -30,8 +30,8 @@ func (b *Bot) handleSlashCommand(ctx context.Context, cmd slack.SlashCommand) {
 		b.handleUnreleasedCommand(ctx, cmd)
 	case "/clear-threads":
 		b.handleClearThreadsCommand(ctx, cmd)
-	case "/gate":
-		b.handleGateCommand(ctx, cmd)
+	case "/bouncer":
+		b.handleBouncerCommand(ctx, cmd)
 	default:
 		b.logger.Debug("unhandled slash command", "command", cmd.Command)
 	}

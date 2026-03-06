@@ -1,4 +1,4 @@
-{{- if and .Values.slackBridge.enabled .Values.slackBridge.gate.enabled }}
+{{- if and .Values.slackBridge.enabled .Values.slackBridge.bouncer.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -11,7 +11,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "gasboat.fullname" . }}-slack-bridge-gate
+  name: {{ include "gasboat.fullname" . }}-slack-bridge-bouncer
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gasboat.labels" . | nindent 4 }}
@@ -24,7 +24,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "gasboat.fullname" . }}-slack-bridge-gate
+  name: {{ include "gasboat.fullname" . }}-slack-bridge-bouncer
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gasboat.labels" . | nindent 4 }}
@@ -32,7 +32,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "gasboat.fullname" . }}-slack-bridge-gate
+  name: {{ include "gasboat.fullname" . }}-slack-bridge-bouncer
 subjects:
   - kind: ServiceAccount
     name: {{ include "gasboat.fullname" . }}-slack-bridge
