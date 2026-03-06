@@ -38,6 +38,7 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 
 	var agent string
 	replyTS := ev.ThreadTimeStamp // timestamp to thread the confirmation reply under
+	agentSpawning := false // true if agent is still in spawning state
 
 	// Priority 1: Check if the first word is an agent name.
 	var agentPodName string // for coopmux terminal link
@@ -58,6 +59,9 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		agent = resolved
 		text = remaining
 		agentPodName = beadsapi.ParseNotes(agentBead.Notes)["pod_name"]
+		if agentBead.Fields["agent_state"] == "spawning" {
+			agentSpawning = true
+		}
 		b.logger.Info("mention: resolved agent from text",
 			"agent", agent, "channel", ev.Channel)
 	}
@@ -115,6 +119,9 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 			return
 		}
 		agentPodName = beadsapi.ParseNotes(agentBead.Notes)["pod_name"]
+		if agentBead.Fields["agent_state"] == "spawning" {
+			agentSpawning = true
+		}
 	}
 
 	if replyTS == "" {
@@ -191,7 +198,9 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	}
 	agentDisplay := coopmuxAgentLink(b.coopmuxPublicURL, agentPodName, extractAgentName(agent))
 	var confirmText string
-	if nudgeErr != nil {
+	if nudgeErr != nil && agentSpawning {
+		confirmText = fmt.Sprintf(":hourglass_flowing_sand: %s is still starting up — it will pick up this task when ready (tracking: `%s`)", agentDisplay, beadID)
+	} else if nudgeErr != nil {
 		confirmText = fmt.Sprintf(":warning: Created task for %s but nudge failed (tracking: `%s`). The agent will pick it up on its next cycle.", agentDisplay, beadID)
 	} else {
 		confirmText = fmt.Sprintf(":mega: Forwarded to %s (tracking: `%s`)", agentDisplay, beadID)
