@@ -36,6 +36,24 @@ func (b *Bot) NotifyBeadClaimed(ctx context.Context, bead BeadEvent) {
 	b.postAgentThreadMessage(ctx, agent, text)
 }
 
+// NotifyBeadCreatedAndClaimed posts a single combined notification when an
+// agent creates a bead and immediately claims it, reducing thread noise.
+func (b *Bot) NotifyBeadCreatedAndClaimed(ctx context.Context, bead BeadEvent) {
+	agent := extractAgentName(bead.Assignee)
+	if agent == "" {
+		agent = extractAgentName(bead.CreatedBy)
+	}
+	if agent == "" {
+		return
+	}
+
+	b.recordActivity(agent)
+
+	title := truncateText(bead.Title, 60)
+	text := fmt.Sprintf(":arrow_right: Created & claimed %s: *%s*", bead.Type, title)
+	b.postAgentThreadMessage(ctx, agent, text)
+}
+
 // NotifyBeadClosed posts a notification in the assigned agent's Slack thread.
 func (b *Bot) NotifyBeadClosed(ctx context.Context, bead BeadEvent) {
 	agent := extractAgentName(bead.Assignee)

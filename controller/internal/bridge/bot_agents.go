@@ -212,28 +212,12 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	// Fetch pod_name from the agent bead notes for coopmux terminal linking.
 	b.fetchAndCachePodName(ctx, agent)
 
-	// Thread-bound agents: post a brief status message in the thread
-	// instead of a top-level agent card.
+	// Thread-bound agents: skip the spawn notification here because
+	// handleThreadSpawn already posted a confirmation in the thread
+	// ("Spinning up..." or "Assigned a prewarmed agent...").
 	if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
-		name := extractAgentName(agent)
-		b.mu.Lock()
-		podName := b.agentPodName[agent]
-		b.mu.Unlock()
-		displayName := coopmuxAgentLink(b.coopmuxPublicURL, podName, name)
-		_, _, err := b.api.PostMessageContext(ctx, slackChannel,
-			slack.MsgOptionText(fmt.Sprintf("Agent %s is starting...", name), false),
-			slack.MsgOptionBlocks(
-				slack.NewSectionBlock(
-					slack.NewTextBlockObject("mrkdwn",
-						fmt.Sprintf(":rocket: Agent %s is starting...", displayName), false, false),
-					nil, nil),
-			),
-			slack.MsgOptionTS(slackTS),
-		)
-		if err != nil {
-			b.logger.Error("failed to post thread-bound spawn message",
-				"agent", agent, "error", err)
-		}
+		b.logger.Debug("skipping spawn notification for thread-bound agent",
+			"agent", agent, "channel", slackChannel, "thread_ts", slackTS)
 		return
 	}
 
