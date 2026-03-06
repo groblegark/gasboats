@@ -1,7 +1,7 @@
-// Package poolmanager maintains a pool of prewarmed agent pods ready for
-// instant assignment. It periodically reconciles the pool size against the
-// desired minimum, creating new prewarmed agents when the pool shrinks and
-// recycling idle agents that exceed their TTL.
+// Package poolmanager maintains per-project pools of prewarmed agent pods
+// ready for instant assignment. It reads pool configuration from the project
+// cache (populated from project bead "prewarmed_pool" JSON fields) and
+// reconciles each project's pool independently.
 package poolmanager
 
 import (
@@ -16,41 +16,21 @@ import (
 	"gasboat/controller/internal/config"
 )
 
-// PoolConfig holds the pool configuration.
-type PoolConfig struct {
-	MinSize  int
-	MaxSize  int
-	TTL      time.Duration
-	Role     string
-	Mode     string
-	Project  string
-	Interval time.Duration
-}
-
-// PoolManager maintains a pool of prewarmed agent beads. The existing
-// reconciler handles pod creation for these beads; the pool manager only
-// manages the bead lifecycle.
-type PoolManager struct {
+// Manager maintains prewarmed agent pools across multiple projects.
+// Each project with a prewarmed_pool config gets its own independent pool.
+type Manager struct {
 	daemon *beadsapi.Client
-	cfg    PoolConfig
+	cfg    *config.Config
 	logger *slog.Logger
 	mu     sync.Mutex
 	seq    int // monotonic counter for unique agent names
 }
 
-// New creates a PoolManager from controller config.
-func New(daemon *beadsapi.Client, cfg *config.Config, logger *slog.Logger) *PoolManager {
-	return &PoolManager{
+// New creates a multi-pool Manager.
+func New(daemon *beadsapi.Client, cfg *config.Config, logger *slog.Logger) *Manager {
+	return &Manager{
 		daemon: daemon,
-		cfg: PoolConfig{
-			MinSize:  cfg.PrewarmedPoolMinSize,
-			MaxSize:  cfg.PrewarmedPoolMaxSize,
-			TTL:      cfg.PrewarmedPoolTTL,
-			Role:     cfg.PrewarmedPoolRole,
-			Mode:     cfg.PrewarmedPoolMode,
-			Project:  cfg.PrewarmedPoolProject,
-			Interval: cfg.PrewarmedPoolInterval,
-		},
+		cfg:    cfg,
 		logger: logger,
 	}
 }
@@ -59,63 +39,73 @@ func New(daemon *beadsapi.Client, cfg *config.Config, logger *slog.Logger) *Pool
 type prewarmedAgent struct {
 	ID        string
 	AgentName string
+	Project   string
 	CreatedAt time.Time
 }
 
-// Reconcile performs a single pool reconciliation pass:
-// 1. List all active agent beads with agent_state=prewarmed
-// 2. Recycle agents that exceed TTL
-// 3. Create new prewarmed agents to reach min_pool_size
-func (pm *PoolManager) Reconcile(ctx context.Context) error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+// Reconcile performs a single reconciliation pass across all projects.
+// For each project with a prewarmed_pool config:
+// 1. List prewarmed agents for that project
+// 2. Create new agents to reach min_pool_size
+func (m *Manager) Reconcile(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	agents, err := pm.listPrewarmedAgents(ctx)
+	// Snapshot pool configs from the project cache under read lock.
+	m.cfg.ProjectCacheMu.RLock()
+	type projectPool struct {
+		name string
+		cfg  beadsapi.PrewarmedPoolConfig
+	}
+	var pools []projectPool
+	for name, entry := range m.cfg.ProjectCache {
+		if entry.PrewarmedPool != nil && entry.PrewarmedPool.Enabled {
+			pools = append(pools, projectPool{name: name, cfg: *entry.PrewarmedPool})
+		}
+	}
+	m.cfg.ProjectCacheMu.RUnlock()
+
+	if len(pools) == 0 {
+		return nil
+	}
+
+	// List all prewarmed agents once (shared across projects).
+	allAgents, err := m.listPrewarmedAgents(ctx)
 	if err != nil {
 		return fmt.Errorf("listing prewarmed agents: %w", err)
 	}
 
-	now := time.Now()
-	var active []prewarmedAgent
+	// Group by project.
+	byProject := make(map[string][]prewarmedAgent)
+	for _, a := range allAgents {
+		byProject[a.Project] = append(byProject[a.Project], a)
+	}
 
-	// Recycle agents exceeding TTL.
-	for _, a := range agents {
-		age := now.Sub(a.CreatedAt)
-		if pm.cfg.TTL > 0 && age > pm.cfg.TTL {
-			pm.logger.Info("recycling prewarmed agent (TTL exceeded)",
-				"agent", a.ID, "age", age.Round(time.Second))
-			if err := pm.daemon.CloseBead(ctx, a.ID, map[string]string{
-				"agent_state": "done",
-			}); err != nil {
-				pm.logger.Warn("failed to close expired prewarmed agent",
-					"agent", a.ID, "error", err)
-			}
+	// Reconcile each project pool.
+	for _, pp := range pools {
+		active := byProject[pp.name]
+		deficit := pp.cfg.MinSize - len(active)
+		if deficit <= 0 {
 			continue
 		}
-		active = append(active, a)
-	}
+		// Cap creation to not exceed max size.
+		if len(active)+deficit > pp.cfg.MaxSize {
+			deficit = pp.cfg.MaxSize - len(active)
+		}
+		if deficit <= 0 {
+			continue
+		}
 
-	// Create new agents to reach min size.
-	deficit := pm.cfg.MinSize - len(active)
-	if deficit <= 0 {
-		return nil
-	}
+		m.logger.Info("pool below minimum, creating prewarmed agents",
+			"project", pp.name, "current", len(active),
+			"min", pp.cfg.MinSize, "creating", deficit)
 
-	// Cap creation to not exceed max size.
-	if len(active)+deficit > pm.cfg.MaxSize {
-		deficit = pm.cfg.MaxSize - len(active)
-	}
-	if deficit <= 0 {
-		return nil
-	}
-
-	pm.logger.Info("pool below minimum, creating prewarmed agents",
-		"current", len(active), "min", pm.cfg.MinSize, "creating", deficit)
-
-	for i := 0; i < deficit; i++ {
-		if err := pm.createPrewarmedAgent(ctx); err != nil {
-			pm.logger.Warn("failed to create prewarmed agent", "error", err)
-			return err
+		for i := 0; i < deficit; i++ {
+			if err := m.createPrewarmedAgent(ctx, pp.name, pp.cfg); err != nil {
+				m.logger.Warn("failed to create prewarmed agent",
+					"project", pp.name, "error", err)
+				break
+			}
 		}
 	}
 
@@ -123,8 +113,8 @@ func (pm *PoolManager) Reconcile(ctx context.Context) error {
 }
 
 // listPrewarmedAgents returns all active agent beads with agent_state=prewarmed.
-func (pm *PoolManager) listPrewarmedAgents(ctx context.Context) ([]prewarmedAgent, error) {
-	beads, err := pm.daemon.ListAgentBeads(ctx)
+func (m *Manager) listPrewarmedAgents(ctx context.Context) ([]prewarmedAgent, error) {
+	beads, err := m.daemon.ListAgentBeads(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -134,15 +124,10 @@ func (pm *PoolManager) listPrewarmedAgents(ctx context.Context) ([]prewarmedAgen
 		if b.AgentState != "prewarmed" {
 			continue
 		}
-		// Filter by project if configured.
-		if pm.cfg.Project != "" && b.Project != pm.cfg.Project {
-			continue
-		}
 		result = append(result, prewarmedAgent{
 			ID:        b.ID,
 			AgentName: b.AgentName,
-			// Use metadata created_at if available, otherwise use zero time
-			// (will not be recycled by TTL until next sync populates it).
+			Project:   b.Project,
 			CreatedAt: parseTime(b.Metadata["created_at"]),
 		})
 	}
@@ -150,17 +135,16 @@ func (pm *PoolManager) listPrewarmedAgents(ctx context.Context) ([]prewarmedAgen
 	return result, nil
 }
 
-// createPrewarmedAgent creates a new agent bead in prewarmed state.
-// The existing reconciler will create the corresponding pod.
-func (pm *PoolManager) createPrewarmedAgent(ctx context.Context) error {
-	pm.seq++
-	agentName := fmt.Sprintf("prewarmed-%d-%d", time.Now().Unix(), pm.seq)
+// createPrewarmedAgent creates a new agent bead in prewarmed state for a project.
+func (m *Manager) createPrewarmedAgent(ctx context.Context, project string, poolCfg beadsapi.PrewarmedPoolConfig) error {
+	m.seq++
+	agentName := fmt.Sprintf("prewarmed-%d-%d", time.Now().Unix(), m.seq)
 
 	fields := map[string]string{
 		"agent":       agentName,
-		"mode":        pm.cfg.Mode,
-		"role":        pm.cfg.Role,
-		"project":     pm.cfg.Project,
+		"mode":        poolCfg.Mode,
+		"role":        poolCfg.Role,
+		"project":     project,
 		"agent_state": "prewarmed",
 	}
 	fieldsJSON, err := json.Marshal(fields)
@@ -168,12 +152,9 @@ func (pm *PoolManager) createPrewarmedAgent(ctx context.Context) error {
 		return fmt.Errorf("marshalling agent fields: %w", err)
 	}
 
-	labels := []string{"prewarmed"}
-	if pm.cfg.Project != "" {
-		labels = append(labels, "project:"+pm.cfg.Project)
-	}
+	labels := []string{"prewarmed", "project:" + project}
 
-	beadID, err := pm.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
+	beadID, err := m.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
 		Title:       agentName,
 		Type:        "agent",
 		Description: "Prewarmed agent ready for assignment",
@@ -185,11 +166,11 @@ func (pm *PoolManager) createPrewarmedAgent(ctx context.Context) error {
 	}
 
 	// Add role label for advice matching.
-	_ = pm.daemon.AddLabel(ctx, beadID, "role:"+pm.cfg.Role)
+	_ = m.daemon.AddLabel(ctx, beadID, "role:"+poolCfg.Role)
 
-	pm.logger.Info("created prewarmed agent",
+	m.logger.Info("created prewarmed agent",
 		"bead", beadID, "agent", agentName,
-		"project", pm.cfg.Project, "role", pm.cfg.Role)
+		"project", project, "role", poolCfg.Role)
 	return nil
 }
 
@@ -213,22 +194,31 @@ var ErrPoolEmpty = fmt.Errorf("no prewarmed agents available")
 
 // AssignPrewarmed atomically picks a prewarmed agent from the pool and
 // transitions it to "assigning" state with the given thread context.
-// Returns ErrPoolEmpty if no prewarmed agents are available.
-func (pm *PoolManager) AssignPrewarmed(ctx context.Context, req AssignRequest) (*AssignResult, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+// Returns ErrPoolEmpty if no prewarmed agents are available for the project.
+func (m *Manager) AssignPrewarmed(ctx context.Context, req AssignRequest) (*AssignResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	agents, err := pm.listPrewarmedAgents(ctx)
+	agents, err := m.listPrewarmedAgents(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing prewarmed agents: %w", err)
 	}
-	if len(agents) == 0 {
+
+	// Filter to requested project (if specified).
+	var candidates []prewarmedAgent
+	for _, a := range agents {
+		if req.Project != "" && a.Project != req.Project {
+			continue
+		}
+		candidates = append(candidates, a)
+	}
+	if len(candidates) == 0 {
 		return nil, ErrPoolEmpty
 	}
 
 	// Pick the oldest prewarmed agent (FIFO).
-	pick := agents[0]
-	for _, a := range agents[1:] {
+	pick := candidates[0]
+	for _, a := range candidates[1:] {
 		if !a.CreatedAt.IsZero() && (pick.CreatedAt.IsZero() || a.CreatedAt.Before(pick.CreatedAt)) {
 			pick = a
 		}
@@ -248,22 +238,22 @@ func (pm *PoolManager) AssignPrewarmed(ctx context.Context, req AssignRequest) (
 	if req.Project != "" {
 		fields["project"] = req.Project
 	}
-	if err := pm.daemon.UpdateBeadFields(ctx, pick.ID, fields); err != nil {
+	if err := m.daemon.UpdateBeadFields(ctx, pick.ID, fields); err != nil {
 		return nil, fmt.Errorf("updating prewarmed agent %s: %w", pick.ID, err)
 	}
 
 	// Update the bead description with thread context.
 	if req.Description != "" {
 		desc := req.Description
-		if err := pm.daemon.UpdateBead(ctx, pick.ID, beadsapi.UpdateBeadRequest{
+		if err := m.daemon.UpdateBead(ctx, pick.ID, beadsapi.UpdateBeadRequest{
 			Description: &desc,
 		}); err != nil {
-			pm.logger.Warn("failed to set description on assigned agent",
+			m.logger.Warn("failed to set description on assigned agent",
 				"agent", pick.ID, "error", err)
 		}
 	}
 
-	pm.logger.Info("assigned prewarmed agent",
+	m.logger.Info("assigned prewarmed agent",
 		"bead", pick.ID, "agent", pick.AgentName,
 		"channel", req.Channel, "thread_ts", req.ThreadTS)
 
@@ -273,28 +263,43 @@ func (pm *PoolManager) AssignPrewarmed(ctx context.Context, req AssignRequest) (
 	}, nil
 }
 
-// RunLoop runs the pool reconciler periodically until the context is cancelled.
-func (pm *PoolManager) RunLoop(ctx context.Context) {
-	pm.logger.Info("pool manager started",
-		"min_size", pm.cfg.MinSize, "max_size", pm.cfg.MaxSize,
-		"ttl", pm.cfg.TTL, "interval", pm.cfg.Interval)
+// HasEnabledPools returns true if any project in the cache has a prewarmed pool enabled.
+func (m *Manager) HasEnabledPools() bool {
+	m.cfg.ProjectCacheMu.RLock()
+	defer m.cfg.ProjectCacheMu.RUnlock()
+	for _, entry := range m.cfg.ProjectCache {
+		if entry.PrewarmedPool != nil && entry.PrewarmedPool.Enabled {
+			return true
+		}
+	}
+	return false
+}
 
-	ticker := time.NewTicker(pm.cfg.Interval)
+// RunLoop runs the multi-pool reconciler periodically until the context is cancelled.
+func (m *Manager) RunLoop(ctx context.Context) {
+	interval := m.cfg.PrewarmedPoolInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+
+	m.logger.Info("multi-pool manager started", "interval", interval)
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on start.
-	if err := pm.Reconcile(ctx); err != nil {
-		pm.logger.Warn("initial pool reconcile failed", "error", err)
+	if err := m.Reconcile(ctx); err != nil {
+		m.logger.Warn("initial pool reconcile failed", "error", err)
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			pm.logger.Info("pool manager stopped")
+			m.logger.Info("multi-pool manager stopped")
 			return
 		case <-ticker.C:
-			if err := pm.Reconcile(ctx); err != nil {
-				pm.logger.Warn("pool reconcile failed", "error", err)
+			if err := m.Reconcile(ctx); err != nil {
+				m.logger.Warn("pool reconcile failed", "error", err)
 			}
 		}
 	}
