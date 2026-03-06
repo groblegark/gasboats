@@ -19,6 +19,9 @@ spec:
         {{- include "gasboat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: slack-bridge
     spec:
+      {{- if .Values.slackBridge.gate.enabled }}
+      serviceAccountName: {{ include "gasboat.fullname" . }}-slack-bridge
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -145,6 +148,19 @@ spec:
             {{- if and .Values.coopmux.enabled .Values.coopmux.ingress.host }}
             - name: COOPMUX_PUBLIC_URL
               value: "https://{{ .Values.coopmux.ingress.host }}/mux"
+            {{- end }}
+            # Gate (IP whitelist management)
+            {{- if .Values.slackBridge.gate.enabled }}
+            - name: GATE_ENABLED
+              value: "true"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.slackBridge.gate.middlewares }}
+            - name: GATE_MIDDLEWARES
+              value: {{ .Values.slackBridge.gate.middlewares | quote }}
+            {{- end }}
             {{- end }}
           livenessProbe:
             httpGet:

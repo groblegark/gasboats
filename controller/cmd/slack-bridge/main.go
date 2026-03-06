@@ -24,6 +24,8 @@ import (
 	"strings"
 
 	slackapi "github.com/slack-go/slack"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 
 	"gasboat/controller/internal/beadsapi"
 	"gasboat/controller/internal/bridge"
@@ -118,6 +120,30 @@ func main() {
 		http.NotFound(w, r)
 	})
 
+	// Initialize GateKeeper for IP whitelist management if configured.
+	var gate *bridge.GateKeeper
+	if cfg.gateEnabled && cfg.gateNamespace != "" && len(cfg.gateMiddlewares) > 0 {
+		k8sCfg, err := rest.InClusterConfig()
+		if err != nil {
+			logger.Warn("gate: failed to get in-cluster config (gate disabled)", "error", err)
+		} else {
+			dynClient, err := dynamic.NewForConfig(k8sCfg)
+			if err != nil {
+				logger.Warn("gate: failed to create K8s dynamic client (gate disabled)", "error", err)
+			} else {
+				gate = bridge.NewGateKeeper(bridge.GateKeeperConfig{
+					Client:          dynClient,
+					Namespace:       cfg.gateNamespace,
+					MiddlewareNames: cfg.gateMiddlewares,
+					Logger:          logger,
+				})
+				logger.Info("gate: IP whitelist management enabled",
+					"namespace", cfg.gateNamespace,
+					"middlewares", cfg.gateMiddlewares)
+			}
+		}
+	}
+
 	if cfg.slackBotToken != "" && cfg.slackAppToken != "" {
 		// Socket Mode: real-time WebSocket connection for events, interactions, slash commands.
 		bot = bridge.NewBot(bridge.BotConfig{
@@ -127,6 +153,7 @@ func main() {
 			ThreadingMode:    cfg.threadingMode,
 			Daemon:           daemon,
 			State:            state,
+			Gate:             gate,
 			Logger:           logger,
 			Debug:            cfg.debug,
 			GitHubToken:      cfg.githubToken,
@@ -367,6 +394,11 @@ type config struct {
 
 	// Coopmux terminal links
 	coopmuxPublicURL string
+
+	// Gate (IP whitelist management)
+	gateEnabled     bool
+	gateNamespace   string
+	gateMiddlewares []string
 }
 
 func parseConfig() *config {
@@ -413,6 +445,10 @@ func parseConfig() *config {
 		controllerURL: os.Getenv("CONTROLLER_URL"),
 
 		coopmuxPublicURL: os.Getenv("COOPMUX_PUBLIC_URL"),
+
+		gateEnabled:     os.Getenv("GATE_ENABLED") == "true",
+		gateNamespace:   envOrDefault("GATE_NAMESPACE", os.Getenv("POD_NAMESPACE")),
+		gateMiddlewares: parseCommaSeparated(os.Getenv("GATE_MIDDLEWARES")),
 	}
 }
 
@@ -431,6 +467,20 @@ func parseRepoList(s string) []bridge.RepoRef {
 		repos = append(repos, bridge.RepoRef{Owner: parts[0], Repo: parts[1]})
 	}
 	return repos
+}
+
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	for _, v := range strings.Split(s, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func envOrDefault(key, fallback string) string {
