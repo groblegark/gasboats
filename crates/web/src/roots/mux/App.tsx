@@ -88,11 +88,17 @@ function AppInner() {
   function toggleExpand(id: string) {
     if (expandedRef.current === id) {
       setExpandedSession(null);
+      history.replaceState(null, "", location.pathname + location.search);
     } else {
       setExpandedSession(id);
       setFocusedSession(id);
+      history.replaceState(null, "", `${location.pathname}${location.search}#${id}`);
     }
   }
+
+  // Deep-link: read session ID from URL hash fragment (e.g. #pod-name).
+  // Consumed once on the first "sessions" message, then cleared.
+  const deepLinkRef = useRef<string | null>(location.hash.replace(/^#/, "") || null);
 
   const muxSendRef = useRef<((msg: unknown) => void) | null>(null);
 
@@ -130,6 +136,14 @@ function AppInner() {
       if (ids.length > 0 && muxSendRef.current) {
         muxSendRef.current({ event: "subscribe", sessions: ids });
       }
+      // Auto-expand session from URL hash deep-link (consumed once).
+      const target = deepLinkRef.current;
+      if (target && newSessions.has(target)) {
+        deepLinkRef.current = null;
+        history.replaceState(null, "", location.pathname + location.search);
+        setExpandedSession(target);
+        setFocusedSession(target);
+      }
     } else if (msg.event === "transition") {
       const info = sessionsRef.current.get(msg.session);
       if (info) {
@@ -150,6 +164,14 @@ function AppInner() {
         sessionsRef.current = newSessions;
         setSessions(newSessions);
         muxSendRef.current?.({ event: "subscribe", sessions: [msg.session] });
+        // Auto-expand if this is the deep-link target arriving late.
+        const target = deepLinkRef.current;
+        if (target && target === msg.session) {
+          deepLinkRef.current = null;
+          history.replaceState(null, "", location.pathname + location.search);
+          setExpandedSession(target);
+          setFocusedSession(target);
+        }
       }
     } else if (msg.event === "session:offline") {
       const info = sessionsRef.current.get(msg.session);
