@@ -55,6 +55,23 @@
         "description": "Show unreleased changes across tracked repos",
         "usage_hint": "[repo]",
         "should_escape": false
+      },
+      {
+        "command": "/clear-threads",
+        "description": "Clear all thread-to-agent mappings",
+        "should_escape": false
+      },
+      {
+        "command": "/bouncer",
+        "description": "Manage IP whitelist for Traefik middlewares",
+        "usage_hint": "list | add <ip> | remove <ip>",
+        "should_escape": false
+      },
+      {
+        "command": "/autodestruct",
+        "description": "Kill all agent pods (with confirmation) or check status",
+        "usage_hint": "[clear | status]",
+        "should_escape": false
       }
     ]
   },
@@ -67,6 +84,7 @@
         "channels:history",
         "commands",
         "groups:history",
+        "groups:read",
         "pins:read",
         "pins:write",
         "users:read",
