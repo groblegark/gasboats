@@ -161,36 +161,12 @@ type Config struct {
 	ExternalSecretRefreshInterval string
 
 	// --- Prewarmed Agent Pool ---
+	//
+	// Pool size, role, mode, and enabled/disabled are configured per-project
+	// via the "prewarmed_pool" JSON field on project beads (see beadsapi.PrewarmedPoolConfig).
+	// Only the reconcile interval is controller-level config.
 
-	// PrewarmedPoolEnabled enables the prewarmed agent pool reconciler
-	// (env: PREWARMED_POOL_ENABLED). Default: false.
-	PrewarmedPoolEnabled bool
-
-	// PrewarmedPoolMinSize is the minimum number of idle prewarmed agents to maintain
-	// (env: PREWARMED_POOL_MIN_SIZE). Default: 2.
-	PrewarmedPoolMinSize int
-
-	// PrewarmedPoolMaxSize is the maximum number of prewarmed agents allowed
-	// (env: PREWARMED_POOL_MAX_SIZE). Default: 5.
-	PrewarmedPoolMaxSize int
-
-	// PrewarmedPoolTTL is how long a prewarmed agent can remain idle before
-	// being recycled (env: PREWARMED_POOL_TTL). Default: 30m.
-	PrewarmedPoolTTL time.Duration
-
-	// PrewarmedPoolRole is the role for prewarmed agents (env: PREWARMED_POOL_ROLE).
-	// Default: "thread".
-	PrewarmedPoolRole string
-
-	// PrewarmedPoolMode is the mode for prewarmed agents (env: PREWARMED_POOL_MODE).
-	// Default: "crew".
-	PrewarmedPoolMode string
-
-	// PrewarmedPoolProject is the project for prewarmed agents (env: PREWARMED_POOL_PROJECT).
-	// Default: "" (uses the first project in the project cache).
-	PrewarmedPoolProject string
-
-	// PrewarmedPoolInterval is how often the pool reconciler runs
+	// PrewarmedPoolInterval is how often the multi-pool reconciler runs
 	// (env: PREWARMED_POOL_INTERVAL). Default: 30s.
 	PrewarmedPoolInterval time.Duration
 
@@ -253,6 +229,8 @@ type ProjectCacheEntry struct {
 	EnvVars []beadsapi.EnvEntry
 	// Multi-repo definitions (primary + reference repos).
 	Repos []beadsapi.RepoEntry
+	// Per-project prewarmed agent pool config (nil = disabled for this project).
+	PrewarmedPool *beadsapi.PrewarmedPoolConfig
 }
 
 // Parse reads configuration from environment variables.
@@ -305,14 +283,7 @@ func Parse() *Config {
 		// Slack Bridge
 		SlackBridgeURL: os.Getenv("SLACK_BRIDGE_URL"),
 
-		// Prewarmed Agent Pool
-		PrewarmedPoolEnabled:  envBoolOr("PREWARMED_POOL_ENABLED", false),
-		PrewarmedPoolMinSize:  envIntOr("PREWARMED_POOL_MIN_SIZE", 2),
-		PrewarmedPoolMaxSize:  envIntOr("PREWARMED_POOL_MAX_SIZE", 5),
-		PrewarmedPoolTTL:      envDurationOr("PREWARMED_POOL_TTL", 30*time.Minute),
-		PrewarmedPoolRole:     envOr("PREWARMED_POOL_ROLE", "thread"),
-		PrewarmedPoolMode:     envOr("PREWARMED_POOL_MODE", "crew"),
-		PrewarmedPoolProject:  os.Getenv("PREWARMED_POOL_PROJECT"),
+		// Prewarmed Agent Pool (per-project config via project beads; only interval is controller-level)
 		PrewarmedPoolInterval: envDurationOr("PREWARMED_POOL_INTERVAL", 30*time.Second),
 
 		// Upgrade Drain

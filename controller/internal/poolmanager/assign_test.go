@@ -66,6 +66,25 @@ func mockDaemon(t *testing.T, agents []map[string]any) *httptest.Server {
 	}))
 }
 
+// testConfig returns a Config with the project cache pre-populated for testing.
+func testConfig() *config.Config {
+	cfg := &config.Config{
+		PrewarmedPoolInterval: 30 * time.Second,
+		ProjectCache: map[string]config.ProjectCacheEntry{
+			"gasboat": {
+				PrewarmedPool: &beadsapi.PrewarmedPoolConfig{
+					Enabled: true,
+					MinSize: 2,
+					MaxSize: 5,
+					Role:    "thread",
+					Mode:    "crew",
+				},
+			},
+		},
+	}
+	return cfg
+}
+
 func TestAssignPrewarmed_Success(t *testing.T) {
 	agents := []map[string]any{
 		{
@@ -88,12 +107,7 @@ func TestAssignPrewarmed_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pm := New(daemon, &config.Config{
-		PrewarmedPoolMinSize: 2,
-		PrewarmedPoolMaxSize: 5,
-		PrewarmedPoolRole:    "thread",
-		PrewarmedPoolMode:    "crew",
-	}, slog.Default())
+	pm := New(daemon, testConfig(), slog.Default())
 
 	result, err := pm.AssignPrewarmed(context.Background(), AssignRequest{
 		Channel:     "C-test",
@@ -121,12 +135,7 @@ func TestAssignPrewarmed_EmptyPool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pm := New(daemon, &config.Config{
-		PrewarmedPoolMinSize: 2,
-		PrewarmedPoolMaxSize: 5,
-		PrewarmedPoolRole:    "thread",
-		PrewarmedPoolMode:    "crew",
-	}, slog.Default())
+	pm := New(daemon, testConfig(), slog.Default())
 
 	_, err = pm.AssignPrewarmed(context.Background(), AssignRequest{
 		Channel:  "C-test",
@@ -173,12 +182,7 @@ func TestAssignPrewarmed_PicksOldest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pm := New(daemon, &config.Config{
-		PrewarmedPoolMinSize: 2,
-		PrewarmedPoolMaxSize: 5,
-		PrewarmedPoolRole:    "thread",
-		PrewarmedPoolMode:    "crew",
-	}, slog.Default())
+	pm := New(daemon, testConfig(), slog.Default())
 
 	result, err := pm.AssignPrewarmed(context.Background(), AssignRequest{
 		Channel:  "C-test",
@@ -190,4 +194,68 @@ func TestAssignPrewarmed_PicksOldest(t *testing.T) {
 	if result.BeadID != "kd-old" {
 		t.Errorf("expected oldest agent kd-old, got %s", result.BeadID)
 	}
+}
+
+func TestReconcile_CreatesAgentsForProject(t *testing.T) {
+	var created int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/beads":
+			// Return empty list (no prewarmed agents yet).
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"beads": []any{},
+				"total": 0,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/beads":
+			created++
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"id": "kd-new-" + string(rune('0'+created)),
+			})
+		case r.Method == http.MethodPost:
+			// AddLabel: just acknowledge.
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	daemon, err := beadsapi.New(beadsapi.Config{HTTPAddr: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig()
+	pm := New(daemon, cfg, slog.Default())
+
+	if err := pm.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	// Should create 2 agents (min_size=2, pool was empty).
+	if created != 2 {
+		t.Errorf("expected 2 agents created, got %d", created)
+	}
+}
+
+func TestReconcile_NoPoolConfig(t *testing.T) {
+	srv := mockDaemon(t, nil)
+	defer srv.Close()
+
+	daemon, err := beadsapi.New(beadsapi.Config{HTTPAddr: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty project cache = no pools configured.
+	cfg := &config.Config{
+		ProjectCache: map[string]config.ProjectCacheEntry{},
+	}
+	pm := New(daemon, cfg, slog.Default())
+
+	if err := pm.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+	// Should be a no-op — no API calls expected.
 }

@@ -56,9 +56,20 @@ type ProjectInfo struct {
 	// Keys absent or empty in the JSON are silently skipped.
 	EnvOverrides map[string]string
 
-	Secrets        []SecretEntry // Per-project secret overrides
-	EnvVars        []EnvEntry    // Per-project plain env vars
-	Repos          []RepoEntry   // Multi-repo definitions
+	Secrets        []SecretEntry       // Per-project secret overrides
+	EnvVars        []EnvEntry          // Per-project plain env vars
+	Repos          []RepoEntry         // Multi-repo definitions
+	PrewarmedPool  *PrewarmedPoolConfig // Per-project prewarmed agent pool config (nil = disabled)
+}
+
+// PrewarmedPoolConfig holds per-project prewarmed agent pool settings.
+// Stored as the "prewarmed_pool" JSON field on project beads.
+type PrewarmedPoolConfig struct {
+	Enabled bool   `json:"enabled"`
+	MinSize int    `json:"min_size"`
+	MaxSize int    `json:"max_size"`
+	Role    string `json:"role"`
+	Mode    string `json:"mode"`
 }
 
 // ListProjectBeads queries the daemon for project beads (type=project) and extracts
@@ -109,6 +120,25 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			var repos []RepoEntry
 			if json.Unmarshal([]byte(raw), &repos) == nil {
 				info.Repos = repos
+			}
+		}
+		// Parse prewarmed pool config from JSON field.
+		if raw := fields["prewarmed_pool"]; raw != "" {
+			var poolCfg PrewarmedPoolConfig
+			if json.Unmarshal([]byte(raw), &poolCfg) == nil && poolCfg.Enabled {
+				if poolCfg.MinSize <= 0 {
+					poolCfg.MinSize = 2
+				}
+				if poolCfg.MaxSize <= 0 {
+					poolCfg.MaxSize = 5
+				}
+				if poolCfg.Role == "" {
+					poolCfg.Role = "thread"
+				}
+				if poolCfg.Mode == "" {
+					poolCfg.Mode = "crew"
+				}
+				info.PrewarmedPool = &poolCfg
 			}
 		}
 		// Parse env_json field.

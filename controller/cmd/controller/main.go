@@ -119,11 +119,10 @@ func main() {
 	// by the standalone slack-bridge binary (cmd/slack-bridge). The controller
 	// only handles K8s pod lifecycle operations. See bd-8x8fy.
 
-	// Create prewarmed agent pool manager (used by HTTP endpoint and run loop).
-	var pool *poolmanager.PoolManager
-	if cfg.PrewarmedPoolEnabled {
-		pool = poolmanager.New(daemon, cfg, logger.With("component", "poolmanager"))
-	}
+	// Create multi-pool manager. Pool config comes from project beads
+	// (prewarmed_pool JSON field), so the manager is always created but only
+	// reconciles projects that have a pool enabled.
+	pool := poolmanager.New(daemon, cfg, logger.With("component", "poolmanager"))
 
 	// Start lightweight health/version HTTP server.
 	healthAddr := os.Getenv("HEALTH_LISTEN_ADDR")
@@ -223,7 +222,7 @@ func runLeaderElection(ctx context.Context, logger *slog.Logger, cfg *config.Con
 
 // run is the main controller loop. It reads beads events and dispatches
 // pod operations. Separated from main() for testability.
-func run(ctx context.Context, logger *slog.Logger, cfg *config.Config, k8sClient kubernetes.Interface, watcher subscriber.Watcher, pods podmanager.Manager, status statusreporter.Reporter, rec *reconciler.Reconciler, daemon *beadsapi.Client, secretRec *secretreconciler.Reconciler, pool *poolmanager.PoolManager) error {
+func run(ctx context.Context, logger *slog.Logger, cfg *config.Config, k8sClient kubernetes.Interface, watcher subscriber.Watcher, pods podmanager.Manager, status statusreporter.Reporter, rec *reconciler.Reconciler, daemon *beadsapi.Client, secretRec *secretreconciler.Reconciler, pool *poolmanager.Manager) error {
 	// Run reconciler once at startup to catch beads created during downtime.
 	if rec != nil {
 		logger.Info("running startup reconciliation")
@@ -465,6 +464,7 @@ func refreshProjectCache(ctx context.Context, logger *slog.Logger, daemon *beads
 			Secrets:        info.Secrets,
 			EnvVars:        info.EnvVars,
 			Repos:          info.Repos,
+			PrewarmedPool:  info.PrewarmedPool,
 		}
 	}
 	cfg.ProjectCacheMu.Unlock()
@@ -573,7 +573,7 @@ func registerAutodestructEndpoints(mux *http.ServeMux, rec *reconciler.Reconcile
 // handlePoolAssign returns an HTTP handler for POST /api/v1/pool/assign.
 // It atomically assigns a prewarmed agent from the pool to a thread.
 // Returns 200 with the assigned agent info, or 404 if the pool is empty.
-func handlePoolAssign(pool *poolmanager.PoolManager, logger *slog.Logger) http.HandlerFunc {
+func handlePoolAssign(pool *poolmanager.Manager, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 

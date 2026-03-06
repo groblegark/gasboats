@@ -2,7 +2,8 @@ package poolmanager
 
 import (
 	"testing"
-	"time"
+
+	"gasboat/controller/internal/beadsapi"
 )
 
 func TestParseTime(t *testing.T) {
@@ -29,11 +30,11 @@ func TestParseTime(t *testing.T) {
 	}
 }
 
-func TestPoolConfig_Defaults(t *testing.T) {
-	cfg := PoolConfig{
+func TestPrewarmedPoolConfig_Defaults(t *testing.T) {
+	cfg := beadsapi.PrewarmedPoolConfig{
+		Enabled: true,
 		MinSize: 2,
 		MaxSize: 5,
-		TTL:     30 * time.Minute,
 		Role:    "thread",
 		Mode:    "crew",
 	}
@@ -44,7 +45,7 @@ func TestPoolConfig_Defaults(t *testing.T) {
 	if cfg.MaxSize != 5 {
 		t.Errorf("expected MaxSize 5, got %d", cfg.MaxSize)
 	}
-	if cfg.TTL != 30*time.Minute {
-		t.Errorf("expected TTL 30m, got %v", cfg.TTL)
+	if !cfg.Enabled {
+		t.Error("expected Enabled true")
 	}
 }
