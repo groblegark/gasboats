@@ -106,7 +106,7 @@ POST /v1/agents/{id}/gates/decision/satisfy to release the Stop gate.`,
 		yieldCount := 1
 		if bead, err := daemon.GetBead(markCtx, agentID); err == nil {
 			if prev := bead.Fields["yield_count"]; prev != "" {
-				fmt.Sscanf(prev, "%d", &yieldCount)
+				_, _ = fmt.Sscanf(prev, "%d", &yieldCount)
 				yieldCount++
 			}
 		}

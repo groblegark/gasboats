@@ -68,9 +68,6 @@ jobs:
           - image: controller
             context: controller
             dockerfile: controller/Dockerfile
-          - image: agent
-            context: .
-            dockerfile: images/agent/Dockerfile
           - image: slack-bridge
             context: .
             dockerfile: images/slack-bridge/Dockerfile
