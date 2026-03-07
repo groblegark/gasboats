@@ -268,6 +268,7 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 	agent = extractAgentName(agent)
 	state := bead.Fields["agent_state"]
 	b.mu.Lock()
+	prevState := b.agentState[agent]
 	b.agentState[agent] = state
 	b.agentSeen[agent] = time.Now()
 	_, hasPod := b.agentPodName[agent]
@@ -278,20 +279,18 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 		b.fetchAndCachePodName(context.Background(), agent)
 	}
 
-	// Thread-bound agents: post state transitions as thread replies.
-	if state == "working" || state == "done" || state == "failed" {
+	// Thread-bound agents: post terminal state transitions as thread replies.
+	// Only post if the state actually changed to avoid duplicate notifications.
+	// The "working" state is not posted — the spawn confirmation is sufficient.
+	if (state == "done" || state == "failed") && state != prevState {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
-			if state == "working" {
-				b.postThreadWorkingReply(ctx, agent, slackChannel, slackTS)
-			} else {
-				b.postThreadStateReply(ctx, agent, state, bead, slackChannel, slackTS)
-				// Clear thread→agent mapping so future mentions in this thread
-				// spawn a fresh agent instead of routing to the dead one.
-				if b.state != nil {
-					_ = b.state.RemoveThreadAgentByAgent(agent)
-				}
+			b.postThreadStateReply(ctx, agent, state, bead, slackChannel, slackTS)
+			// Clear thread→agent mapping so future mentions in this thread
+			// spawn a fresh agent instead of routing to the dead one.
+			if b.state != nil {
+				_ = b.state.RemoveThreadAgentByAgent(agent)
 			}
 			return
 		}
@@ -306,33 +305,6 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 		b.replaceAgentCardWithWrapUp(ctx, agent, state, bead.Fields["wrapup"])
 	} else {
 		b.updateAgentCard(ctx, agent)
-	}
-}
-
-// postThreadWorkingReply posts a "working" notification with a coopmux terminal
-// link in the agent's bound Slack thread. This is posted when the agent
-// transitions to "working" state, at which point the pod is running and the
-// coopmux link is available.
-func (b *Bot) postThreadWorkingReply(ctx context.Context, agent, channel, threadTS string) {
-	name := extractAgentName(agent)
-	b.mu.Lock()
-	podName := b.agentPodName[agent]
-	b.mu.Unlock()
-	displayName := coopmuxAgentLink(b.coopmuxPublicURL, podName, name)
-
-	_, _, err := b.api.PostMessageContext(ctx, channel,
-		slack.MsgOptionText(fmt.Sprintf("Agent %s is working", name), false),
-		slack.MsgOptionBlocks(
-			slack.NewSectionBlock(
-				slack.NewTextBlockObject("mrkdwn",
-					fmt.Sprintf(":robot_face: Agent %s is working...", displayName), false, false),
-				nil, nil),
-		),
-		slack.MsgOptionTS(threadTS),
-	)
-	if err != nil {
-		b.logger.Error("failed to post thread working reply",
-			"agent", agent, "error", err)
 	}
 }
 
