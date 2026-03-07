@@ -383,12 +383,19 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 			_ = b.state.SetThreadAgent(channel, threadTS, assignedAgent)
 		}
 		if b.api != nil {
-			_, _, _ = b.api.PostMessage(channel,
+			_, msgTS, _ := b.api.PostMessage(channel,
 				slack.MsgOptionText(
 					fmt.Sprintf(":zap: Assigned a prewarmed agent — should be ready in seconds! (tracking: `%s`)", beadID),
 					false),
 				slack.MsgOptionTS(threadTS),
 			)
+			if msgTS != "" {
+				b.mu.Lock()
+				b.threadSpawnMsgs[extractAgentName(assignedAgent)] = MessageRef{
+					ChannelID: channel, Timestamp: msgTS, ThreadTS: threadTS,
+				}
+				b.mu.Unlock()
+			}
 		}
 		return
 	}
@@ -439,12 +446,19 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 
 	// Post confirmation reply in thread.
 	if b.api != nil {
-		_, _, _ = b.api.PostMessage(channel,
+		_, msgTS, _ := b.api.PostMessage(channel,
 			slack.MsgOptionText(
 				fmt.Sprintf(":zap: Spinning up an agent to help here... (tracking: `%s`)", beadID),
 				false),
 			slack.MsgOptionTS(threadTS),
 		)
+		if msgTS != "" {
+			b.mu.Lock()
+			b.threadSpawnMsgs[extractAgentName(agentName)] = MessageRef{
+				ChannelID: channel, Timestamp: msgTS, ThreadTS: threadTS,
+			}
+			b.mu.Unlock()
+		}
 	}
 }
 

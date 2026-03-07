@@ -68,7 +68,8 @@ type Bot struct {
 	agentState   map[string]string     // agent identity → last known agent_state
 	agentSeen    map[string]time.Time  // agent identity → last activity timestamp
 	agentPodName map[string]string     // agent identity → pod hostname (coopmux session ID)
-	agentImageTag map[string]string   // agent identity → deployed image tag
+	agentImageTag    map[string]string     // agent identity → deployed image tag
+	threadSpawnMsgs  map[string]MessageRef // agent identity → spawn confirmation message ref (for in-place update)
 
 	// Nudge throttling for thread reply forwarding.
 	// Key: "agent:thread_ts", value: last nudge time.
@@ -138,6 +139,7 @@ func NewBot(cfg BotConfig) *Bot {
 		agentSeen:        make(map[string]time.Time),
 		agentPodName:     make(map[string]string),
 		agentImageTag:    make(map[string]string),
+		threadSpawnMsgs:  make(map[string]MessageRef),
 		lastThreadNudge: make(map[string]time.Time),
 		github:           gh,
 		repos:            cfg.Repos,

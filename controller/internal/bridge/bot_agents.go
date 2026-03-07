@@ -308,8 +308,9 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 	}
 }
 
-// postThreadStateReply posts a state transition message in the agent's bound
-// Slack thread for thread-spawned agents.
+// postThreadStateReply updates the spawn confirmation message in-place with
+// the agent's terminal state and wrapup. If no spawn message is tracked,
+// falls back to posting a new reply.
 func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bead BeadEvent, channel, threadTS string) {
 	var emoji, status string
 	switch state {
@@ -335,6 +336,27 @@ func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bea
 		text += formatWrapUpSlack(wrapupJSON)
 	}
 
+	// Try to update the spawn confirmation message in-place.
+	b.mu.Lock()
+	spawnRef, hasSpawn := b.threadSpawnMsgs[agent]
+	if hasSpawn {
+		delete(b.threadSpawnMsgs, agent)
+	}
+	b.mu.Unlock()
+
+	if hasSpawn {
+		_, _, _, err := b.api.UpdateMessageContext(ctx, spawnRef.ChannelID, spawnRef.Timestamp,
+			slack.MsgOptionText(text, false),
+		)
+		if err != nil {
+			b.logger.Warn("failed to update spawn message, posting new reply",
+				"agent", agent, "error", err)
+		} else {
+			return
+		}
+	}
+
+	// Fallback: post as a new reply.
 	_, _, err := b.api.PostMessageContext(ctx, channel,
 		slack.MsgOptionText(text, false),
 		slack.MsgOptionTS(threadTS),
