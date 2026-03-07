@@ -103,6 +103,10 @@ func configs() map[string]any {
 				{Name: "slack_thread_channel", Type: "string"},
 				{Name: "slack_thread_ts", Type: "string"},
 				{Name: "spawn_source", Type: "string"},
+				// Custom prompt passed via /spawn "description" → BOAT_PROMPT env var.
+				{Name: "prompt", Type: "string"},
+				// Pre-assigned task ID (set by /spawn with ticket or task-first flow).
+				{Name: "task_id", Type: "string"},
 			},
 		},
 		"type:mail": TypeConfig{
