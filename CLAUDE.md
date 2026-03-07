@@ -14,24 +14,23 @@ K8s agent controller and Slack bridge for beads automation — extracted from Ga
 ## Directory Structure
 
 ```
-gasboat/
-├── controller/              # Go module — agent controller + slack bridge
-│   ├── cmd/controller/      # Controller entry point
-│   ├── cmd/slack-bridge/    # Standalone Slack bridge binary
-│   └── internal/
-│       ├── beadsapi/        # HTTP client to beads daemon
-│       ├── bridge/          # Slack notifications (decisions, mail, interactions)
-│       ├── config/          # Env var parsing
-│       ├── podmanager/      # Pod spec construction & CRUD
-│       ├── reconciler/      # Periodic desired-vs-actual sync
-│       ├── statusreporter/  # Pod phase → bead state updates
-│       └── subscriber/      # SSE/NATS event listener
-├── helm/gasboat/            # Helm chart (controller, coopmux, slack-bridge, postgres, nats)
-├── images/
-│   ├── agent/               # Agent pod image + entrypoint
-│   └── slack-bridge/        # Slack bridge Dockerfile
-├── Makefile                 # Top-level build
-└── quench.toml              # Quality checks
+controller/              # Go module — agent controller + slack bridge
+├── cmd/controller/      # Controller entry point
+├── cmd/slack-bridge/    # Standalone Slack bridge binary
+└── internal/
+    ├── beadsapi/        # HTTP client to beads daemon
+    ├── bridge/          # Slack notifications (decisions, mail, interactions)
+    ├── config/          # Env var parsing
+    ├── podmanager/      # Pod spec construction & CRUD
+    ├── reconciler/      # Periodic desired-vs-actual sync
+    ├── statusreporter/  # Pod phase → bead state updates
+    └── subscriber/      # SSE/NATS event listener
+helm/gasboat/            # Helm chart (controller, coopmux, slack-bridge, postgres, nats)
+images/
+├── agent/               # Agent pod image + entrypoint
+└── slack-bridge/        # Slack bridge Dockerfile
+Makefile                 # Top-level build
+quench.toml              # Quality checks
 ```
 
 ## Build

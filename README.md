@@ -5,32 +5,28 @@ K8s agent controller and coopmux for beads automation — extracted from Gastown
 ## Structure
 
 ```
-gasboat/
-├── controller/              # Go module — K8s agent controller
-│   ├── cmd/controller/      # Entry point
-│   ├── internal/
-│   │   ├── beadsapi/        # HTTP client to beads daemon API
-│   │   ├── config/          # Env var parsing
-│   │   ├── podmanager/      # Pod spec construction & CRUD
-│   │   ├── reconciler/      # Periodic desired-vs-actual sync
-│   │   ├── statusreporter/  # Pod phase → bead state updates
-│   │   └── subscriber/      # SSE/NATS event listener
-│   ├── Dockerfile
-│   └── Makefile
-│
-├── helm/gasboat/            # Helm chart
-│   ├── templates/
-│   │   ├── controller/      # Controller deployment + RBAC
-│   │   └── coopmux/         # Coopmux deployment + service
-│   ├── Chart.yaml
-│   └── values.yaml
-│
-├── images/
-│   ├── agent/               # Agent pod image + entrypoint
-│   └── slack-bridge/        # Slack bridge Dockerfile
-│
-├── Makefile                  # Top-level build
-└── README.md
+controller/              # Go module — K8s agent controller
+├── cmd/controller/      # Entry point
+├── internal/
+│   ├── beadsapi/        # HTTP client to beads daemon API
+│   ├── config/          # Env var parsing
+│   ├── podmanager/      # Pod spec construction & CRUD
+│   ├── reconciler/      # Periodic desired-vs-actual sync
+│   ├── statusreporter/  # Pod phase → bead state updates
+│   └── subscriber/      # SSE/NATS event listener
+├── Dockerfile
+└── Makefile
+helm/gasboat/            # Helm chart
+├── templates/
+│   ├── controller/      # Controller deployment + RBAC
+│   └── coopmux/         # Coopmux deployment + service
+├── Chart.yaml
+└── values.yaml
+images/
+├── agent/               # Agent pod image + entrypoint
+└── slack-bridge/        # Slack bridge Dockerfile
+Makefile                  # Top-level build
+README.md
 ```
 
 ## Prerequisites
