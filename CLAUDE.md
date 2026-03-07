@@ -80,17 +80,19 @@ cd ~/coop && git tag <TAG> && git push origin <TAG>
 gh workflow run ci.yml -R groblegark/kbeads -f version=<TAG>
 # 3. Release gasboat (after coop + kbeads CI complete)
 cd ~/gasboat && make release          # bump Chart.yaml, commit, tag
-git push origin main <TAG>            # triggers CI (build + push images + push chart)
-gh release create <TAG> --generate-notes  # publish release notes
-# RWX E2E auto-dispatches on tag; failures become bug beads
-# fics-helm-chart auto-updates subchart; GitLab CI deploys
+git push origin main <TAG>            # triggers all CI automatically:
+#   - RWX docker.yml: builds + pushes all 6 images to GHCR
+#   - RWX helm.yml: packages + pushes Helm chart to oci://ghcr.io/groblegark/charts
+#   - GitHub release.yml: creates GitHub Release + triggers fics-helm-chart deploy
+#   - RWX E2E auto-dispatches; failures become bug beads
 ```
 
-**Manual fallback** (if CI doesn't push yet):
+**Emergency manual fallback** (only if RWX CI is down):
 ```bash
-make push-all                         # build + push all 6 images
+make push-all                         # build + push all 6 images locally
 helm package helm/gasboat/ --version <TAG> --app-version <TAG>
 helm push gasboat-<TAG>.tgz oci://ghcr.io/groblegark/charts
+gh release create <TAG> --generate-notes
 ```
 
 **Deployment repo**: `~/book/fics-helm-chart/charts/gasboat/` — wrapper chart that depends on upstream OCI chart.
