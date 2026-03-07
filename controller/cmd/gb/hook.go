@@ -422,34 +422,12 @@ func isAgentRateLimited() bool {
 }
 
 // injectStopGateText outputs the stop-gate checkpoint text to stdout.
-// Prefers the config-bead-materialized file; falls back to a hardcoded default.
+// Reads from the config-bead-materialized file written by gb setup claude.
 func injectStopGateText() {
 	stopGateTextFile := filepath.Join(os.Getenv("HOME"), ".claude", "stop-gate-text.md")
 	if data, err := os.ReadFile(stopGateTextFile); err == nil {
 		fmt.Print(string(data))
 		return
 	}
-	// Hardcoded fallback.
-	fmt.Print(`<system-reminder>
-STOP BLOCKED — decision gate unsatisfied.
-
-You CANNOT stop without either creating a decision checkpoint OR calling ` + "`gb done`" + `.
-
-## If work is DONE
-` + "```bash" + `
-kd close <bead-id>        # close completed beads
-gb done                   # despawn cleanly (bypasses gate)
-` + "```" + `
-
-## If BLOCKED and need human input
-` + "```bash" + `
-gb decision create --no-wait \
-  --prompt="Did X. Blocked on Y. Recommending option A because..." \
-  --options='[{"id":"continue","short":"Continue","label":"Continue work","artifact_type":"report"}]'
-gb yield                  # blocks until human responds
-# IMPORTANT: after yield returns, CONTINUE WORKING on the decision outcome.
-# Do NOT stop or create another decision. Act on the response.
-` + "```" + `
-</system-reminder>
-`)
+	fmt.Print("<system-reminder>STOP BLOCKED — decision gate unsatisfied. Create a decision checkpoint (gb decision create + gb yield) or call gb done if work is complete.</system-reminder>")
 }

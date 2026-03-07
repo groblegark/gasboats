@@ -204,7 +204,7 @@ func TestSpawnAgent_WithTaskID_SetsDescriptionAndLinksDependency(t *testing.T) {
 		t.Fatalf("expected 4 HTTP requests, got %d", len(requests))
 	}
 
-	// First request: create agent bead with description.
+	// First request: create agent bead with description and task_id in fields.
 	createReq := requests[0]
 	if createReq.path != "/v1/beads" {
 		t.Errorf("expected path /v1/beads, got %s", createReq.path)
@@ -213,6 +213,11 @@ func TestSpawnAgent_WithTaskID_SetsDescriptionAndLinksDependency(t *testing.T) {
 	_ = json.Unmarshal(createReq.body["description"], &desc)
 	if desc != "Assigned to task: kd-task-123" {
 		t.Errorf("expected description %q, got %q", "Assigned to task: kd-task-123", desc)
+	}
+	var fields map[string]string
+	_ = json.Unmarshal(createReq.body["fields"], &fields)
+	if fields["task_id"] != "kd-task-123" {
+		t.Errorf("expected fields.task_id=kd-task-123, got %s", fields["task_id"])
 	}
 
 	// Second request: add project label.
@@ -250,5 +255,52 @@ func TestSpawnAgent_WithTaskID_SetsDescriptionAndLinksDependency(t *testing.T) {
 	}
 	if depType != "assigned" {
 		t.Errorf("expected dep type=assigned, got %s", depType)
+	}
+}
+
+func TestSpawnAgent_WithTaskAndPrompt_SetsBothFields(t *testing.T) {
+	type request struct {
+		method string
+		path   string
+		body   map[string]json.RawMessage
+	}
+	var requests []request
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var parsed map[string]json.RawMessage
+		_ = json.Unmarshal(body, &parsed)
+		requests = append(requests, request{r.Method, r.URL.Path, parsed})
+		if r.URL.Path == "/v1/beads" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "bd-agent-55"})
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{baseURL: srv.URL, httpClient: srv.Client()}
+	_, err := c.SpawnAgent(context.Background(), "fix-auth-a7k", "gasboat", "kd-task-456", "", "fix the auth bug")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	createReq := requests[0]
+	var fields map[string]string
+	_ = json.Unmarshal(createReq.body["fields"], &fields)
+
+	// Both prompt and task_id should be in fields.
+	if fields["prompt"] != "fix the auth bug" {
+		t.Errorf("expected fields.prompt='fix the auth bug', got %q", fields["prompt"])
+	}
+	if fields["task_id"] != "kd-task-456" {
+		t.Errorf("expected fields.task_id='kd-task-456', got %q", fields["task_id"])
+	}
+
+	// Description should reference the task (task takes precedence).
+	var desc string
+	_ = json.Unmarshal(createReq.body["description"], &desc)
+	if desc != "Assigned to task: kd-task-456" {
+		t.Errorf("expected description to reference task, got %q", desc)
 	}
 }

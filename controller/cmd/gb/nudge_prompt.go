@@ -49,17 +49,14 @@ func runNudgePrompt(cmd *cobra.Command, args []string) error {
 	// Build substitution variables from environment.
 	vars := buildNudgeVars()
 
-	// Try config beads first.
+	// Resolve from config beads (seeded by EnsureConfigs on startup).
 	prompt := resolveNudgeFromConfig(promptType, vars)
 	if prompt != "" {
 		fmt.Fprint(os.Stdout, prompt)
 		return nil
 	}
 
-	// Fallback to hardcoded defaults.
-	prompt = hardcodedNudge(promptType, vars)
-	fmt.Fprint(os.Stdout, prompt)
-	return nil
+	return fmt.Errorf("no nudge-prompts config bead found for type %q — run EnsureConfigs or seed nudge-prompts config beads", promptType)
 }
 
 // detectNudgeType determines the nudge type from environment.
@@ -93,8 +90,12 @@ func buildNudgeVars() nudgeVars {
 		projectHint = fmt.Sprintf(" Focus on tasks for project `%s` — skip work that belongs to a different project unless you are explicitly assigned to it.", project)
 	}
 
-	var taskHint string
+	// Resolve task ID: prefer env var, then resolve from agent bead dependencies.
 	taskID := os.Getenv("BOAT_TASK_ID")
+	if taskID == "" {
+		taskID = resolveTaskFromDeps()
+	}
+	var taskHint string
 	if taskID != "" {
 		taskHint = fmt.Sprintf(" You have been pre-assigned to task `%s`. Run `kd show %s` for details, then `kd claim %s` to start work on it.", taskID, taskID, taskID)
 	}
@@ -115,6 +116,27 @@ func buildNudgeVars() nudgeVars {
 		MonorepoHint: monorepoHint,
 		BoatPrompt:   os.Getenv("BOAT_PROMPT"),
 	}
+}
+
+// resolveTaskFromDeps resolves a pre-assigned task ID from the agent bead's
+// dependencies (type "assigned"). This replaces the entrypoint's bash-based
+// dependency resolution, moving it into Go for reliability.
+func resolveTaskFromDeps() string {
+	agentBeadID := os.Getenv("BOAT_AGENT_BEAD_ID")
+	if agentBeadID == "" || daemon == nil {
+		return ""
+	}
+	ctx := context.Background()
+	deps, err := daemon.GetDependencies(ctx, agentBeadID)
+	if err != nil {
+		return ""
+	}
+	for _, d := range deps {
+		if d.Type == "assigned" {
+			return d.DependsOnID
+		}
+	}
+	return ""
 }
 
 // resolveNudgeFromConfig queries nudge-prompts config beads and returns
@@ -158,19 +180,3 @@ func substituteNudgeVars(tmpl string, vars nudgeVars) string {
 	return r.Replace(tmpl)
 }
 
-// hardcodedNudge returns the built-in default nudge prompt for the given type.
-func hardcodedNudge(promptType string, vars nudgeVars) string {
-	switch promptType {
-	case "thread":
-		return fmt.Sprintf("You are a thread-bound agent spawned from a Slack conversation. Your thread context is in your agent bead description. CRITICAL RULES: (1) Do NOT exit prematurely — if you hit an error, debug it; if you are blocked, ask a clarifying question via `gb squawk '<question>'`. Giving up silently is the worst outcome. (2) Create a tracking bead: `kd create '<short title>' --project %s` then `kd claim <id>`. (3) Post progress updates to the thread via `gb squawk '<update>'` at key milestones. (4) When done, summarize results via `gb squawk`, push to a feature branch (never main), open a PR if code changed, close your bead, then `gb done`.%s%s Now read the thread context in your description and begin working.", vars.Project, vars.MonorepoHint, vars.ProjectHint)
-
-	case "adhoc":
-		return fmt.Sprintf("You have been spawned with an ad-hoc task. Before starting: (1) Create a bead to track your work: `kd create '<short title>' --description '<your task description>' --project %s` then claim it with `kd claim <id>`. (2) Run `gb news` to check what teammates are working on — do not duplicate in-progress work. (3) When done, deliver via a feature branch + PR (never push to main).%s Here is your task: %s", vars.Project, vars.MonorepoHint, vars.BoatPrompt)
-
-	case "prewarmed":
-		return "You are a **prewarmed agent** waiting in the idle pool for work assignment. **Do NOT** seek work, run `gb ready`, or create beads. When a Slack thread mention or operator assigns you, the pool manager will inject a nudge with your task description. Wait for a nudge message."
-
-	default:
-		return fmt.Sprintf("Check `gb ready` for your workflow steps and begin working.%s%s%s IMPORTANT: (1) Run `gb news` first to see what your teammates are already working on — do not duplicate in-progress work. (2) Run `kd claim <id>` BEFORE starting any task — this atomically marks it in_progress so no other agent picks it up simultaneously.", vars.ProjectHint, vars.TaskHint, vars.MonorepoHint)
-	}
-}

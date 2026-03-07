@@ -111,7 +111,7 @@ func (b *Bot) handleSpawnCommand(ctx context.Context, cmd slack.SlashCommand) {
 			return
 		}
 
-		b.spawnAndRespond(ctx, cmd, agentName, project, taskID, role, "")
+		b.spawnAndRespond(ctx, cmd, agentName, project, taskID, role, taskDescription)
 		return
 	}
 
@@ -152,6 +152,48 @@ func (b *Bot) handleSpawnCommand(ctx context.Context, cmd slack.SlashCommand) {
 	}
 
 	b.spawnAndRespond(ctx, cmd, agentName, project, taskID, role, "")
+}
+
+// handleTaskFirstSpawn handles /start "task description" [project] [--role <role>]
+// and the /spawn "task description" flow. It auto-generates an agent name from
+// the task description, creates a task bead, and spawns an agent assigned to
+// that task with the description as the initial prompt.
+func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, positional []string, role string) {
+	taskDescription := positional[0]
+	agentName := generateAgentName(taskDescription)
+
+	project := ""
+	if len(positional) >= 2 {
+		project = positional[1]
+	}
+
+	// Validate project exists.
+	if project != "" {
+		if !b.validateProject(ctx, cmd, project) {
+			return
+		}
+	}
+
+	// Create a task bead for the description.
+	var labels []string
+	if project != "" {
+		labels = []string{"project:" + project}
+	}
+	taskID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
+		Title:    taskDescription,
+		Type:     "task",
+		Kind:     "issue",
+		Labels:   labels,
+		Priority: 2,
+	})
+	if err != nil {
+		b.logger.Error("failed to create task bead", "error", err)
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(fmt.Sprintf(":x: Failed to create task: %s", err.Error()), false))
+		return
+	}
+
+	b.spawnAndRespond(ctx, cmd, agentName, project, taskID, role, taskDescription)
 }
 
 // handleStartCommand processes the /start slash command.
@@ -275,47 +317,6 @@ func (b *Bot) spawnAndRespond(ctx context.Context, cmd slack.SlashCommand, agent
 	text += fmt.Sprintf("\nBead: `%s` · Use `/roster` to check status.", beadID)
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 		slack.MsgOptionText(text, false))
-}
-
-// handleTaskFirstSpawn handles /start "task description" [project] [--role <role>].
-// It auto-generates an agent name from the task description, creates a task bead,
-// and spawns an agent assigned to that task.
-func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, positional []string, role string) {
-	taskDescription := positional[0]
-	agentName := generateAgentName(taskDescription)
-
-	project := ""
-	if len(positional) >= 2 {
-		project = positional[1]
-	}
-
-	// Validate project exists.
-	if project != "" {
-		if !b.validateProject(ctx, cmd, project) {
-			return
-		}
-	}
-
-	// Create a task bead for the description.
-	var labels []string
-	if project != "" {
-		labels = []string{"project:" + project}
-	}
-	taskID, err := b.daemon.CreateBead(ctx, beadsapi.CreateBeadRequest{
-		Title:    taskDescription,
-		Type:     "task",
-		Kind:     "issue",
-		Labels:   labels,
-		Priority: 2,
-	})
-	if err != nil {
-		b.logger.Error("failed to create task bead", "error", err)
-		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(fmt.Sprintf(":x: Failed to create task: %s", err.Error()), false))
-		return
-	}
-
-	b.spawnAndRespond(ctx, cmd, agentName, project, taskID, role, "")
 }
 
 // validateProject checks whether a project name is known and sends an ephemeral

@@ -91,39 +91,12 @@ if [ $_rc -eq 2 ]; then
     echo "$block_count" > "$BLOCK_COUNT_FILE"
 
     # Gate blocked — inject checkpoint instructions into the conversation via stdout.
-    # Prefer config-bead-materialized file; fall back to hardcoded text.
+    # Prefer config-bead-materialized file; fall back to minimal inline text.
     STOP_GATE_TEXT="/home/agent/.claude/stop-gate-text.md"
     if [ -f "$STOP_GATE_TEXT" ]; then
         cat "$STOP_GATE_TEXT"
     else
-        cat <<'CHECKPOINT'
-<system-reminder>
-STOP BLOCKED — decision gate unsatisfied.
-
-You CANNOT stop without either creating a decision checkpoint OR calling `gb done`.
-
-## If work is DONE
-
-```bash
-kd close <bead-id>        # close completed beads
-gb done                   # despawn cleanly (bypasses gate)
-```
-
-## If BLOCKED and need human input
-
-```bash
-gb decision create --no-wait \
-  --prompt="Did X. Blocked on Y. Recommending option A because..." \
-  --options='[
-    {"id":"continue","short":"Continue work","label":"Finish the remaining implementation","artifact_type":"report"},
-    {"id":"rethink","short":"Change approach","label":"Switch to alternative design","artifact_type":"plan"}
-  ]'
-gb yield
-# IMPORTANT: after yield returns, CONTINUE WORKING on the decision outcome.
-# Do NOT stop or create another decision. Act on the response.
-```
-</system-reminder>
-CHECKPOINT
+        echo "<system-reminder>STOP BLOCKED — decision gate unsatisfied. Create a decision checkpoint (gb decision create + gb yield) or call gb done if work is complete.</system-reminder>"
     fi
 
     # After repeated blocks, add escalating guidance.
