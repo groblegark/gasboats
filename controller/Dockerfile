@@ -8,7 +8,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /controller ./cmd/controller/
 

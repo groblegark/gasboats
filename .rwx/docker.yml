@@ -115,7 +115,7 @@ tasks:
       cd controller
       REF_NAME="${REF_NAME#refs/tags/}"
       REF_NAME="${REF_NAME#refs/heads/}"
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
         -o ../controller-bin ./cmd/controller/
     env:
@@ -136,7 +136,7 @@ tasks:
     use: go-deps
     run: |
       cd controller
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w" \
         -o ../gb ./cmd/gb/
     filter:
@@ -157,7 +157,7 @@ tasks:
       cd controller
       REF_NAME="${REF_NAME#refs/tags/}"
       REF_NAME="${REF_NAME#refs/heads/}"
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
         -o ../slack-bridge ./cmd/slack-bridge/
     env:
@@ -180,7 +180,7 @@ tasks:
       cd controller
       REF_NAME="${REF_NAME#refs/tags/}"
       REF_NAME="${REF_NAME#refs/heads/}"
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
         -o ../advice-viewer ./cmd/advice-viewer/
     env:
@@ -203,7 +203,7 @@ tasks:
       cd controller
       REF_NAME="${REF_NAME#refs/tags/}"
       REF_NAME="${REF_NAME#refs/heads/}"
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
         -o ../jira-bridge ./cmd/jira-bridge/
     env:
@@ -226,7 +226,7 @@ tasks:
       cd controller
       REF_NAME="${REF_NAME#refs/tags/}"
       REF_NAME="${REF_NAME#refs/heads/}"
-      CGO_ENABLED=0 GOOS=linux go build \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
         -o ../gitlab-bridge ./cmd/gitlab-bridge/
     env:
