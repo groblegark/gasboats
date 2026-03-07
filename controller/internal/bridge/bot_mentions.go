@@ -196,14 +196,14 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		agentPodName = b.agentPodName[agent]
 		b.mu.Unlock()
 	}
-	agentDisplay := coopmuxAgentLink(b.coopmuxPublicURL, agentPodName, extractAgentName(agent))
+	agentLink := coopmuxAgentLink(b.coopmuxPublicURL, agentPodName, "agent")
 	var confirmText string
 	if nudgeErr != nil && agentSpawning {
-		confirmText = fmt.Sprintf(":hourglass_flowing_sand: %s is still starting up — it will pick up this task when ready (tracking: `%s`)", agentDisplay, beadID)
+		confirmText = fmt.Sprintf(":hourglass_flowing_sand: %s is still starting up — it will pick up this task when ready (tracking: `%s`)", agentLink, beadID)
 	} else if nudgeErr != nil {
-		confirmText = fmt.Sprintf(":warning: Created task for %s but nudge failed (tracking: `%s`). The agent will pick it up on its next cycle.", agentDisplay, beadID)
+		confirmText = fmt.Sprintf(":warning: Created task for %s but nudge failed (tracking: `%s`). The agent will pick it up on its next cycle.", agentLink, beadID)
 	} else {
-		confirmText = fmt.Sprintf(":mega: Forwarded to %s (tracking: `%s`)", agentDisplay, beadID)
+		confirmText = fmt.Sprintf(":mega: Forwarded to %s (tracking: `%s`)", agentLink, beadID)
 	}
 	_, _, _ = b.api.PostMessage(ev.Channel,
 		slack.MsgOptionText(confirmText, false),

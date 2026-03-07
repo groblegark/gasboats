@@ -570,6 +570,15 @@ func (b *Bot) agentDisplayName(agent string) string {
 	return coopmuxAgentLink(b.coopmuxPublicURL, podName, name)
 }
 
+// agentThreadLink returns "agent" as a clickable coopmux link for use in
+// thread replies where the agent identity is already clear from context.
+func (b *Bot) agentThreadLink(agent string) string {
+	b.mu.Lock()
+	podName := b.agentPodName[extractAgentName(agent)]
+	b.mu.Unlock()
+	return coopmuxAgentLink(b.coopmuxPublicURL, podName, "agent")
+}
+
 // coopmuxAgentLink returns a Slack mrkdwn link to the agent's coopmux terminal
 // session if both coopmuxPublicURL and podName are available. Otherwise it
 // returns the plain agent name in bold.

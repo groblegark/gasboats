@@ -324,7 +324,8 @@ func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bea
 		return // Only post for terminal states.
 	}
 
-	text := fmt.Sprintf("%s Agent *%s* %s.", emoji, agent, status)
+	agentLink := b.agentThreadLink(agent)
+	text := fmt.Sprintf("%s %s %s.", emoji, agentLink, status)
 
 	// Append close reason if available.
 	if reason := bead.Fields["close_reason"]; reason != "" {

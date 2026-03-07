@@ -87,8 +87,8 @@ func (s *Squawk) handleClosed(ctx context.Context, data []byte) {
 
 	// Format and post to the agent's Slack thread.
 	if s.bot != nil {
-		displayName := s.bot.agentDisplayName(agent)
-		formatted := fmt.Sprintf(":speech_balloon: *%s*: %s", displayName, text)
+		agentLink := s.bot.agentThreadLink(agent)
+		formatted := fmt.Sprintf(":speech_balloon: %s: %s", agentLink, text)
 		s.bot.postAgentThreadMessage(ctx, agent, formatted)
 	}
 }
