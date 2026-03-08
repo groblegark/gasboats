@@ -111,27 +111,6 @@ func TestFormulaDump_EmptyFields(t *testing.T) {
 	}
 }
 
-func TestFormulaDump_LegacyTemplate(t *testing.T) {
-	mc := newMockClient()
-	mc.Beads["kd-tmpl"] = &model.Bead{
-		ID:   "kd-tmpl",
-		Type: "template",
-		Fields: makeFormulaFields(nil, []FormulaStep{
-			{ID: "s1", Title: "Step"},
-		}),
-	}
-	withMockClient(t, mc)
-
-	out := captureStdout(t, func() {
-		if err := runFormulaDump("kd-tmpl", ""); err != nil {
-			t.Fatalf("dump template: %v", err)
-		}
-	})
-
-	if !strings.Contains(out, `"steps"`) {
-		t.Errorf("output missing steps: %s", out)
-	}
-}
 
 func TestFormulaDump_GetError(t *testing.T) {
 	mc := newMockClient()

@@ -21,8 +21,7 @@ var molShowCmd = &cobra.Command{
 			return fmt.Errorf("getting molecule: %w", err)
 		}
 
-		// Accept both "molecule" and legacy "bundle" type.
-		if string(bead.Type) != "molecule" && string(bead.Type) != "bundle" {
+		if string(bead.Type) != "molecule" {
 			return fmt.Errorf("bead %s is type %q, not molecule", id, bead.Type)
 		}
 
@@ -37,16 +36,11 @@ var molShowCmd = &cobra.Command{
 		if len(bead.Fields) > 0 {
 			var fields struct {
 				FormulaID   string          `json:"formula_id"`
-				TemplateID  string          `json:"template_id"`
 				AppliedVars json.RawMessage `json:"applied_vars"`
 			}
 			if json.Unmarshal(bead.Fields, &fields) == nil {
-				sourceID := fields.FormulaID
-				if sourceID == "" {
-					sourceID = fields.TemplateID
-				}
-				if sourceID != "" {
-					fmt.Printf("\nFormula:     %s\n", sourceID)
+				if fields.FormulaID != "" {
+					fmt.Printf("\nFormula:     %s\n", fields.FormulaID)
 				}
 				if len(fields.AppliedVars) > 0 {
 					var vars map[string]string

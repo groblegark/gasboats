@@ -9,16 +9,16 @@ kd handles **data operations**: bead CRUD (create, show, list, close), deps, lab
 ## Key concepts
 
 - **Bead** — the core work item. Has a kind (`issue`, `data`, `config`), a type (`epic`, `task`, `feature`, `chore`, `bug`, `formula`, `molecule`, or custom), a status (`open`, `in_progress`, `deferred`, `closed`), and optional metadata, labels, dependencies, and comments.
-- **Formula** — a reusable work template (data-kind bead) with variable substitution. Created via `kd formula create`, instantiated via `kd formula pour` (persistent) or `kd formula wisp` (ephemeral). Replaces the deprecated `template` type.
-- **Molecule** — an instantiated formula (issue-kind bead) acting as an epic with child beads for each step. Replaces the deprecated `bundle` type. Managed via `kd mol` commands (list, show, pour, wisp, burn, squash, bond).
+- **Formula** — a reusable work definition (data-kind bead) with variable substitution. Created via `kd formula create`, instantiated via `kd formula pour` (persistent) or `kd formula wisp` (ephemeral).
+- **Molecule** — an instantiated formula (issue-kind bead) acting as an epic with child beads for each step. Managed via `kd mol` commands (list, show, pour, wisp, burn, squash, bond).
 - **Store** — persistence interface (`internal/store/store.go`) with a PostgreSQL implementation. All mutations are wrapped in transactions and recorded as events.
 - **Events** — every mutation records an event row in Postgres and publishes to an event bus via the `Publisher` interface (`internal/events`). Publishing is optional; a no-op publisher is used when no bus is configured.
 - **IDs** — nanoid format, prefixed `kd-` (see `internal/idgen`).
-- **Type configuration** — bead types are extensible. Built-in types are defined in `internal/server/config.go`; custom types are registered via `SetConfig` with key `type:<name>`. Config is defined by `TypeConfig` / `FieldDef` in `internal/model/type_config.go`. The deprecated types `template` and `bundle` are aliased to `formula` and `molecule` respectively (see `model.TypeAliases`).
+- **Type configuration** — bead types are extensible. Built-in types are defined in `internal/server/config.go`; custom types are registered via `SetConfig` with key `type:<name>`. Config is defined by `TypeConfig` / `FieldDef` in `internal/model/type_config.go`. Legacy type names `template` and `bundle` are aliased to `formula` and `molecule` at the API layer (see `model.TypeAliases`).
 
 ## Directory structure
 
-```
+```text
 kbeads/
 ├── cmd/kd/              # CLI client (Cobra); one file per command
 ├── internal/

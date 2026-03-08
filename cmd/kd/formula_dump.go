@@ -17,7 +17,7 @@ func runFormulaDump(id, filePath string) error {
 		return fmt.Errorf("getting formula: %w", err)
 	}
 
-	if string(bead.Type) != "formula" && string(bead.Type) != "template" {
+	if string(bead.Type) != "formula" {
 		return fmt.Errorf("bead %s is type %q, not formula", id, bead.Type)
 	}
 

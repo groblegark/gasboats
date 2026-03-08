@@ -122,23 +122,6 @@ var builtinConfigs = map[string]*model.Config{
 		"kind": "issue",
 		"fields": [
 			{"name": "formula_id",   "type": "string"},
-			{"name": "template_id",  "type": "string"},
-			{"name": "applied_vars", "type": "json"},
-			{"name": "ephemeral",    "type": "boolean"}
-		]
-	}`)},
-	"type:template": {Key: "type:template", Value: json.RawMessage(`{
-		"kind": "data",
-		"fields": [
-			{"name": "vars",  "type": "json"},
-			{"name": "steps", "type": "json"}
-		]
-	}`)},
-	"type:bundle": {Key: "type:bundle", Value: json.RawMessage(`{
-		"kind": "issue",
-		"fields": [
-			{"name": "formula_id",   "type": "string"},
-			{"name": "template_id",  "type": "string"},
 			{"name": "applied_vars", "type": "json"},
 			{"name": "ephemeral",    "type": "boolean"}
 		]

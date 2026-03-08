@@ -35,12 +35,11 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			ctx := context.Background()
 
-			// Verify this is a molecule/bundle.
 			bead, err := beadsClient.GetBead(ctx, id)
 			if err != nil {
 				return fmt.Errorf("getting molecule: %w", err)
 			}
-			if string(bead.Type) != "molecule" && string(bead.Type) != "bundle" {
+			if string(bead.Type) != "molecule" {
 				return fmt.Errorf("bead %s is type %q, not molecule", id, bead.Type)
 			}
 

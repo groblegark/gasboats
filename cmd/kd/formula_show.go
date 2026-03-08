@@ -21,8 +21,7 @@ var formulaShowCmd = &cobra.Command{
 			return fmt.Errorf("getting formula: %w", err)
 		}
 
-		// Accept both "formula" and legacy "template" type.
-		if string(bead.Type) != "formula" && string(bead.Type) != "template" {
+		if string(bead.Type) != "formula" {
 			return fmt.Errorf("bead %s is type %q, not formula", id, bead.Type)
 		}
 

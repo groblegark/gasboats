@@ -165,27 +165,6 @@ func TestSquashCmd_NotMolecule(t *testing.T) {
 	}
 }
 
-func TestSquashCmd_LegacyBundle(t *testing.T) {
-	mc := newMockClient()
-	mc.Beads["kd-bundle"] = &model.Bead{
-		ID: "kd-bundle", Title: "Old bundle", Type: "bundle",
-	}
-	mc.RevDeps["kd-bundle"] = []*model.Dependency{}
-	withMockClient(t, mc)
-
-	cmd := newSquashCmd()
-	cmd.SetArgs([]string{"kd-bundle"})
-	captureStdout(t, func() {
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("squash bundle: %v", err)
-		}
-	})
-
-	// Legacy "bundle" type should be accepted.
-	if len(mc.AddCommentCalls) != 1 {
-		t.Errorf("expected 1 comment for bundle squash, got %d", len(mc.AddCommentCalls))
-	}
-}
 
 func TestSquashCmd_ChildCloseError(t *testing.T) {
 	mc := newMockClient()
