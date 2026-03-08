@@ -101,11 +101,9 @@ tasks:
     use: [code, rust]
     run: |
       . "$HOME/.cargo/env"
+      export RUSTC_WRAPPER=""
       sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
       cd coop && cargo fetch
-    filter:
-      - coop/Cargo.lock
-      - coop/Cargo.toml
 
   # ── beads3d npm deps (cached) ───────────────────────────────────────
   - key: beads3d-deps
@@ -113,6 +111,7 @@ tasks:
     run: cd beads3d && npm ci
     filter:
       - beads3d/package-lock.json
+      - beads3d/package.json
 
   # ── Build controller binary → artifact ─────────────────────────────
   - key: build-controller
@@ -147,6 +146,9 @@ tasks:
         -o ../../gb ./cmd/gb/
     filter:
       - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/**/*.md
+      - gasboat/controller/**/web/**
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
     outputs:
@@ -169,6 +171,9 @@ tasks:
       REF_NAME: ${{ init.ref-name }}
     filter:
       - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/**/*.md
+      - gasboat/controller/**/web/**
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
     outputs:
@@ -191,6 +196,9 @@ tasks:
       REF_NAME: ${{ init.ref-name }}
     filter:
       - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/**/*.md
+      - gasboat/controller/**/web/**
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
     outputs:
@@ -213,6 +221,9 @@ tasks:
       REF_NAME: ${{ init.ref-name }}
     filter:
       - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/**/*.md
+      - gasboat/controller/**/web/**
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
     outputs:
@@ -235,6 +246,9 @@ tasks:
       REF_NAME: ${{ init.ref-name }}
     filter:
       - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/**/*.md
+      - gasboat/controller/**/web/**
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
     outputs:
@@ -244,20 +258,17 @@ tasks:
 
   # ── Build coop from source → artifact (MONOREPO: no more download) ─
   - key: build-coop
-    use: coop-deps
+    use: [code, coop-deps]
     timeout: 10m
     run: |
       . "$HOME/.cargo/env"
+      export RUSTC_WRAPPER=""
       cd coop
       CARGO_TARGET_DIR=/tmp/coop-target cargo build --release --workspace
       mkdir -p ../coop-bin
       cp /tmp/coop-target/release/coop ../coop-bin/coop
       cp /tmp/coop-target/release/coopmux ../coop-bin/coopmux
       ls -la ../coop-bin/
-    filter:
-      - coop/crates/**
-      - coop/Cargo.toml
-      - coop/Cargo.lock
     outputs:
       artifacts:
         - key: coop-binaries
@@ -278,6 +289,7 @@ tasks:
       REF_NAME: ${{ init.ref-name }}
     filter:
       - kbeads/**/*.go
+      - kbeads/**/*.sql
       - kbeads/go.mod
       - kbeads/go.sum
     outputs:
@@ -287,14 +299,10 @@ tasks:
 
   # ── Build beads3d → artifact (MONOREPO: no more retag-latest) ──────
   - key: build-beads3d
-    use: beads3d-deps
+    use: [code, beads3d-deps]
     run: |
       cd beads3d && npm run build
       tar -cf ../beads3d-dist.tar -C dist .
-    filter:
-      - beads3d/src/**
-      - beads3d/package.json
-      - beads3d/vite.config.js
     outputs:
       artifacts:
         - key: beads3d-dist
