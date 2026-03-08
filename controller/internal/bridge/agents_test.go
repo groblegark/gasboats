@@ -672,6 +672,7 @@ func TestBuildAgentCardBlocks_ImageTagInContext(t *testing.T) {
 		"",       // coopmuxURL
 		"",       // podName
 		"v2026.58.3", // imageTag
+		"",       // role
 	)
 
 	// The context block (index 1) should contain the image tag.
@@ -713,6 +714,7 @@ func TestBuildAgentCardBlocks_NoImageTag(t *testing.T) {
 		"",
 		"",
 		"", // no imageTag
+		"", // role
 	)
 
 	if len(blocks) < 2 {
@@ -729,6 +731,61 @@ func TestBuildAgentCardBlocks_NoImageTag(t *testing.T) {
 				t.Error("unexpected separator after 'Decisions thread below' when imageTag is empty")
 			}
 		}
+	}
+}
+
+func TestBuildAgentCardBlocks_RoleInHeader(t *testing.T) {
+	blocks := buildAgentCardBlocks(
+		"gasboat/crew/test-bot",
+		0,           // pending
+		"working",   // state
+		"",          // taskTitle
+		time.Time{}, // seen (zero)
+		"",          // coopmuxURL
+		"",          // podName
+		"",          // imageTag
+		"lead",      // role
+	)
+
+	if len(blocks) < 1 {
+		t.Fatalf("expected at least 1 block, got %d", len(blocks))
+	}
+
+	// The header section (index 0) should contain the role.
+	headerBlock, ok := blocks[0].(*slack.SectionBlock)
+	if !ok {
+		t.Fatalf("expected section block at index 0, got %T", blocks[0])
+	}
+	if !strings.Contains(headerBlock.Text.Text, "lead") {
+		t.Errorf("expected role 'lead' in header text, got %q", headerBlock.Text.Text)
+	}
+}
+
+func TestBuildAgentCardBlocks_MultiRole(t *testing.T) {
+	blocks := buildAgentCardBlocks(
+		"gasboat/crew/test-bot",
+		0, "working", "", time.Time{}, "", "", "",
+		"crew,thread", // multi-role
+	)
+
+	headerBlock := blocks[0].(*slack.SectionBlock)
+	if !strings.Contains(headerBlock.Text.Text, "crew,thread") {
+		t.Errorf("expected multi-role 'crew,thread' in header, got %q", headerBlock.Text.Text)
+	}
+}
+
+func TestBuildAgentCardBlocks_NoRole(t *testing.T) {
+	blocks := buildAgentCardBlocks(
+		"gasboat/crew/test-bot",
+		0, "working", "", time.Time{}, "", "", "",
+		"", // no role
+	)
+
+	headerBlock := blocks[0].(*slack.SectionBlock)
+	// Should have project and status but no extra separator for empty role.
+	// Format: ":large_green_circle: *test-bot* · _gasboat_ · working"
+	if strings.Count(headerBlock.Text.Text, "·") != 2 {
+		t.Errorf("expected 2 separators (project + status) with no role, got %q", headerBlock.Text.Text)
 	}
 }
 

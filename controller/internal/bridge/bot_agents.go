@@ -78,6 +78,7 @@ func (b *Bot) pruneStaleAgentCards(ctx context.Context) {
 			delete(b.agentPending, agent)
 			delete(b.agentPodName, agent)
 			delete(b.agentImageTag, agent)
+			delete(b.agentRole, agent)
 		}
 		b.mu.Unlock()
 
@@ -149,10 +150,11 @@ func (b *Bot) ensureAgentCard(ctx context.Context, agent, channelID string) (str
 	seen := b.agentSeen[agent]
 	podName := b.agentPodName[agent]
 	imageTag := b.agentImageTag[agent]
+	role := b.agentRole[agent]
 	b.mu.Unlock()
 
 	taskTitle := b.agentTaskTitle(ctx, agent)
-	blocks := buildAgentCardBlocks(agent, pending, state, taskTitle, seen, b.coopmuxPublicURL, podName, imageTag)
+	blocks := buildAgentCardBlocks(agent, pending, state, taskTitle, seen, b.coopmuxPublicURL, podName, imageTag, role)
 	cardChannel, ts, err := b.api.PostMessageContext(ctx, channelID,
 		slack.MsgOptionText(fmt.Sprintf("Agent: %s", extractAgentName(agent)), false),
 		slack.MsgOptionBlocks(blocks...),
@@ -211,6 +213,9 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	b.mu.Lock()
 	b.agentState[agent] = "spawning"
 	b.agentSeen[agent] = time.Now()
+	if role := bead.Fields["role"]; role != "" {
+		b.agentRole[agent] = role
+	}
 	b.mu.Unlock()
 
 	// Fetch pod_name from the agent bead notes for coopmux terminal linking.
@@ -235,12 +240,15 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 		}
 	} else {
 		displayName := b.agentDisplayName(agent)
+		spawnText := fmt.Sprintf(":rocket: *Agent spawned: %s*", displayName)
+		if role := bead.Fields["role"]; role != "" {
+			spawnText += fmt.Sprintf(" (%s)", role)
+		}
 		_, _, err := b.api.PostMessageContext(ctx, channel,
 			slack.MsgOptionText(fmt.Sprintf("Agent spawned: %s", extractAgentName(agent)), false),
 			slack.MsgOptionBlocks(
 				slack.NewSectionBlock(
-					slack.NewTextBlockObject("mrkdwn",
-						fmt.Sprintf(":rocket: *Agent spawned: %s*", displayName), false, false),
+					slack.NewTextBlockObject("mrkdwn", spawnText, false, false),
 					nil, nil),
 			),
 		)
@@ -396,6 +404,7 @@ func (b *Bot) updateAgentCard(ctx context.Context, agent string) {
 	seen := b.agentSeen[agent]
 	podName := b.agentPodName[agent]
 	imageTag := b.agentImageTag[agent]
+	role := b.agentRole[agent]
 	b.mu.Unlock()
 
 	if !ok {
@@ -413,7 +422,7 @@ func (b *Bot) updateAgentCard(ctx context.Context, agent string) {
 	}
 
 	taskTitle := b.agentTaskTitle(ctx, agent)
-	blocks := buildAgentCardBlocks(agent, pending, state, taskTitle, seen, b.coopmuxPublicURL, podName, imageTag)
+	blocks := buildAgentCardBlocks(agent, pending, state, taskTitle, seen, b.coopmuxPublicURL, podName, imageTag, role)
 	_, _, _, err := b.api.UpdateMessageContext(ctx, ref.ChannelID, ref.Timestamp,
 		slack.MsgOptionText(fmt.Sprintf("Agent: %s", extractAgentName(agent)), false),
 		slack.MsgOptionBlocks(blocks...),
@@ -498,7 +507,8 @@ func buildWrapUpAgentCardBlocks(agent, agentState, wrapupJSON string) []slack.Bl
 // seen is the last time activity was recorded for this agent (zero = unknown).
 // coopmuxURL and podName are used to render the agent name as a clickable terminal link.
 // imageTag is the deployed image tag (e.g., "v2026.58.3") shown in the context line.
-func buildAgentCardBlocks(agent string, pendingCount int, agentState, taskTitle string, seen time.Time, coopmuxURL, podName, imageTag string) []slack.Block {
+// role is the agent's role (e.g., "crew", "lead", "ops") shown in the header.
+func buildAgentCardBlocks(agent string, pendingCount int, agentState, taskTitle string, seen time.Time, coopmuxURL, podName, imageTag, role string) []slack.Block {
 	name := extractAgentName(agent)
 	project := extractAgentProject(agent)
 
@@ -531,6 +541,9 @@ func buildAgentCardBlocks(agent string, pendingCount int, agentState, taskTitle 
 	headerText := fmt.Sprintf("%s *%s*", indicator, displayName)
 	if project != "" {
 		headerText += fmt.Sprintf(" \u00b7 _%s_", project)
+	}
+	if role != "" {
+		headerText += fmt.Sprintf(" \u00b7 %s", role)
 	}
 	headerText += fmt.Sprintf(" \u00b7 %s", status)
 
@@ -612,6 +625,7 @@ func (b *Bot) fetchAndCachePodName(ctx context.Context, agent string) {
 	notes := beadsapi.ParseNotes(detail.Notes)
 	podName := notes["pod_name"]
 	imageTag := extractImageTag(notes["image_tag"])
+	role := detail.Fields["role"]
 
 	b.mu.Lock()
 	if podName != "" {
@@ -619,6 +633,9 @@ func (b *Bot) fetchAndCachePodName(ctx context.Context, agent string) {
 	}
 	if imageTag != "" {
 		b.agentImageTag[agent] = imageTag
+	}
+	if role != "" {
+		b.agentRole[agent] = role
 	}
 	b.mu.Unlock()
 }
@@ -701,6 +718,7 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 		delete(b.agentPending, agentName)
 		delete(b.agentPodName, agentName)
 		delete(b.agentImageTag, agentName)
+		delete(b.agentRole, agentName)
 	}
 	b.mu.Unlock()
 
@@ -815,6 +833,7 @@ func (b *Bot) handleClearAgent(ctx context.Context, agentIdentity string, callba
 		delete(b.agentState, agentIdentity)
 		delete(b.agentPodName, agentIdentity)
 		delete(b.agentImageTag, agentIdentity)
+		delete(b.agentRole, agentIdentity)
 	}
 	b.mu.Unlock()
 

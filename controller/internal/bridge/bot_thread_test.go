@@ -356,6 +356,7 @@ func TestNotifyAgentState_DonePreservesThreadMapping(t *testing.T) {
 		agentSeen:       map[string]time.Time{},
 		agentPodName:    map[string]string{},
 		agentImageTag:   map[string]string{},
+		agentRole:       map[string]string{},
 		threadSpawnMsgs: make(map[string]MessageRef),
 	}
 
@@ -409,6 +410,7 @@ func TestNotifyAgentState_FailedPreservesThreadMapping(t *testing.T) {
 		agentSeen:       map[string]time.Time{},
 		agentPodName:    map[string]string{},
 		agentImageTag:   map[string]string{},
+		agentRole:       map[string]string{},
 		threadSpawnMsgs: make(map[string]MessageRef),
 	}
 
