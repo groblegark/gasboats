@@ -561,7 +561,7 @@ slackBridge:
     secretName: ""
     secretKey: "token"
     # Comma-separated repos to check. Suffix with ~ext to mark as external dep.
-    # Default: groblegark/gasboats (monorepo — all components in one repo)
+    # Default: groblegark/gasboats (monorepo)
     repos: ""
 
   # Bouncer — IP whitelist management via /bouncer Slack command.
