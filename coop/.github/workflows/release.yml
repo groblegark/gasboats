@@ -1,0 +1,218 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: coop-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: coop-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: coop-darwin-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: coop-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install protobuf compiler (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protobuf compiler (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install cross-compilation deps (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting workspace version to $VERSION"
+          # Portable sed: works on both macOS and GNU/Linux
+          tmp=$(mktemp)
+          sed "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml > "$tmp"
+          mv "$tmp" Cargo.toml
+
+      - name: Build
+        env:
+          RUSTC_WRAPPER: ""
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/coop 2>/dev/null || true
+          strip target/${{ matrix.target }}/release/coopmux 2>/dev/null || true
+
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          # Include coopmux as coop-mux for backwards compatibility with Dockerfiles.
+          cp coopmux coop-mux 2>/dev/null || true
+          tar czf /tmp/${{ matrix.artifact }}.tar.gz coop coop-mux
+          cp coopmux /tmp/${{ matrix.artifact }}-coopmux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            /tmp/${{ matrix.artifact }}.tar.gz
+            /tmp/${{ matrix.artifact }}-coopmux
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create checksums
+        run: |
+          cd artifacts
+          find . -name '*.tar.gz' -exec mv {} . \;
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger gasboat rebuild
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_PAT }}
+        run: |
+          gh api repos/groblegark/gasboat/dispatches \
+            -f event_type=coop-release \
+            -f client_payload[tag]=${{ github.ref_name }} || true
+
+  docker:
+    name: Coopmux Docker (${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            artifact: coop-linux-amd64
+          - arch: arm64
+            artifact: coop-linux-arm64
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: /tmp/bin
+
+      - name: Prepare context
+        run: |
+          mkdir -p /tmp/docker
+          cp /tmp/bin/${{ matrix.artifact }}-coopmux /tmp/docker/coopmux
+          chmod +x /tmp/docker/coopmux
+          cat > /tmp/docker/Dockerfile <<'DOCKERFILE'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+          COPY coopmux /usr/local/bin/coopmux
+          ENTRYPOINT ["coopmux"]
+          DOCKERFILE
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},suffix=-coopmux-${{ matrix.arch }}
+            type=raw,value=coopmux-${{ matrix.arch }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: /tmp/docker
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  docker-manifest:
+    name: Coopmux manifest
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},suffix=-coopmux
+            type=raw,value=coopmux
+      - name: Create multi-arch manifests
+        run: |
+          while IFS= read -r TAG; do
+            [ -z "$TAG" ] && continue
+            echo "::group::$TAG"
+            docker buildx imagetools create \
+              -t "$TAG" \
+              "${TAG}-amd64" \
+              "${TAG}-arm64"
+            echo "::endgroup::"
+          done <<< "${{ steps.meta.outputs.tags }}"

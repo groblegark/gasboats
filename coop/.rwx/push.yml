@@ -1,0 +1,65 @@
+# Push OCI images to GHCR via rwx image push.
+# Called by docker.yml via embedded run (uses rwx/base for CLI access).
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: rwx-cli
+    call: rwx/install-cli 4.0.1
+
+  # ── GHCR auth ─────────────────────────────────────────────────────────
+  - key: ghcr-auth
+    use: rwx-cli
+    run: |
+      mkdir -p ~/.docker
+      AUTH=$(printf '%s:%s' "$GITHUB_USER" "$GHCR_TOKEN" | base64 -w0)
+      printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > ~/.docker/config.json
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── push-claude ───────────────────────────────────────────────────────
+  - key: push-claude
+    use: ghcr-auth
+    run: |
+      REF_NAME="${REF_NAME#refs/tags/}"; REF_NAME="${REF_NAME#refs/heads/}"
+      SHORT_SHA="${COMMIT_SHA:0:7}"
+
+      rwx image push $IMAGE_TASK_ID \
+        --to ghcr.io/groblegark/coop:claude-sha-${SHORT_SHA} \
+        --to ghcr.io/groblegark/coop:claude
+
+      if [[ "$REF_NAME" == v* ]]; then
+        VERSION="${REF_NAME#v}"
+        rwx image push $IMAGE_TASK_ID --to ghcr.io/groblegark/coop:claude-${VERSION}
+      elif [[ "$REF_NAME" == 20* ]]; then
+        rwx image push $IMAGE_TASK_ID --to ghcr.io/groblegark/coop:claude-${REF_NAME}
+      fi
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+      IMAGE_TASK_ID: ${{ init.image-claude-task-id }}
+
+  # ── push-coopmux ─────────────────────────────────────────────────────
+  # Coopmux uses calver only (tagged from gasboat release path).
+  # The bare calver tag (e.g. :2026.63.6) is what gasboat Helm uses.
+  - key: push-coopmux
+    use: ghcr-auth
+    run: |
+      REF_NAME="${REF_NAME#refs/tags/}"; REF_NAME="${REF_NAME#refs/heads/}"
+
+      if [[ "$REF_NAME" == 20* ]]; then
+        rwx image push $IMAGE_TASK_ID \
+          --to ghcr.io/groblegark/coop:${REF_NAME}
+      else
+        # Non-calver builds (main branch) get a sha tag for debugging
+        SHORT_SHA="${COMMIT_SHA:0:7}"
+        rwx image push $IMAGE_TASK_ID \
+          --to ghcr.io/groblegark/coop:coopmux-sha-${SHORT_SHA}
+      fi
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+      IMAGE_TASK_ID: ${{ init.image-coopmux-task-id }}

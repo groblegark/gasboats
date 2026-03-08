@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2026 Alfred Jean LLC
+
+//! Coopmux: PTY multiplexing proxy for coop instances.
+
+pub mod config;
+pub mod credential;
+pub mod error;
+pub mod state;
+pub mod transport;
+pub mod upstream;
+
+use std::sync::Arc;
+
+use tokio::net::TcpListener;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+
+use crate::config::MuxConfig;
+use crate::credential::broker::CredentialBroker;
+use crate::credential::CredentialConfig;
+use crate::state::MuxState;
+#[cfg(not(debug_assertions))]
+use crate::transport::build_router;
+#[cfg(debug_assertions)]
+use crate::transport::build_router_hot;
+use crate::upstream::health::spawn_health_checker;
+use crate::upstream::prewarm::spawn_prewarm_task;
+
+/// Optional NATS event publishing configuration.
+///
+/// Passed separately from [`MuxConfig`] because these args live on the
+/// binary's CLI struct rather than the library config.
+pub struct NatsConfig {
+    pub url: String,
+    pub token: Option<String>,
+    pub prefix: String,
+}
+
+/// Optional NATS relay configuration for auto-discovering local agent sessions.
+pub use crate::transport::nats_sub::NatsRelayConfig;
+
+/// Run the mux server until shutdown.
+pub async fn run(
+    config: MuxConfig,
+    nats: Option<NatsConfig>,
+    nats_relay: Option<NatsRelayConfig>,
+) -> anyhow::Result<()> {
+    let addr = format!("{}:{}", config.host, config.port);
+    let shutdown = CancellationToken::new();
+
+    let mut state = MuxState::new(config.clone(), shutdown.clone());
+
+    // Always initialize credential broker (empty config if no file provided).
+    let cred_config = match config.credential_config {
+        Some(ref cred_path) => {
+            let contents = std::fs::read_to_string(cred_path)?;
+            serde_json::from_str::<CredentialConfig>(&contents)?
+        }
+        None => CredentialConfig { accounts: vec![] },
+    };
+
+    let (event_tx, event_rx) = broadcast::channel(64);
+    let cred_bridge_rx = event_tx.subscribe();
+    #[cfg(feature = "legacy-oauth")]
+    let nats_cred_rx = nats.as_ref().map(|_| event_tx.subscribe());
+
+    #[cfg(not(feature = "legacy-oauth"))]
+    let broker = CredentialBroker::new(cred_config, event_tx);
+    #[cfg(feature = "legacy-oauth")]
+    let broker = {
+        let state_dir = config.state_dir();
+        let b = CredentialBroker::new(cred_config, event_tx, Some(state_dir.clone()));
+        // Load persisted credentials (including dynamic accounts) if available.
+        let persist_path = state_dir.join("credentials.json");
+        if persist_path.exists() {
+            match crate::credential::persist::load(&persist_path) {
+                Ok(persisted) => b.load_persisted(&persisted).await,
+                Err(e) => tracing::warn!(err = %e, "failed to load persisted credentials"),
+            }
+        }
+        b
+    };
+
+    // Seed API key from file if configured (static key mode for K8s deployments).
+    if let Some(ref key_file) = config.api_key_file {
+        match std::fs::read_to_string(key_file) {
+            Ok(contents) => {
+                let api_key = contents.trim().to_owned();
+                if api_key.is_empty() {
+                    tracing::warn!(path = %key_file.display(), "api-key-file is empty, skipping seed");
+                } else if let Some(account) = broker.first_account_name().await {
+                    match broker.set_token(&account, api_key, None, None).await {
+                        Ok(()) => {
+                            tracing::info!(account = %account, path = %key_file.display(), "seeded API key from file")
+                        }
+                        Err(e) => {
+                            tracing::error!(account = %account, err = %e, "failed to seed API key from file")
+                        }
+                    }
+                } else {
+                    tracing::warn!("api-key-file provided but no accounts configured");
+                }
+            }
+            Err(e) => {
+                tracing::error!(path = %key_file.display(), err = %e, "failed to read api-key-file")
+            }
+        }
+    }
+
+    state.credential_broker = Some(Arc::clone(&broker));
+
+    // Spawn distributor (pushes credentials to sessions on events).
+    let state = Arc::new(state);
+    #[cfg(feature = "legacy-oauth")]
+    broker.spawn_refresh_loops();
+    crate::credential::distributor::spawn_distributor(Arc::clone(&state), event_rx);
+
+    // NATS credential event publisher (legacy-oauth only).
+    #[cfg(feature = "legacy-oauth")]
+    if let (Some(nats_cfg), Some(cred_rx)) = (nats, nats_cred_rx) {
+        let nats_shutdown = shutdown.clone();
+        match crate::transport::nats_pub::NatsPublisher::connect(&nats_cfg).await {
+            Ok(publisher) => {
+                tokio::spawn(publisher.run(cred_rx, nats_shutdown));
+            }
+            Err(e) => {
+                tracing::error!(err = %e, "failed to connect NATS publisher");
+            }
+        }
+    }
+    #[cfg(not(feature = "legacy-oauth"))]
+    let _ = nats;
+
+    // Bridge credential events into the MuxEvent broadcast channel.
+    {
+        let mux_event_tx = state.feed.event_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = cred_bridge_rx;
+            loop {
+                match rx.recv().await {
+                    Ok(e) => {
+                        let _ = mux_event_tx.send(crate::state::MuxEvent::from_credential(&e));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    let has_creds = config.credential_config.is_some();
+    if has_creds {
+        tracing::info!("coopmux listening on {addr} (credentials enabled)");
+    } else {
+        tracing::info!("coopmux listening on {addr}");
+    }
+    spawn_health_checker(Arc::clone(&state));
+
+    // Spawn NATS relay subscriber for auto-discovering local agent sessions.
+    if let Some(relay_config) = nats_relay {
+        crate::transport::nats_sub::spawn_nats_subscriber(Arc::clone(&state), relay_config);
+    }
+
+    spawn_prewarm_task(
+        Arc::clone(&state),
+        Arc::clone(&state.prewarm),
+        config.prewarm_poll_interval(),
+        shutdown.clone(),
+    );
+    #[cfg(debug_assertions)]
+    let router = build_router_hot(state, config.hot);
+    #[cfg(not(debug_assertions))]
+    let router = build_router(state);
+    let listener = TcpListener::bind(&addr).await?;
+    axum::serve(listener, router).with_graceful_shutdown(shutdown.cancelled_owned()).await?;
+
+    Ok(())
+}

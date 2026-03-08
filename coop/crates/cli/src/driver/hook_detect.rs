@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2026 Alfred Jean LLC
+
+//! Generic hook-based detector shared by all agent drivers.
+//!
+//! Each agent provides a mapping function from [`HookEvent`] to
+//! `(AgentState, cause)` pairs; the select loop is identical.
+
+use std::future::Future;
+use std::pin::Pin;
+
+use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
+
+use crate::driver::hook_recv::HookReceiver;
+use crate::driver::{AgentState, Detector, DetectorEmission, HookEvent};
+use crate::event::RawHookEvent;
+
+/// Tier 1 detector that maps hook events to agent states via a
+/// caller-supplied closure.
+pub struct HookDetector<F>
+where
+    F: Fn(HookEvent) -> Option<(AgentState, String)> + Send + 'static,
+{
+    pub receiver: HookReceiver,
+    pub map_event: F,
+    /// Optional sender for raw hook JSON broadcast.
+    pub raw_hook_tx: Option<broadcast::Sender<RawHookEvent>>,
+}
+
+impl<F> Detector for HookDetector<F>
+where
+    F: Fn(HookEvent) -> Option<(AgentState, String)> + Send + 'static,
+{
+    fn run(
+        self: Box<Self>,
+        state_tx: mpsc::Sender<DetectorEmission>,
+        shutdown: CancellationToken,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            let mut receiver = self.receiver;
+            let map_event = self.map_event;
+            let raw_hook_tx = self.raw_hook_tx;
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    event = receiver.next_event() => {
+                        match event {
+                            Some((hook_event, raw_json)) => {
+                                if let Some(ref tx) = raw_hook_tx {
+                                    let _ = tx.send(RawHookEvent { json: raw_json });
+                                }
+                                if let Some((state, cause)) = map_event(hook_event) {
+                                    let _ = state_tx.send((state, cause, None)).await;
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn tier(&self) -> u8 {
+        1
+    }
+}
