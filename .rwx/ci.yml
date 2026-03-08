@@ -1,0 +1,211 @@
+# Unified CI — all components in one pipeline.
+# Run manually: rwx run .rwx/ci.yml --init commit-sha=$(git rev-parse HEAD) --wait
+on:
+  github:
+    push:
+      branches: [main]
+      tags: ['20*']
+    statuses:
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── Clone ──────────────────────────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/gasboats.git
+      ref: ${{ init.commit-sha }}
+
+  # ── Go toolchain ──────────────────────────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+
+  # ── golangci-lint ────────────────────────────────────────────────────
+  - key: golangci-lint
+    use: go
+    filter:
+      - .rwx/ci.yml
+    run: |
+      go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+
+  # ── Rust toolchain (for coop + quench) ───────────────────────────────
+  - key: rust
+    filter:
+      - .rwx/ci.yml
+    run: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      . "$HOME/.cargo/env"
+      rustc --version
+
+  # ── Node.js (for beads3d) ────────────────────────────────────────────
+  - key: node
+    filter:
+      - .rwx/ci.yml
+    run: |
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+      node --version
+
+  # ── Go deps: gasboat/controller ──────────────────────────────────────
+  - key: gasboat-deps
+    use: [code, go]
+    run: cd gasboat/controller && go mod download
+    filter:
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+
+  # ── Go deps: kbeads ──────────────────────────────────────────────────
+  - key: kbeads-deps
+    use: [code, go]
+    run: cd kbeads && go mod download
+    filter:
+      - kbeads/go.mod
+      - kbeads/go.sum
+
+  # ── Rust deps: coop ─────────────────────────────────────────────────
+  - key: coop-deps
+    use: [code, rust]
+    run: |
+      . "$HOME/.cargo/env"
+      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
+      cd coop && cargo fetch
+    filter:
+      - coop/Cargo.lock
+      - coop/Cargo.toml
+
+  # ── JS deps: beads3d ─────────────────────────────────────────────────
+  - key: beads3d-deps
+    use: [code, node]
+    run: cd beads3d && npm ci
+    filter:
+      - beads3d/package-lock.json
+
+  # ── Build gasboat binaries (parallel) ────────────────────────────────
+  - key: build-gasboat
+    use: gasboat-deps
+    filter:
+      - "gasboat/controller/**/*.go"
+      - "gasboat/controller/go.mod"
+    run: |
+      cd gasboat/controller
+      CGO_ENABLED=0 go build -v -o bin/controller ./cmd/controller/
+      CGO_ENABLED=0 go build -v -o bin/slack-bridge ./cmd/slack-bridge/
+      CGO_ENABLED=0 go build -v -o bin/gb ./cmd/gb/
+      CGO_ENABLED=0 go build -v -o bin/jira-bridge ./cmd/jira-bridge/
+      CGO_ENABLED=0 go build -v -o bin/wl-bridge ./cmd/wl-bridge/
+
+  # ── Build kbeads ─────────────────────────────────────────────────────
+  - key: build-kbeads
+    use: kbeads-deps
+    filter:
+      - "kbeads/**/*.go"
+      - "kbeads/go.mod"
+    run: |
+      cd kbeads
+      CGO_ENABLED=0 go build -v -o bin/kd ./cmd/kd/
+      CGO_ENABLED=0 go build -v -o bin/beads-server ./cmd/beads-server/
+
+  # ── Build coop ───────────────────────────────────────────────────────
+  - key: build-coop
+    use: coop-deps
+    filter:
+      - "coop/crates/**"
+      - "coop/Cargo.toml"
+      - "coop/Cargo.lock"
+    run: |
+      . "$HOME/.cargo/env"
+      cd coop && cargo build --workspace --release
+
+  # ── Build beads3d ────────────────────────────────────────────────────
+  - key: build-beads3d
+    use: beads3d-deps
+    filter:
+      - "beads3d/src/**"
+      - "beads3d/package.json"
+    run: cd beads3d && npm run build
+
+  # ── Lint gasboat ─────────────────────────────────────────────────────
+  - key: lint-gasboat
+    use: [gasboat-deps, golangci-lint]
+    filter:
+      - "gasboat/controller/**/*.go"
+    run: cd gasboat/controller && golangci-lint run --timeout=5m ./...
+
+  # ── Lint kbeads ──────────────────────────────────────────────────────
+  - key: lint-kbeads
+    use: [kbeads-deps, golangci-lint]
+    filter:
+      - "kbeads/**/*.go"
+    run: cd kbeads && golangci-lint run --timeout=5m ./...
+
+  # ── Lint coop ────────────────────────────────────────────────────────
+  - key: lint-coop
+    use: coop-deps
+    filter:
+      - "coop/crates/**"
+    run: |
+      . "$HOME/.cargo/env"
+      cd coop && cargo clippy --workspace -- -D warnings
+      cd coop && cargo fmt --check
+
+  # ── Test gasboat ─────────────────────────────────────────────────────
+  - key: test-gasboat
+    use: gasboat-deps
+    filter:
+      - "gasboat/controller/**/*.go"
+    run: |
+      cd gasboat/controller
+      CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
+    outputs:
+      artifacts:
+        - key: gasboat-coverage
+          path: gasboat/controller/coverage.out
+
+  # ── Test kbeads ──────────────────────────────────────────────────────
+  - key: test-kbeads
+    use: kbeads-deps
+    filter:
+      - "kbeads/**/*.go"
+    run: |
+      cd kbeads
+      CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
+    outputs:
+      artifacts:
+        - key: kbeads-coverage
+          path: kbeads/coverage.out
+
+  # ── Test coop ────────────────────────────────────────────────────────
+  - key: test-coop
+    use: coop-deps
+    filter:
+      - "coop/crates/**"
+    run: |
+      . "$HOME/.cargo/env"
+      cd coop && cargo test --workspace
+
+  # ── Helm lint ────────────────────────────────────────────────────────
+  - key: lint-helm
+    use: code
+    filter:
+      - "gasboat/helm/**"
+    run: |
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      helm lint gasboat/helm/gasboat/
+
+  # ── Quench (repo-wide quality checks) ───────────────────────────────
+  - key: quench
+    use: [code, gasboat-deps, rust]
+    cache: false
+    run: |
+      . "$HOME/.cargo/env"
+      sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      cargo install quench --git https://github.com/alfredjeanlab/quench
+      quench check --no-docs

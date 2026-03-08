@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['20*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which components changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      gasboat: ${{ steps.filter.outputs.gasboat }}
+      kbeads: ${{ steps.filter.outputs.kbeads }}
+      coop: ${{ steps.filter.outputs.coop }}
+      beads3d: ${{ steps.filter.outputs.beads3d }}
+      helm: ${{ steps.filter.outputs.helm }}
+      is_tag: ${{ startsWith(github.ref, 'refs/tags/20') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            gasboat:
+              - 'gasboat/**'
+              - 'go.work'
+            kbeads:
+              - 'kbeads/**'
+              - 'go.work'
+            coop:
+              - 'coop/**'
+            beads3d:
+              - 'beads3d/**'
+            helm:
+              - 'gasboat/helm/**'
+
+  # Go tests (gasboat controller)
+  test-gasboat:
+    needs: changes
+    if: needs.changes.outputs.gasboat == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gasboat/controller/go.mod
+      - run: go test ./gasboat/controller/...
+
+  # Go tests (kbeads)
+  test-kbeads:
+    needs: changes
+    if: needs.changes.outputs.kbeads == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: kbeads/go.mod
+      - run: go test ./kbeads/...
+
+  # Go lint (both modules)
+  lint-go:
+    needs: changes
+    if: needs.changes.outputs.gasboat == 'true' || needs.changes.outputs.kbeads == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gasboat/controller/go.mod
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: gasboat/controller
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: kbeads
+
+  # Rust tests (coop)
+  test-coop:
+    needs: changes
+    if: needs.changes.outputs.coop == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cd coop && cargo test --workspace
+
+  # JS build (beads3d)
+  test-beads3d:
+    needs: changes
+    if: needs.changes.outputs.beads3d == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd beads3d && npm ci && npm run build
+
+  # Helm lint
+  lint-helm:
+    needs: changes
+    if: needs.changes.outputs.helm == 'true' || needs.changes.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint gasboat/helm/gasboat/
+
+  # Docker builds (all images, tag pushes only)
+  docker:
+    needs: [changes, test-gasboat, test-kbeads, lint-go, test-coop, test-beads3d, lint-helm]
+    if: always() && startsWith(github.ref, 'refs/tags/20') && !contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: controller
+            context: gasboat
+            dockerfile: gasboat/images/controller/Dockerfile
+          - image: slack-bridge
+            context: gasboat
+            dockerfile: gasboat/images/slack-bridge/Dockerfile
+          - image: kbeads
+            context: kbeads
+            dockerfile: kbeads/Dockerfile
+          - image: beads3d
+            context: beads3d
+            dockerfile: beads3d/Dockerfile
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ghcr.io/groblegark/gasboats/${{ matrix.image }}:${{ github.ref_name }}
