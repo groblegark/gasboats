@@ -51,6 +51,11 @@ var claimCmd = &cobra.Command{
 		} else {
 			printBeadTable(bead)
 		}
+
+		// Print advice diff: show any new advice items that become relevant
+		// because of the claimed bead's labels (e.g., role-specific advice).
+		printAdviceDiff(ctx, bead)
+
 		return nil
 	},
 }
