@@ -421,7 +421,7 @@ func parseConfig() *config {
 		threadingMode = "agent"
 	}
 
-	repos := parseRepoList(envOrDefault("UNRELEASED_REPOS", "groblegark/gasboat,groblegark/kbeads,groblegark/coop"))
+	repos := parseRepoList(envOrDefault("UNRELEASED_REPOS", "groblegark/gasboats"))
 
 	return &config{
 		beadsHTTPAddr:      envOrDefault("BEADS_HTTP_ADDR", "http://localhost:8080"),
@@ -519,12 +519,14 @@ func init() {
 }
 
 // buildImageConfigs creates image tracking configs for gasboat images.
-// It finds the gasboat repo in the repos list and uses the given version
-// as the deployed tag for all images (they share the same calver tag).
+// It finds the gasboat/gasboats repo in the repos list and uses the given
+// version as the deployed tag for all images (they share the same calver tag).
 func buildImageConfigs(repos []bridge.RepoRef, deployedVersion string) []bridge.ImageTrackConfig {
-	// Find the gasboat repo in the configured list.
 	for _, r := range repos {
-		if r.Repo == "gasboat" {
+		switch r.Repo {
+		case "gasboats":
+			return bridge.MonorepoImageConfigs(r, deployedVersion)
+		case "gasboat":
 			return bridge.DefaultGasboatImageConfigs(r, deployedVersion, deployedVersion, deployedVersion)
 		}
 	}
