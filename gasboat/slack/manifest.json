@@ -1,0 +1,115 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "gasboat",
+    "description": "Agent control plane for gasboat — beads, decisions, spawn",
+    "background_color": "#1b2733"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "gasboat",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/decisions",
+        "description": "Show pending decisions waiting for a response",
+        "usage_hint": "[agent]",
+        "should_escape": false
+      },
+      {
+        "command": "/decide",
+        "description": "Alias for /decisions",
+        "usage_hint": "[agent]",
+        "should_escape": false
+      },
+      {
+        "command": "/roster",
+        "description": "Show the active agent roster",
+        "usage_hint": "[project]",
+        "should_escape": false
+      },
+      {
+        "command": "/spawn",
+        "description": "Spawn a new agent (auto-named, project from channel)",
+        "usage_hint": "[task] [--role <role>]",
+        "should_escape": false
+      },
+      {
+        "command": "/start",
+        "description": "Start a named agent",
+        "usage_hint": "<agent> [project] [task] [--role <role>]",
+        "should_escape": false
+      },
+      {
+        "command": "/kill",
+        "description": "Terminate a running agent",
+        "usage_hint": "<agent> [--force]",
+        "should_escape": false
+      },
+      {
+        "command": "/unreleased",
+        "description": "Show unreleased changes across tracked repos",
+        "usage_hint": "[repo]",
+        "should_escape": false
+      },
+      {
+        "command": "/clear-threads",
+        "description": "Clear all thread-to-agent mappings",
+        "should_escape": false
+      },
+      {
+        "command": "/bouncer",
+        "description": "Manage IP whitelist for Traefik middlewares",
+        "usage_hint": "list | add <ip> | remove <ip>",
+        "should_escape": false
+      },
+      {
+        "command": "/autodestruct",
+        "description": "Kill all agent pods (with confirmation) or check status",
+        "usage_hint": "[clear | status]",
+        "should_escape": false
+      },
+      {
+        "command": "/formula",
+        "description": "List, inspect, and instantiate formulas",
+        "usage_hint": "list | show <id> | pour <id> [--var key=value] | wisp <id> [--var key=value]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "app_mentions:read",
+        "channels:history",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "pins:read",
+        "pins:write",
+        "users:read",
+        "files:read"
+      ]
+    }
+  },
+  "settings": {
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false,
+    "interactivity": {
+      "is_enabled": true
+    },
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups"
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# DEPRECATED: This file is no longer used as the RWX cache key.
+# Per-task lock files are now used instead:
+#   agent-syspackages.lock, agent-node.lock, agent-playwright.lock,
+#   agent-go.lock, agent-rust.lock, agent-clis.lock
+#
+# This file is kept as a reference for all version pins.
+# To force a full rebuild, bump cache-epoch in each per-task lock file.
+
+cache-epoch=2
+
+# ── Runtimes ────────────────────────────────────────────────────────
+node-major=24
+go-major=1.25
+rust-toolchain=stable
+python=3.12
+
+# ── Claude Code ─────────────────────────────────────────────────────
+claude-code=latest
+
+# ── Playwright ──────────────────────────────────────────────────────
+playwright=1.58.2
+
+# ── CLIs (pinned for reproducibility) ───────────────────────────────
+docker-cli=27.5.1
+terraform=1.11.3
+terragrunt=0.77.11
+golangci-lint=v1.64.8
+stern=1.30.0
+claudeless=v0.4.0
+rtk=v0.23.0

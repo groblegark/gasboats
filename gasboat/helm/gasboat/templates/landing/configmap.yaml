@@ -1,0 +1,170 @@
+{{- if .Values.landing.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gasboat.landing.fullname" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.landing.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri /index.html;
+            expires 10m;
+        }
+
+        location /healthz {
+            access_log off;
+            return 200 "ok";
+        }
+    }
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Gasboat</title>
+      <style>
+        :root {
+          --bg: #0f172a;
+          --surface: #1e293b;
+          --border: #334155;
+          --text: #e2e8f0;
+          --muted: #94a3b8;
+          --accent: #38bdf8;
+          --accent-hover: #7dd3fc;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          background: var(--bg);
+          color: var(--text);
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 3rem 1rem;
+        }
+        h1 {
+          font-size: 2.5rem;
+          font-weight: 700;
+          margin-bottom: 0.5rem;
+        }
+        .subtitle {
+          color: var(--muted);
+          font-size: 1.1rem;
+          margin-bottom: 2.5rem;
+        }
+        .grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: 1rem;
+          max-width: 960px;
+          width: 100%;
+        }
+        .card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 1.25rem;
+          transition: border-color 0.15s;
+        }
+        .card:hover { border-color: var(--accent); }
+        .card h2 {
+          font-size: 1.1rem;
+          margin-bottom: 0.4rem;
+        }
+        .card h2 a {
+          color: var(--accent);
+          text-decoration: none;
+        }
+        .card h2 a:hover { color: var(--accent-hover); }
+        .card p {
+          color: var(--muted);
+          font-size: 0.9rem;
+          line-height: 1.4;
+        }
+        .card .internal {
+          color: var(--muted);
+          font-size: 0.8rem;
+          font-style: italic;
+          margin-top: 0.3rem;
+        }
+        footer {
+          margin-top: 3rem;
+          color: var(--muted);
+          font-size: 0.8rem;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Gasboat</h1>
+      <p class="subtitle">K8s agent controller &amp; beads automation platform</p>
+      <div class="grid">
+        {{- if .Values.beads3d.enabled }}
+        <div class="card">
+          <h2>{{- if .Values.beads3d.ingress.host }}<a href="https://{{ .Values.beads3d.ingress.host }}{{ .Values.beads3d.ingress.pathPrefix }}">Beads 3D</a>{{- else }}Beads 3D{{- end }}</h2>
+          <p>Interactive 3D visualization of beads issues.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.adviceViewer.enabled }}
+        <div class="card">
+          <h2>{{- if .Values.adviceViewer.ingress.host }}<a href="https://{{ .Values.adviceViewer.ingress.host }}{{ .Values.adviceViewer.ingress.pathPrefix }}">Advice Viewer</a>{{- else }}Advice Viewer{{- end }}</h2>
+          <p>Web UI for viewing and managing advice beads.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.coopmux.enabled }}
+        <div class="card">
+          <h2>{{- if .Values.coopmux.ingress.host }}<a href="https://{{ .Values.coopmux.ingress.host }}/mux">Coopmux</a>{{- else }}Coopmux{{- end }}</h2>
+          <p>Terminal multiplexer and credential manager for agent pods.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.slackBridge.enabled }}
+        <div class="card">
+          <h2>Slack Bridge</h2>
+          <p>Decision and mail notifications bridge to Slack.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.agents.enabled }}
+        <div class="card">
+          <h2>Agent Controller</h2>
+          <p>Manages agent pod lifecycle from bead events.</p>
+        </div>
+        {{- end }}
+        <div class="card">
+          <h2>Beads Daemon</h2>
+          <p>gRPC + HTTP API for bead CRUD, backed by PostgreSQL.</p>
+          {{- if .Values.beads.ingress.host }}
+          <p class="internal">API: {{ .Values.beads.ingress.host }}</p>
+          {{- end }}
+        </div>
+        {{- if .Values.nats.enabled }}
+        <div class="card">
+          <h2>NATS</h2>
+          <p>JetStream event bus for bead lifecycle events.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.postgres.enabled }}
+        <div class="card">
+          <h2>PostgreSQL</h2>
+          <p>Persistent storage for beads data.</p>
+        </div>
+        {{- end }}
+        {{- if .Values.jiraBridge.enabled }}
+        <div class="card">
+          <h2>JIRA Bridge</h2>
+          <p>Bidirectional sync between JIRA tickets and beads.</p>
+        </div>
+        {{- end }}
+      </div>
+      <footer>Gasboat &mdash; {{ .Release.Namespace }}</footer>
+    </body>
+    </html>
+{{- end }}

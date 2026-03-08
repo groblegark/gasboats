@@ -1,0 +1,30 @@
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+IMAGE   ?= gasboat-controller
+LDFLAGS  = -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+
+.PHONY: build build-gb build-bridge build-advice-viewer test lint docker-build clean
+
+build:
+	go build -ldflags="$(LDFLAGS)" -o bin/controller ./cmd/controller/
+
+build-gb:
+	go build -ldflags="$(LDFLAGS)" -o bin/gb ./cmd/gb/
+
+build-bridge:
+	go build -ldflags="$(LDFLAGS)" -o bin/slack-bridge ./cmd/slack-bridge/
+
+build-advice-viewer:
+	go build -ldflags="$(LDFLAGS)" -o bin/advice-viewer ./cmd/advice-viewer/
+
+test:
+	go test -v -race ./...
+
+lint:
+	golangci-lint run ./...
+
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE):$(VERSION) .
+
+clean:
+	rm -rf bin/

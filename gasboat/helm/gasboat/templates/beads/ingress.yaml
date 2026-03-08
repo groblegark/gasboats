@@ -1,0 +1,83 @@
+{{- if .Values.beads.ingress.enabled }}
+{{- $fullname := include "gasboat.beads.fullname" . -}}
+{{- $host := .Values.beads.ingress.host -}}
+{{- $httpPort := .Values.beads.service.httpPort | default 8080 -}}
+{{- $pathPrefix := .Values.beads.ingress.pathPrefix | default "" -}}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`{{ $host }}`){{ if $pathPrefix }} && PathPrefix(`{{ $pathPrefix }}`){{ end }}
+      kind: Rule
+      services:
+        - name: {{ $fullname }}
+          port: {{ $httpPort }}
+      {{- if or $pathPrefix .Values.beads.ingress.ipWhitelist.enabled .Values.beads.ingress.rateLimit.enabled }}
+      middlewares:
+        {{- if $pathPrefix }}
+        - name: {{ $fullname }}-stripprefix
+        {{- end }}
+        {{- if .Values.beads.ingress.ipWhitelist.enabled }}
+        - name: {{ $fullname }}-ipwhitelist
+        {{- end }}
+        {{- if .Values.beads.ingress.rateLimit.enabled }}
+        - name: {{ $fullname }}-ratelimit
+        {{- end }}
+      {{- end }}
+  {{- if .Values.tls.enabled }}
+  tls:
+    secretName: {{ include "gasboat.fullname" . }}-wildcard-tls
+  {{- end }}
+{{- if $pathPrefix }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-stripprefix
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads.labels" . | nindent 4 }}
+spec:
+  stripPrefix:
+    prefixes:
+      - {{ $pathPrefix }}
+{{- end }}
+{{- if .Values.beads.ingress.ipWhitelist.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-ipwhitelist
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads.labels" . | nindent 4 }}
+spec:
+  ipWhiteList:
+    sourceRange:
+      {{- toYaml .Values.beads.ingress.ipWhitelist.sourceRange | nindent 6 }}
+    ipStrategy:
+      depth: {{ .Values.beads.ingress.ipWhitelist.depth | default 1 }}
+{{- end }}
+{{- if .Values.beads.ingress.rateLimit.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-ratelimit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    average: {{ .Values.beads.ingress.rateLimit.average }}
+    burst: {{ .Values.beads.ingress.rateLimit.burst }}
+{{- end }}
+{{- end }}

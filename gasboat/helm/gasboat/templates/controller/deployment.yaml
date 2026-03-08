@@ -1,0 +1,274 @@
+{{- if .Values.agents.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gasboat.agents.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.agents.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.agents.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "gasboat.agents.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gasboat.agents.selectorLabels" . | nindent 8 }}
+      annotations:
+        rollout.kubernetes.io/restartedAt: {{ now | date "2006-01-02T15:04:05Z07:00" | quote }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "gasboat.agents.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      {{- if .Values.nats.enabled }}
+      initContainers:
+        - name: nats-stream-init
+          image: natsio/nats-box:0.14.5
+          command:
+            - /bin/sh
+            - -c
+            - |
+              NATS_URL="{{ include "gasboat.natsURL" . }}"
+              # Wait for NATS to be ready (up to 60s)
+              for i in $(seq 1 30); do
+                if nats server check connection -s "$NATS_URL" 2>/dev/null; then break; fi
+                echo "Waiting for NATS... ($i/30)"
+                sleep 2
+              done
+              # Create MUTATION_EVENTS stream (idempotent — exits 0 if already exists)
+              if nats stream info MUTATION_EVENTS -s "$NATS_URL" >/dev/null 2>&1; then
+                echo "MUTATION_EVENTS stream already exists"
+              else
+                nats stream add MUTATION_EVENTS -s "$NATS_URL" \
+                  --subjects "beads.>" \
+                  --retention limits \
+                  --max-age 72h \
+                  --storage file \
+                  --replicas 1 \
+                  --discard old \
+                  --dupe-window 2m \
+                  --defaults
+                echo "Created MUTATION_EVENTS stream"
+              fi
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      {{- end }}
+      containers:
+        - name: agents
+          image: "{{ .Values.agents.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.agents.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.agents.image.pullPolicy "global" .Values.global) }}
+          ports:
+            - name: health
+              containerPort: 8091
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          env:
+            - name: NAMESPACE
+              value: {{ .Release.Namespace }}
+            {{- if gt (int .Values.agents.replicaCount) 1 }}
+            - name: ENABLE_LEADER_ELECTION
+              value: "true"
+            {{- end }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: BEADS_GRPC_ADDR
+              value: {{ include "gasboat.beads.host" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ include "gasboat.beads.port" . }}
+            - name: BEADS_HTTP_ADDR
+              value: http://{{ include "gasboat.beads.host" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ include "gasboat.beads.httpPort" . }}
+            - name: COOP_IMAGE
+              value: "{{ .Values.agents.agentImage.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.agents.agentImage.tag "global" .Values.global "Chart" .Chart) }}"
+            {{- if .Values.agents.claudeOAuthSecret }}
+            - name: CLAUDE_OAUTH_SECRET
+              value: {{ .Values.agents.claudeOAuthSecret }}
+            {{- end }}
+            - name: BEADS_TOKEN_SECRET
+              value: {{ include "gasboat.beads.tokenSecretName" . }}
+            {{- if .Values.beads.tokenSecret }}
+            - name: BEADS_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gasboat.beads.tokenSecretName" . }}
+                  key: token
+            {{- end }}
+            {{- if .Values.agents.natsURL }}
+            - name: NATS_URL
+              value: {{ .Values.agents.natsURL }}
+            {{- else if .Values.nats.enabled }}
+            - name: NATS_URL
+              value: {{ include "gasboat.natsURL" . }}
+            {{- end }}
+            {{- if .Values.agents.natsTokenSecret }}
+            - name: NATS_TOKEN_SECRET
+              value: {{ .Values.agents.natsTokenSecret }}
+            {{- end }}
+            {{- /* Per-project secrets (git, GitHub, GitLab, RWX, Mezmo, AWS, etc.)
+                 are now declared on project beads and auto-wired by the
+                 secretreconciler + applyCommonConfig. No hard-coded env vars needed. */}}
+            {{- if or .Values.agents.coopmuxURL .Values.coopmux.enabled }}
+            - name: COOPMUX_URL
+              value: {{ .Values.agents.coopmuxURL | default (include "gasboat.coopmux.serviceURL" .) }}
+            {{- end }}
+            {{- if or .Values.agents.coopmuxURL .Values.coopmux.enabled }}
+            - name: COOPMUX_TOKEN_SECRET
+              value: {{ include "gasboat.coopmux.authTokenSecretName" . }}
+            {{- end }}
+            - name: COOP_SERVICE_ACCOUNT
+              value: {{ include "gasboat.coop.serviceAccountName" . }}
+            {{- if .Values.agents.agentStorageClass }}
+            - name: AGENT_STORAGE_CLASS
+              value: {{ .Values.agents.agentStorageClass }}
+            {{- end }}
+            - name: COOP_MAX_PODS
+              value: {{ .Values.agents.coopMaxPods | default 4 | quote }}
+            {{- if .Values.agents.coopBurstLimit }}
+            - name: COOP_BURST_LIMIT
+              value: {{ .Values.agents.coopBurstLimit | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopRateLimitWindow }}
+            - name: COOP_RATE_LIMIT_WINDOW
+              value: {{ .Values.agents.coopRateLimitWindow | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopRateLimitMax }}
+            - name: COOP_RATE_LIMIT_MAX
+              value: {{ .Values.agents.coopRateLimitMax | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopCircuitBreakerThreshold }}
+            - name: COOP_CIRCUIT_BREAKER_THRESHOLD
+              value: {{ .Values.agents.coopCircuitBreakerThreshold | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopCircuitBreakerWindow }}
+            - name: COOP_CIRCUIT_BREAKER_WINDOW
+              value: {{ .Values.agents.coopCircuitBreakerWindow | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopCircuitBreakerCooldown }}
+            - name: COOP_CIRCUIT_BREAKER_COOLDOWN
+              value: {{ .Values.agents.coopCircuitBreakerCooldown | quote }}
+            {{- end }}
+            {{- if .Values.agents.prewarmedPoolInterval }}
+            - name: PREWARMED_POOL_INTERVAL
+              value: {{ .Values.agents.prewarmedPoolInterval | quote }}
+            {{- end }}
+            {{- if .Values.agents.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ .Values.agents.logLevel }}
+            {{- end }}
+            {{- if .Values.agents.coopSyncInterval }}
+            - name: COOP_SYNC_INTERVAL
+              value: {{ .Values.agents.coopSyncInterval | quote }}
+            {{- end }}
+            {{- if .Values.agents.coopUpgradeDrainTimeout }}
+            - name: COOP_UPGRADE_DRAIN_TIMEOUT
+              value: {{ .Values.agents.coopUpgradeDrainTimeout | quote }}
+            {{- end }}
+            {{- if or .Values.agents.slackBridgeURL .Values.slackBridge.enabled }}
+            - name: SLACK_BRIDGE_URL
+              value: {{ .Values.agents.slackBridgeURL | default (include "gasboat.slackBridge.serviceURL" .) }}
+            {{- end }}
+            {{- if .Values.agents.claudeModel }}
+            - name: CLAUDE_MODEL
+              value: {{ .Values.agents.claudeModel }}
+            {{- end }}
+            {{- if .Values.agents.claudeTeams.enabled }}
+            - name: CLAUDE_TEAMS_ENABLED
+              value: "true"
+            {{- if .Values.agents.claudeTeams.teammateMode }}
+            - name: CLAUDE_TEAMMATE_MODE
+              value: {{ .Values.agents.claudeTeams.teammateMode }}
+            {{- end }}
+            {{- if gt (int .Values.agents.claudeTeams.maxTeammates) 0 }}
+            - name: CLAUDE_TEAMS_MAX_TEAMMATES
+              value: {{ .Values.agents.claudeTeams.maxTeammates | quote }}
+            {{- end }}
+            {{- with .Values.agents.claudeTeams.resources }}
+            {{- if .requests }}
+            {{- if .requests.cpu }}
+            - name: CLAUDE_TEAMS_CPU_REQUEST
+              value: {{ .requests.cpu | quote }}
+            {{- end }}
+            {{- if .requests.memory }}
+            - name: CLAUDE_TEAMS_MEMORY_REQUEST
+              value: {{ .requests.memory | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .limits }}
+            {{- if .limits.cpu }}
+            - name: CLAUDE_TEAMS_CPU_LIMIT
+              value: {{ .limits.cpu | quote }}
+            {{- end }}
+            {{- if .limits.memory }}
+            - name: CLAUDE_TEAMS_MEMORY_LIMIT
+              value: {{ .limits.memory | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.agents.beadsE2EHTTPAddr }}
+            - name: BEADS_E2E_HTTP_ADDR
+              value: {{ .Values.agents.beadsE2EHTTPAddr }}
+            {{- end }}
+            {{- if .Values.agents.externalSecretStore }}
+            {{- if .Values.agents.externalSecretStore.name }}
+            - name: EXTERNAL_SECRET_STORE_NAME
+              value: {{ .Values.agents.externalSecretStore.name }}
+            {{- end }}
+            {{- if .Values.agents.externalSecretStore.kind }}
+            - name: EXTERNAL_SECRET_STORE_KIND
+              value: {{ .Values.agents.externalSecretStore.kind }}
+            {{- end }}
+            {{- if .Values.agents.externalSecretStore.refreshInterval }}
+            - name: EXTERNAL_SECRET_REFRESH_INTERVAL
+              value: {{ .Values.agents.externalSecretStore.refreshInterval | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.agents.autodestruct.enabled }}
+            {{- if .Values.agents.autodestruct.tokenSecret }}
+            - name: AUTODESTRUCT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agents.autodestruct.tokenSecret }}
+                  key: token
+            {{- else if .Values.agents.autodestruct.token }}
+            - name: AUTODESTRUCT_TOKEN
+              value: {{ .Values.agents.autodestruct.token | quote }}
+            {{- end }}
+            {{- if .Values.agents.autodestruct.allowedSlackUsers }}
+            - name: AUTODESTRUCT_ALLOWED_USERS
+              value: {{ .Values.agents.autodestruct.allowedSlackUsers | quote }}
+            {{- end }}
+            {{- end }}
+            # Slack env vars removed — now handled by slack-bridge container (bd-8x8fy).
+          resources:
+            {{- toYaml .Values.agents.resources | nindent 12 }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.agents.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
+      {{- with .Values.agents.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agents.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

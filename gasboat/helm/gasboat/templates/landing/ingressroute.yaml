@@ -1,0 +1,61 @@
+{{- if and .Values.landing.enabled .Values.landing.ingress.enabled }}
+{{- $fullname := include "gasboat.landing.fullname" . -}}
+{{- $host := .Values.landing.ingress.host -}}
+{{- $port := .Values.landing.service.port | default 80 -}}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.landing.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`{{ $host }}`)
+      kind: Rule
+      priority: 10
+      services:
+        - name: {{ $fullname }}
+          port: {{ $port }}
+      {{- if or .Values.landing.ingress.ipWhitelist.enabled .Values.landing.ingress.basicAuth.enabled }}
+      middlewares:
+        {{- if .Values.landing.ingress.ipWhitelist.enabled }}
+        - name: {{ $fullname }}-ipwhitelist
+        {{- end }}
+        {{- if .Values.landing.ingress.basicAuth.enabled }}
+        - name: {{ $fullname }}-basicauth
+        {{- end }}
+      {{- end }}
+{{- if .Values.landing.ingress.ipWhitelist.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-ipwhitelist
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.landing.labels" . | nindent 4 }}
+spec:
+  ipWhiteList:
+    sourceRange:
+      {{- toYaml .Values.landing.ingress.ipWhitelist.sourceRange | nindent 6 }}
+    ipStrategy:
+      depth: {{ .Values.landing.ingress.ipWhitelist.depth | default 1 }}
+{{- end }}
+{{- if .Values.landing.ingress.basicAuth.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-basicauth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.landing.labels" . | nindent 4 }}
+spec:
+  basicAuth:
+    secret: {{ include "gasboat.basicAuth.secret" (dict "local" .Values.landing.ingress.basicAuth.secret "global" .Values.global.basicAuth.secret) }}
+{{- end }}
+{{- end }}

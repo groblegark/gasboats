@@ -1,0 +1,103 @@
+{{- if .Values.beads3d.enabled }}
+{{- $hasDaemonAuth := or .Values.beads3d.daemonToken .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gasboat.beads3d.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads3d.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "gasboat.beads3d.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gasboat.beads3d.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/nginx-config: {{ include (print $.Template.BasePath "/beads3d/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $hasDaemonAuth }}
+      initContainers:
+        - name: write-auth-snippet
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              TOKEN="${DAEMON_TOKEN:-$(cat /run/secrets/daemon-token/token)}"
+              mkdir -p /etc/nginx/snippets
+              printf 'proxy_set_header Authorization "Bearer %s";\n' "${TOKEN}" > /etc/nginx/snippets/daemon-auth.conf
+          {{- if .Values.beads3d.daemonToken }}
+          env:
+            - name: DAEMON_TOKEN
+              value: {{ .Values.beads3d.daemonToken | quote }}
+          {{- end }}
+          volumeMounts:
+            - name: auth-snippet
+              mountPath: /etc/nginx/snippets
+            {{- if or .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
+            - name: daemon-token
+              mountPath: /run/secrets/daemon-token
+              readOnly: true
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: beads3d
+          image: "{{ .Values.beads3d.image.repository }}:{{ if .Values.beads3d.image.tag }}{{ .Values.beads3d.image.tag }}{{ else }}{{ .Chart.AppVersion }}{{ end }}"
+          imagePullPolicy: {{ .Values.beads3d.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+            {{- if $hasDaemonAuth }}
+            - name: auth-snippet
+              mountPath: /etc/nginx/snippets
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.beads3d.resources | nindent 12 }}
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ include "gasboat.beads3d.fullname" . }}-nginx
+        {{- if $hasDaemonAuth }}
+        - name: auth-snippet
+          emptyDir: {}
+        {{- end }}
+        {{- if or .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled }}
+        - name: daemon-token
+          secret:
+            secretName: {{ .Values.beads3d.daemonTokenSecret | default (printf "%s-daemon-token" (include "gasboat.beads3d.fullname" .)) }}
+        {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.beads3d.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
+      {{- with .Values.beads3d.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.beads3d.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

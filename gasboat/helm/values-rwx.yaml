@@ -1,0 +1,50 @@
+# Helm values for the gasboat-rwx E2E test namespace.
+# Deploy with:
+#   helm upgrade --install gasboat-rwx helm/gasboat/ \
+#     --namespace gasboat-rwx --create-namespace \
+#     -f helm/values-rwx.yaml
+#
+# Image tags default to Chart.AppVersion (calver). Do NOT pin tags here.
+# To test bleeding-edge builds, use --set beads.image.tag=latest on the CLI.
+
+# =============================================================================
+# Beads Daemon
+# =============================================================================
+beads:
+  tokenSecret: kd-beads-token   # pre-created by setup-gasboat-rwx.sh
+
+# =============================================================================
+# PostgreSQL (in-chart, ephemeral for E2E)
+# =============================================================================
+postgres:
+  enabled: true
+  persistence:
+    size: 2Gi
+    storageClass: gp2
+
+# =============================================================================
+# NATS (in-chart, required by agents)
+# =============================================================================
+nats:
+  enabled: true
+  persistence:
+    size: 1Gi
+    storageClass: gp2
+
+# =============================================================================
+# Agent Controller + RBAC
+# Required so spawned agent pods have a service account with namespace-scoped
+# permissions. The controller itself is not needed for pure E2E tests but
+# the service account and RBAC it provisions are used by claudeless agents.
+# =============================================================================
+agents:
+  enabled: true
+  coopMaxPods: 4
+  coopBurstLimit: 2
+
+# =============================================================================
+# Beads3D (disabled by default; pin image tag when enabled)
+# =============================================================================
+beads3d:
+  image:
+    tag: "2026.224.1"

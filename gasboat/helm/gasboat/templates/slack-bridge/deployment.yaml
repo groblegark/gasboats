@@ -1,0 +1,199 @@
+{{- if .Values.slackBridge.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gasboat.fullname" . }}-slack-bridge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: slack-bridge
+spec:
+  replicas: {{ .Values.slackBridge.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "gasboat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: slack-bridge
+  template:
+    metadata:
+      labels:
+        {{- include "gasboat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: slack-bridge
+    spec:
+      {{- if .Values.slackBridge.bouncer.enabled }}
+      serviceAccountName: {{ include "gasboat.fullname" . }}-slack-bridge
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: slack-bridge
+          image: "{{ .Values.slackBridge.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.slackBridge.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.slackBridge.image.pullPolicy "global" .Values.global) }}
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          env:
+            # Beads daemon connection
+            - name: BEADS_HTTP_ADDR
+              value: "http://{{ include "gasboat.beads.host" . }}:{{ include "gasboat.beads.httpPort" . }}"
+            {{- if .Values.beads.tokenSecret }}
+            - name: BEADS_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gasboat.beads.tokenSecretName" . }}
+                  key: token
+            {{- end }}
+            # NATS connection
+            {{- if .Values.slackBridge.natsURL }}
+            - name: NATS_URL
+              value: {{ .Values.slackBridge.natsURL | quote }}
+            {{- else if .Values.nats.enabled }}
+            - name: NATS_URL
+              value: {{ include "gasboat.natsURL" . | quote }}
+            {{- end }}
+            {{- if .Values.agents.natsTokenSecret }}
+            - name: NATS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agents.natsTokenSecret }}
+                  key: token
+                  optional: true
+            {{- end }}
+            # Slack credentials
+            {{- if .Values.slackBridge.slack.botToken }}
+            - name: SLACK_BOT_TOKEN
+              value: {{ .Values.slackBridge.slack.botToken | quote }}
+            {{- else if .Values.slackBridge.slack.secretName }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBridge.slack.secretName }}
+                  key: bot-token
+            {{- end }}
+            {{- if .Values.slackBridge.slack.signingSecret }}
+            - name: SLACK_SIGNING_SECRET
+              value: {{ .Values.slackBridge.slack.signingSecret | quote }}
+            {{- else if .Values.slackBridge.slack.secretName }}
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBridge.slack.secretName }}
+                  key: signing-secret
+                  optional: true
+            {{- end }}
+            # Slack App Token (for Socket Mode)
+            {{- if .Values.slackBridge.slack.appToken }}
+            - name: SLACK_APP_TOKEN
+              value: {{ .Values.slackBridge.slack.appToken | quote }}
+            {{- else if .Values.slackBridge.slack.secretName }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBridge.slack.secretName }}
+                  key: app-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.slackBridge.slack.channel }}
+            - name: SLACK_CHANNEL
+              value: {{ .Values.slackBridge.slack.channel | quote }}
+            {{- end }}
+            - name: SLACK_LISTEN_ADDR
+              value: ":8090"
+            - name: STATE_PATH
+              value: "/data/slack-bridge-state.json"
+            {{- if .Values.slackBridge.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ .Values.slackBridge.logLevel | quote }}
+            {{- end }}
+            # Threading mode
+            {{- if .Values.slackBridge.slack.threadingMode }}
+            - name: SLACK_THREADING_MODE
+              value: {{ .Values.slackBridge.slack.threadingMode | quote }}
+            {{- end }}
+            # Dashboard
+            {{- if .Values.slackBridge.dashboard.enabled }}
+            - name: SLACK_DASHBOARD
+              value: "true"
+            {{- end }}
+            {{- if .Values.slackBridge.dashboard.channel }}
+            - name: SLACK_DASHBOARD_CHANNEL
+              value: {{ .Values.slackBridge.dashboard.channel | quote }}
+            {{- end }}
+            {{- if .Values.slackBridge.dashboard.interval }}
+            - name: SLACK_DASHBOARD_INTERVAL
+              value: {{ .Values.slackBridge.dashboard.interval | quote }}
+            {{- end }}
+            # GitHub /unreleased command
+            {{- if .Values.slackBridge.github.token }}
+            - name: GITHUB_TOKEN
+              value: {{ .Values.slackBridge.github.token | quote }}
+            {{- else if .Values.slackBridge.github.secretName }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBridge.github.secretName }}
+                  key: {{ .Values.slackBridge.github.secretKey | default "token" }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.slackBridge.github.repos }}
+            - name: UNRELEASED_REPOS
+              value: {{ .Values.slackBridge.github.repos | quote }}
+            {{- end }}
+            {{- if .Values.agents.enabled }}
+            - name: CONTROLLER_URL
+              value: "http://{{ include "gasboat.agents.fullname" . }}:8091"
+            {{- end }}
+            {{- if and .Values.coopmux.enabled .Values.coopmux.ingress.host }}
+            - name: COOPMUX_PUBLIC_URL
+              value: "https://{{ .Values.coopmux.ingress.host }}/mux"
+            {{- end }}
+            # Bouncer (IP whitelist management)
+            {{- if .Values.slackBridge.bouncer.enabled }}
+            - name: BOUNCER_ENABLED
+              value: "true"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.slackBridge.bouncer.middlewares }}
+            - name: BOUNCER_MIDDLEWARES
+              value: {{ .Values.slackBridge.bouncer.middlewares | quote }}
+            {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: state
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.slackBridge.resources | nindent 12 }}
+      volumes:
+        - name: state
+          {{- if .Values.slackBridge.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "gasboat.fullname" . }}-slack-bridge-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.slackBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
+      {{- with .Values.slackBridge.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.slackBridge.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

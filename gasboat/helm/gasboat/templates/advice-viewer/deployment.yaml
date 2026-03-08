@@ -1,0 +1,93 @@
+{{- if .Values.adviceViewer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gasboat.fullname" . }}-advice-viewer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: advice-viewer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "gasboat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: advice-viewer
+  template:
+    metadata:
+      labels:
+        {{- include "gasboat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: advice-viewer
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: advice-viewer
+          image: "{{ .Values.adviceViewer.image.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.adviceViewer.image.tag "global" .Values.global "Chart" .Chart) }}"
+          imagePullPolicy: {{ include "gasboat.imagePullPolicy" (dict "pullPolicy" .Values.adviceViewer.image.pullPolicy "global" .Values.global) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.adviceViewer.service.port | default 8091 }}
+              protocol: TCP
+          env:
+            - name: BEADS_HTTP_ADDR
+              value: "http://{{ include "gasboat.beads.host" . }}:{{ include "gasboat.beads.httpPort" . }}"
+            {{- if .Values.beads.tokenSecret }}
+            - name: BEADS_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gasboat.beads.tokenSecretName" . }}
+                  key: token
+            {{- end }}
+            - name: LISTEN_ADDR
+              value: ":{{ .Values.adviceViewer.service.port | default 8091 }}"
+            {{- if .Values.adviceViewer.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ .Values.adviceViewer.logLevel | quote }}
+            {{- end }}
+            {{- if .Values.adviceViewer.auth.secretName }}
+            - name: AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adviceViewer.auth.secretName }}
+                  key: username
+            - name: AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adviceViewer.auth.secretName }}
+                  key: password
+            {{- end }}
+            {{- if .Values.adviceViewer.allowedCIDRs }}
+            - name: ALLOWED_CIDRS
+              value: {{ .Values.adviceViewer.allowedCIDRs | quote }}
+            {{- end }}
+            {{- if .Values.adviceViewer.ingress.pathPrefix }}
+            - name: BASE_PATH
+              value: {{ .Values.adviceViewer.ingress.pathPrefix | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.adviceViewer.resources | nindent 12 }}
+      {{- include "gasboat.nodeSelector" (dict "local" .Values.adviceViewer.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
+      {{- with .Values.adviceViewer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.adviceViewer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

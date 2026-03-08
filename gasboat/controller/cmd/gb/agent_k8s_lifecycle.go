@@ -1,0 +1,398 @@
+package main
+
+// agent_k8s_lifecycle.go — per-session lifecycle goroutines.
+//
+// Handles: startup prompt bypass, initial work nudge, agent exit monitor,
+// and stale session log detection for the restart loop.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// autoBypassStartup polls the coop API and dismisses interactive startup
+// prompts (resume picker, API key dialog, setup wizard). Runs as a goroutine
+// and exits when ctx is cancelled or after the agent is past startup.
+func autoBypassStartup(ctx context.Context, coopPort int) {
+	base := fmt.Sprintf("http://localhost:%d/api/v1", coopPort)
+	client := &http.Client{Timeout: 3 * time.Second}
+	falsePositives := 0
+
+	// Increased from 30 to 60 iterations (120s) to handle large session replays.
+	for i := 0; i < 60; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+
+		state, err := getAgentState(client, base)
+		if err != nil {
+			continue
+		}
+
+		agentState := state["state"].(string)
+		if agentState == "idle" || agentState == "working" {
+			return // past startup
+		}
+
+		if agentState == "starting" {
+			screen, _ := getScreenText(client, base)
+
+			// Case-insensitive match to handle potential text changes across Claude versions.
+			if strings.Contains(screen, "Resume Session") || strings.Contains(strings.ToLower(screen), "resume session") {
+				fmt.Printf("[gb agent start] detected resume session picker, selecting resume\n")
+				postKeys(client, base, "Return")
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			if strings.Contains(screen, "Detected a custom API key") {
+				fmt.Printf("[gb agent start] detected API key prompt, selecting Yes\n")
+				postKeys(client, base, "Up", "Return")
+				time.Sleep(3 * time.Second)
+				continue
+			}
+		}
+
+		promptType := ""
+		if pt, ok := state["prompt"].(map[string]any); ok {
+			promptType, _ = pt["type"].(string)
+		}
+		if promptType == "setup" {
+			screen, _ := getScreenText(client, base)
+			if strings.Contains(screen, "No, exit") {
+				subtype := ""
+				if pt, ok := state["prompt"].(map[string]any); ok {
+					subtype, _ = pt["subtype"].(string)
+				}
+				fmt.Printf("[gb agent start] auto-accepting setup prompt (subtype: %s)\n", subtype)
+				respondToAgent(client, base, 2)
+				falsePositives = 0
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			falsePositives++
+			if falsePositives >= 5 {
+				fmt.Printf("[gb agent start] skipping false-positive setup prompt\n")
+				return
+			}
+		}
+	}
+	fmt.Printf("[gb agent start] WARNING: auto-bypass timed out after 120s\n")
+}
+
+// injectInitialPrompt waits for the agent to reach idle state, then sends a
+// nudge message to kick off the work session. Prewarmed agents are skipped —
+// they wait in standby until the pool manager sends a work-assignment nudge.
+func injectInitialPrompt(ctx context.Context, coopPort int, role string) {
+	// Prewarmed agents must NOT seek work on their own. They sit idle until
+	// the pool manager assigns them to a Slack thread via a targeted nudge.
+	if os.Getenv("BOAT_AGENT_STATE") == "prewarmed" {
+		fmt.Printf("[gb agent start] prewarmed agent — skipping initial work prompt\n")
+		return
+	}
+
+	base := fmt.Sprintf("http://localhost:%d/api/v1", coopPort)
+	client := &http.Client{Timeout: 3 * time.Second}
+	nudge := "Check `gb ready` for your workflow steps and begin working."
+
+	for i := 0; i < 60; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+
+		state, err := getAgentState(client, base)
+		if err != nil {
+			continue
+		}
+		agentState, _ := state["state"].(string)
+
+		if agentState == "working" {
+			fmt.Printf("[gb agent start] agent already working, skipping initial prompt\n")
+			return
+		}
+		if agentState != "idle" {
+			continue
+		}
+
+		fmt.Printf("[gb agent start] injecting initial work prompt (role: %s)\n", role)
+		body, _ := json.Marshal(map[string]string{"message": nudge})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/agent/nudge", bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("[gb agent start] WARNING: nudge failed: %v\n", err)
+			return
+		}
+		defer resp.Body.Close()
+		var result struct {
+			Delivered bool   `json:"delivered"`
+			Reason    string `json:"reason"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&result)
+		if result.Delivered {
+			fmt.Printf("[gb agent start] initial prompt delivered\n")
+		} else {
+			fmt.Printf("[gb agent start] WARNING: nudge not delivered: %s\n", result.Reason)
+		}
+		return
+	}
+}
+
+// monitorAgentExit polls the coop API and triggers a graceful coop shutdown
+// when the agent process exits or hits a rate limit. Runs as a goroutine.
+// When a rate limit is detected, it writes a marker file so the restart loop
+// can park instead of immediately restarting.
+func monitorAgentExit(ctx context.Context, coopPort int) {
+	base := fmt.Sprintf("http://localhost:%d/api/v1", coopPort)
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	time.Sleep(10 * time.Second) // let agent start
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+
+		state, err := getAgentState(client, base)
+		if err != nil {
+			return // coop gone
+		}
+		agentState, _ := state["state"].(string)
+
+		if agentState == "exited" {
+			fmt.Printf("[gb agent start] agent exited, requesting coop shutdown\n")
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/shutdown", nil)
+			_, _ = client.Do(req) //nolint:errcheck // best-effort shutdown on exit
+			return
+		}
+
+		// Detect rate-limited state and park the pod.
+		errorCat, _ := state["error_category"].(string)
+		if errorCat == "rate_limited" {
+			fmt.Printf("[gb agent start] agent rate-limited, dismissing prompt\n")
+			postKeys(client, base, "Return")
+			lastMsg, _ := state["last_message"].(string)
+			fmt.Printf("[gb agent start] rate limit info: %s\n", lastMsg)
+			// Report rate_limited status to the agent bead.
+			if agentBeadID := envOr("KD_AGENT_ID", os.Getenv("BOAT_AGENT_BEAD_ID")); agentBeadID != "" && daemon != nil {
+				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := daemon.UpdateAgentState(updateCtx, agentBeadID, "rate_limited"); err != nil {
+					fmt.Printf("[gb agent start] warning: update agent_state: %v\n", err)
+				}
+				cancel()
+			}
+			// Write sentinel so the restart loop knows to sleep until reset.
+			_ = os.WriteFile("/tmp/rate_limit_reset", []byte(lastMsg), 0644)
+			time.Sleep(2 * time.Second)
+			fmt.Printf("[gb agent start] requesting coop shutdown (rate-limited)\n")
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/shutdown", nil)
+			_, _ = client.Do(req) //nolint:errcheck // best-effort shutdown on rate limit
+			return
+		}
+	}
+}
+
+// cleanStalePipes removes leftover hook.pipe FIFO files from the coop state
+// directory before each session start.
+func cleanStalePipes(coopStateDir string) {
+	sessionsDir := filepath.Join(coopStateDir, "sessions")
+	if _, err := os.Stat(sessionsDir); err != nil {
+		return
+	}
+	entries, err := filepath.Glob(filepath.Join(sessionsDir, "*", "hook.pipe"))
+	if err != nil {
+		return
+	}
+	for _, p := range entries {
+		os.Remove(p)
+	}
+}
+
+// findResumeSession returns the path of the latest non-stale Claude session
+// log under claudeStateDir/projects/, or "" if no suitable log exists.
+func findResumeSession(claudeStateDir string, sessionResume bool) string {
+	if !sessionResume {
+		return ""
+	}
+
+	projectsDir := filepath.Join(claudeStateDir, "projects")
+	if _, err := os.Stat(projectsDir); err != nil {
+		return ""
+	}
+
+	staleCount := 0
+	_ = filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && strings.HasSuffix(path, ".jsonl.stale") && !info.IsDir() {
+			staleCount++
+			// Clean up stale files older than 24h to prevent permanent resume lockout.
+			if time.Since(info.ModTime()) > 24*time.Hour {
+				os.Remove(path)
+				staleCount--
+			}
+		}
+		return nil
+	})
+	const maxStaleRetries = 3
+	if staleCount >= maxStaleRetries {
+		fmt.Printf("[gb agent start] skipping resume: %d stale session(s) found (max %d)\n", staleCount, maxStaleRetries)
+		return ""
+	}
+
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+	var candidates []candidate
+	_ = filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+		if strings.Contains(path, "/subagents/") {
+			return nil
+		}
+		candidates = append(candidates, candidate{path, info.ModTime()})
+		return nil
+	})
+
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+	best := candidates[0].path
+	fmt.Printf("[gb agent start] found session log for resume: %s\n", best)
+	// Validate the last line is complete JSON. A partial write from an
+	// abrupt kill leaves an incomplete line that breaks --resume.
+	truncateIncompleteLastLine(best)
+	return best
+}
+
+// isStopRequested checks whether the agent bead has stop_requested=true.
+// This is set by 'gb stop' and tells the restart loop to exit instead of
+// restarting. Retries up to 3 times on transient errors to avoid accidentally
+// restarting an agent that requested a polite stop.
+func isStopRequested(ctx context.Context, agentBeadID string) bool {
+	if agentBeadID == "" || daemon == nil {
+		return false
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		bead, err := daemon.GetBead(checkCtx, agentBeadID)
+		cancel()
+		if err == nil {
+			return bead.Fields["stop_requested"] == "true"
+		}
+		fmt.Printf("[gb agent start] isStopRequested: attempt %d failed: %v\n", attempt+1, err)
+		if ctx.Err() != nil {
+			return false
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Printf("[gb agent start] isStopRequested: all retries failed, assuming not stopped\n")
+	return false
+}
+
+// truncateIncompleteLastLine removes the last line of a .jsonl file if it
+// is not valid JSON. This repairs files left with a partial write after an
+// abrupt kill (SIGKILL).
+func truncateIncompleteLastLine(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	// Find the last newline before EOF.
+	data = bytes.TrimRight(data, "\n")
+	lastNL := bytes.LastIndexByte(data, '\n')
+	if lastNL < 0 {
+		return // single line, nothing to truncate to
+	}
+	lastLine := data[lastNL+1:]
+	if json.Valid(lastLine) {
+		return // last line is valid JSON, no truncation needed
+	}
+	fmt.Printf("[gb agent start] truncating corrupted last line from %s\n", path)
+	// Keep everything up to and including the last newline.
+	if err := os.WriteFile(path, append(data[:lastNL], '\n'), 0644); err != nil {
+		fmt.Printf("[gb agent start] warning: truncate %s: %v\n", path, err)
+	}
+}
+
+// retireStaleSession renames a session log to .jsonl.stale so it won't be
+// resumed on the next restart.
+func retireStaleSession(logPath string) {
+	stalePath := logPath + ".stale"
+	if err := os.Rename(logPath, stalePath); err != nil {
+		fmt.Printf("[gb agent start] WARNING: could not retire stale session: %v\n", err)
+	} else {
+		fmt.Printf("[gb agent start] retired stale session: %s -> %s\n", logPath, stalePath)
+	}
+}
+
+// ── coop HTTP helpers ─────────────────────────────────────────────────────
+
+func getAgentState(client *http.Client, base string) (map[string]any, error) {
+	resp, err := client.Get(base + "/agent")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		return nil, err
+	}
+	if _, ok := state["state"]; !ok {
+		state["state"] = ""
+	}
+	return state, nil
+}
+
+func getScreenText(client *http.Client, base string) (string, error) {
+	resp, err := client.Get(base + "/screen/text")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	return string(data), err
+}
+
+func postKeys(client *http.Client, base string, keys ...string) {
+	body, _ := json.Marshal(map[string][]string{"keys": keys})
+	req, _ := http.NewRequest(http.MethodPost, base+"/input/keys", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+func respondToAgent(client *http.Client, base string, option int) {
+	body, _ := json.Marshal(map[string]int{"option": option})
+	req, _ := http.NewRequest(http.MethodPost, base+"/agent/respond", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+}

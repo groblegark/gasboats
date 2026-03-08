@@ -1,0 +1,155 @@
+name: E2E (RWX)
+# Dispatches the gasboat-e2e RWX pipeline after CI passes on main or on tag push.
+# On tag pushes, failures auto-create kd bug beads labeled with the release version.
+# Requires RWX_ACCESS_TOKEN (and BEADS_AUTH_TOKEN + BEADS_HTTP_URL for bug filing).
+
+on:
+  push:
+    tags: ["20*"]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "K8s namespace for E2E tests"
+        required: false
+        default: "gasboat-rwx"
+      only:
+        description: "Run only this module (e.g. gate-system)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch E2E to RWX
+    runs-on: ubuntu-latest
+    # Only run if CI succeeded, tag push, or manual dispatch
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      run-id: ${{ steps.dispatch.outputs.run_id }}
+      is-release: ${{ steps.meta.outputs.is_release }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Compute metadata
+        id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/20* ]]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install RWX CLI
+        run: |
+          curl -fsSL https://github.com/rwx-cloud/cli/releases/latest/download/rwx-linux-x86_64 -o /usr/local/bin/rwx || \
+            curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          chmod +x /usr/local/bin/rwx
+          rwx --version
+
+      - name: Dispatch gasboat-e2e
+        id: dispatch
+        env:
+          RWX_ACCESS_TOKEN: ${{ secrets.RWX_ACCESS_TOKEN }}
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          NAMESPACE: ${{ inputs.namespace || 'gasboat-rwx' }}
+          ONLY: ${{ inputs.only || '' }}
+          IS_RELEASE: ${{ steps.meta.outputs.is_release }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          if [ "$IS_RELEASE" = "true" ]; then
+            TITLE="E2E: release ${VERSION}"
+          else
+            TITLE="E2E: ${GITHUB_SHA:0:8} (CI trigger)"
+          fi
+          echo "Dispatching gasboat-e2e for commit $GITHUB_SHA (namespace: $NAMESPACE)"
+          OUTPUT=$(rwx dispatch gasboat-e2e \
+            --ref "$GITHUB_SHA" \
+            --param "namespace=$NAMESPACE" \
+            --param "only=$ONLY" \
+            --title "$TITLE" \
+            --json 2>&1) || true
+          echo "$OUTPUT"
+          # Extract run ID if available
+          RUN_ID=$(echo "$OUTPUT" | jq -r '.id // empty' 2>/dev/null || true)
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+
+  file-bugs:
+    name: File bugs for E2E failures
+    runs-on: ubuntu-latest
+    needs: dispatch
+    if: needs.dispatch.outputs.is-release == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install RWX CLI
+        run: |
+          curl -fsSL https://github.com/rwx-cloud/cli/releases/latest/download/rwx-linux-x86_64 -o /usr/local/bin/rwx || \
+            curl -fsSL https://cloud.rwx.com/cli/install.sh | bash
+          chmod +x /usr/local/bin/rwx
+
+      - name: Wait for E2E results and file bugs
+        env:
+          RWX_ACCESS_TOKEN: ${{ secrets.RWX_ACCESS_TOKEN }}
+          BEADS_AUTH_TOKEN: ${{ secrets.BEADS_AUTH_TOKEN }}
+          BEADS_HTTP_URL: ${{ secrets.BEADS_HTTP_URL }}
+          VERSION: ${{ needs.dispatch.outputs.version }}
+          RUN_ID: ${{ needs.dispatch.outputs.run-id }}
+        run: |
+          if [ -z "$BEADS_AUTH_TOKEN" ] || [ -z "$BEADS_HTTP_URL" ]; then
+            echo "BEADS_AUTH_TOKEN or BEADS_HTTP_URL not set — skipping bug filing"
+            exit 0
+          fi
+
+          if [ -z "$RUN_ID" ]; then
+            echo "No RWX run ID captured — cannot wait for results"
+            exit 0
+          fi
+
+          echo "Waiting for RWX run ${RUN_ID} to complete..."
+          # Poll RWX for completion (max 35 minutes to match e2e timeout)
+          for i in $(seq 1 70); do
+            STATUS=$(rwx results "$RUN_ID" --json 2>/dev/null | jq -r '.status // "pending"' 2>/dev/null || echo "pending")
+            if [ "$STATUS" = "succeeded" ]; then
+              echo "E2E passed for release ${VERSION}"
+              exit 0
+            elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
+              echo "E2E FAILED for release ${VERSION} — filing bug bead"
+              # Get failure details
+              DETAILS=$(rwx results "$RUN_ID" --json 2>/dev/null | jq -r '.tasks[] | select(.status == "failed") | "- \(.key): \(.status)"' 2>/dev/null || echo "See RWX run ${RUN_ID}")
+
+              # Create bug bead via beads HTTP API
+              BODY=$(jq -n \
+                --arg title "E2E failures in release ${VERSION}" \
+                --arg desc "RWX E2E tests failed for release ${VERSION}.\n\nRun ID: ${RUN_ID}\n\nFailed tasks:\n${DETAILS}" \
+                --arg version "$VERSION" \
+                '{
+                  title: $title,
+                  type: "bug",
+                  priority: 1,
+                  description: $desc,
+                  labels: ["project:gasboat", ("release:" + $version)]
+                }')
+
+              curl -sf -X POST "${BEADS_HTTP_URL}/api/v1/beads" \
+                -H "Authorization: Bearer ${BEADS_AUTH_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "$BODY" || echo "Warning: failed to create bug bead"
+
+              echo "Bug bead filed for release ${VERSION}"
+              exit 1
+            fi
+            echo "  Status: ${STATUS} (attempt ${i}/70, waiting 30s...)"
+            sleep 30
+          done
+          echo "Timed out waiting for E2E results"
+          exit 1

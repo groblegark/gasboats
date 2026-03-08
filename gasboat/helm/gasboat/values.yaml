@@ -1,0 +1,938 @@
+# Gasboat Helm Chart Configuration
+# Components: Beads Daemon, Agent Controller, Coopmux, and optionally PostgreSQL and NATS.
+#
+# Image Tag Convention:
+#   All gasboat-owned images default to Chart.AppVersion (calver, e.g. 2026.58.3).
+#   Do NOT override image tags in environment values files.
+#   To test bleeding-edge builds, use "latest" via --set on the command line.
+#   The release pipeline tags every image with both the calver tag and "latest".
+
+imagePullSecrets: []
+
+# =============================================================================
+# Global settings (shared across all components)
+# =============================================================================
+global:
+  # Latest mode: when true, all gasboat-owned images use "latest" tag with
+  # Always pull policy instead of the default Chart.AppVersion tag.
+  # Third-party images (postgres, nats) are unaffected.
+  # Override: --set global.latestMode=true
+  latestMode: false
+
+  # Shared basic auth secret for Traefik ingress protection.
+  # Individual services can override with their own basicAuth.secret value.
+  # The secret must contain htpasswd-formatted credentials.
+  basicAuth:
+    secret: ""
+
+  # Global nodeSelector applied to all pods. Per-component nodeSelector values
+  # are merged on top (component values take precedence).
+  # Default: schedule on amd64 nodes (gasboat images are amd64-only).
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
+# =============================================================================
+# Registry Pull Secrets (ExternalSecrets for private container registries)
+# =============================================================================
+registrySecrets:
+  enabled: false
+  secretStoreName: "secretstore"
+  secretStoreKind: ClusterSecretStore
+  refreshInterval: "1h"
+  registries: {}
+  # registries:
+  #   ghcr-registry:
+  #     enabled: true
+  #     remoteRef: "shared-devops-ghcr.io-credentials"
+  #     hosts: ["ghcr.io"]
+
+# =============================================================================
+# External Secrets (creates K8s Secrets from external secret stores)
+# =============================================================================
+externalSecrets:
+  enabled: false
+  secretStoreName: "secretstore"
+  secretStoreKind: ClusterSecretStore
+  refreshInterval: "1h"
+  # PostgreSQL password
+  postgresPassword:
+    remoteRef: ""
+    property: ""
+  # Beads daemon auth token
+  beadsToken:
+    remoteRef: ""
+    property: ""
+
+# =============================================================================
+# Agent Controller (manages agent pods for beads automation)
+# =============================================================================
+agents:
+  enabled: false
+
+  # --- Controller deployment ---
+
+  image:
+    repository: ghcr.io/groblegark/gasboat
+    tag: ""
+    pullPolicy: Always
+
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+
+  replicaCount: 1
+
+  # Log level for the controller: debug, info, warn, error
+  logLevel: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # --- Agent pods ---
+
+  # Image used for agent pods spawned by the controller (includes gb + kd CLIs)
+  agentImage:
+    repository: ghcr.io/groblegark/gasboat/agent
+    tag: ""
+
+  # ServiceAccount for spawned agent pods (not the controller itself).
+  # When create=true, the chart provisions a SA + namespace-admin Role + RoleBinding.
+  # The SA name is passed to the agents controller via COOP_SERVICE_ACCOUNT env var.
+  agentServiceAccount:
+    create: true
+    name: ""        # defaults to "<release>-agent"
+    annotations: {}
+
+  # Optional cluster-admin ServiceAccount for agent pods that need full cluster access.
+  # Creates a separate SA + ClusterRoleBinding to the built-in cluster-admin ClusterRole.
+  # Assign to specific projects via the project bead's service_account field.
+  clusterAdmin:
+    enabled: false
+    name: ""          # defaults to "<release>-agent-cluster-admin"
+    annotations: {}
+
+  # Default StorageClass for agent workspace PVCs (e.g., "gp2").
+  # If empty, uses cluster default. Project beads can override per-project.
+  agentStorageClass: ""
+
+  # Default Claude model for agent pods (e.g., "claude-opus-4-6").
+  # If empty, Claude Code uses its built-in default (Sonnet).
+  claudeModel: ""
+
+  # --- Claude Agent Teams ---
+
+  # Claude Code Agent Teams: allow a team lead session to spawn and coordinate
+  # teammate sessions within the same pod using shared task lists and mailboxes.
+  claudeTeams:
+    # Enable agent teams mode (sets CLAUDE_TEAMS_ENABLED=true on agent pods)
+    enabled: false
+    # Teammate display mode: 'tmux' (each teammate gets a tmux pane) or
+    # 'in-process' (teammates run in-process). Default: tmux.
+    teammateMode: "tmux"
+    # Maximum number of teammate sessions per pod (optional resource hint).
+    # Passed as CLAUDE_TEAMS_MAX_TEAMMATES. When 0 or omitted, Claude Code
+    # uses its built-in default.
+    maxTeammates: 0
+    # Resource overrides for agent pods when teams mode is active.
+    # Each teammate runs its own Claude Code session (Node.js process + context
+    # window), so pods need more memory and CPU than single-session mode.
+    # Empty values fall back to the default agent pod resources.
+    resources:
+      requests:
+        cpu: "4"
+        memory: "24Gi"
+      limits:
+        cpu: "8"
+        memory: "24Gi"
+
+  # Beads HTTP address for the e2e-isolated namespace. When set, agent pods
+  # get BEADS_E2E_HTTP_ADDR so e2e tests create spawn events in an isolated
+  # beads instance instead of the production one.
+  beadsE2EHTTPAddr: ""
+
+  # Max agent pods that can exist simultaneously. Hard safety limit.
+  coopMaxPods: 4
+
+  # Max pods to create in a single reconciliation pass (prevents memory pressure)
+  coopBurstLimit: 3
+
+  # --- Rate Limiter (stampede prevention) ---
+
+  # Sliding window for pod creation rate limiting (e.g. "5m", "10m")
+  coopRateLimitWindow: ""
+
+  # Max pods that can be created within the rate limit window before pausing.
+  # 0 means no rate limiting.
+  coopRateLimitMax: 0
+
+  # --- Circuit Breaker (stampede prevention) ---
+
+  # Max pod creations within the circuit breaker window before tripping.
+  # 0 means disabled.
+  coopCircuitBreakerThreshold: 0
+
+  # Rolling window for circuit breaker creation counting (e.g. "2m", "5m")
+  coopCircuitBreakerWindow: ""
+
+  # Cooldown after circuit breaker trips before auto-resetting (e.g. "5m")
+  coopCircuitBreakerCooldown: ""
+
+  # Periodic reconciliation interval (e.g. "60s", "5m")
+  coopSyncInterval: ""
+
+  # Prewarmed pool reconcile interval (e.g. "30s", "1m")
+  prewarmedPoolInterval: ""
+
+  # How long to wait for an agent to reach idle state during rolling upgrades
+  # before force-deleting the pod (e.g. "5m", "10m")
+  coopUpgradeDrainTimeout: ""
+
+  # Slack bridge URL override for agent pods. Auto-wired when slackBridge.enabled.
+  slackBridgeURL: ""
+
+  # --- Autodestruct ---
+  #
+  # Emergency kill-switch: force-deletes all agent pods and pauses reconciliation.
+  # The controller exposes POST /autodestruct, POST /autodestruct/clear, and
+  # GET /autodestruct/status endpoints, protected by a bearer token.
+  autodestruct:
+    # Enable autodestruct endpoints on the controller (default: true).
+    # When false, the endpoints return 503 Service Unavailable.
+    enabled: true
+    # Bearer token for the autodestruct HTTP endpoints (for dev/testing).
+    token: ""
+    # K8s secret name containing the autodestruct bearer token (key: "token").
+    # Takes precedence over the inline token value.
+    tokenSecret: ""
+    # Comma-separated Slack user IDs allowed to trigger autodestruct via the
+    # bridge's Slack command. Passed as AUTODESTRUCT_ALLOWED_USERS env var.
+    allowedSlackUsers: ""
+
+  # --- Secrets & credentials ---
+  #
+  # Per-project secrets (Claude OAuth token, git credentials, GitHub/GitLab tokens,
+  # RWX token, Mezmo key, AWS credentials, etc.) are declared on project beads via
+  # the "secrets" JSON field. The secretreconciler auto-creates ExternalSecret CRDs
+  # and applyCommonConfig injects them as env vars in agent pods.
+  # Only controller-level secrets remain here.
+
+  # K8s secret with Claude OAuth credentials for agent pods (Max/Corp accounts)
+  # Mount as ~/.claude/.credentials.json (volume mount, not SecretEnv).
+  claudeOAuthSecret: ""
+
+  # ExternalSecret store config for auto-reconciled project bead secrets.
+  # The controller creates ExternalSecret CRDs for secrets declared in project beads,
+  # using these store settings. Secrets are fetched from AWS Secrets Manager at
+  # path "gasboat/{k8s-secret-name}".
+  externalSecretStore:
+    name: "secretstore"
+    kind: ClusterSecretStore
+    refreshInterval: "15m"
+    tokenProperty: "token"
+
+  # --- NATS event bus ---
+
+  # NATS server URL for event bus integration (e.g., "nats://nats-svc:4222")
+  natsURL: ""
+
+  # K8s secret with NATS auth token for agent pods
+  natsTokenSecret: ""
+
+  # --- Coopmux ---
+
+  # Coopmux URL override (auto-wired when coopmux is enabled in this chart)
+  coopmuxURL: ""
+
+  # --- Infrastructure ---
+
+  # Pod disruption budget for safe rolling deploys (only useful with replicaCount > 1)
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Coopmux — centralized credential manager + terminal multiplexer
+# Manages credential refresh, distributes tokens, and multiplexes terminal
+# views for all agent pods.
+# =============================================================================
+coopmux:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/coop
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Auth token for coopmux API (agent pods use this to register/authenticate)
+  # If empty, uses the daemon token secret
+  coopmuxTokenSecret: ""
+
+  # K8s secret containing the Claude API key for coopmux
+  claudeApiKeySecret: ""
+  # Key within the secret that holds the API key (default: ANTHROPIC_API_KEY)
+  claudeApiKeyField: "ANTHROPIC_API_KEY"
+
+  # NATS connection (must be explicitly set — no auto-wiring)
+  natsURL: ""
+
+  # Persistence: previously used for OAuth credentials.json, now
+  # deprecated after switch to static API keys.
+  persistence:
+    enabled: false
+    size: 100Mi
+    storageClass: ""
+    path: "/var/lib/coop/credentials/credentials.json"
+
+  # OAuth credential configuration
+  credentials:
+    accountName: "claude-max"
+    provider: "claude"
+    clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    tokenUrl: "https://platform.claude.com/v1/oauth/token"
+    deviceAuthUrl: "https://console.anthropic.com/v1/oauth/device/code"
+    refreshMarginSecs: 300
+    # Set to false to treat credentials as static (no OAuth refresh).
+    reauth: true
+  # Additional accounts (list of {name, provider, clientId, tokenUrl, deviceAuthUrl, refreshMarginSecs})
+  extraAccounts: []
+
+  # ExternalSecret for Claude API key (creates the claudeApiKeySecret from a secret store)
+  apiKeyExternalSecret:
+    enabled: false
+    secretStoreName: "secretstore"
+    secretStoreKind: ClusterSecretStore
+    refreshInterval: "1h"
+    remoteRef: ""
+    property: "api-key"
+
+  # ExternalSecret for OAuth refresh token
+  externalSecret:
+    enabled: false
+    secretStoreName: "secretstore"
+    secretStoreKind: ClusterSecretStore
+    refreshInterval: "15m"
+    remoteRef: ""
+    refreshTokenProperty: "refresh_token"
+
+  # Ingress (Traefik IngressRoute for coopmux dashboard)
+  ingress:
+    enabled: false
+    host: ""
+    # Expose full API at / (default: mux-only at /mux, /ws/mux, /api/v1/sessions)
+    exposeAPI: false
+    # Bearer token injected into requests so coopmux auth is satisfied.
+    bearerToken: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+    rateLimit:
+      enabled: false
+      average: 100
+      burst: 200
+
+  # NATS relay for local agent discovery (requires coopmux binary with --nats-relay-url support)
+  natsRelay:
+    enabled: false
+    url: ""       # defaults to natsURL when empty
+    prefix: "coop.mux"
+
+  # Coopmux settings
+  mux:
+    port: 9800
+    screenPollMs: 500
+    statusPollMs: 2000
+    healthCheckMs: 10000
+    maxHealthFailures: 3
+
+  # Service
+  service:
+    type: ClusterIP
+    port: 9800
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Pod Disruption Budget (active when replicaCount > 1).
+  pdb:
+    enabled: false
+    maxUnavailable: 1
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# PostgreSQL (in-chart database for beads)
+# =============================================================================
+postgres:
+  enabled: false
+
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: IfNotPresent
+
+  # Database name created on init
+  database: beads
+
+  # Password secret — created by externalSecrets or manually.
+  # If empty, uses the auto-generated secret name from helpers.
+  passwordSecret: ""
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Beads Daemon (kd serve — gRPC + HTTP API backed by PostgreSQL)
+# =============================================================================
+beads:
+  image:
+    repository: ghcr.io/groblegark/kbeads
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Explicit database URL override (bypasses auto-wiring from postgres.enabled)
+  databaseURL: ""
+
+  # Explicit NATS URL override (bypasses auto-wiring from nats.enabled)
+  natsURL: ""
+
+  # Name of K8s secret containing the daemon auth token (key: "token")
+  tokenSecret: kd-beads-token
+
+  ingress:
+    enabled: false
+    host: ""
+    # Path prefix for the beads API (e.g. "/beads"). Traefik strips
+    # the prefix before forwarding to the daemon.
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    rateLimit:
+      enabled: false
+      average: 100
+      burst: 200
+
+  service:
+    type: ClusterIP
+    grpcPort: 9090
+    httpPort: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# NATS (JetStream event bus for beads + agents + coopmux)
+# =============================================================================
+nats:
+  enabled: false
+
+  replicas: 1
+
+  image:
+    registry: docker.io
+    repository: nats
+    tag: "2.10-alpine"
+    pullPolicy: IfNotPresent
+
+  auth:
+    enabled: false
+    token: ""
+
+  jetstream:
+    maxMemory: "256M"
+
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+
+  cluster:
+    port: 6222
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  pdb:
+    enabled: false
+    maxUnavailable: 1
+
+  # Pod scheduling
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
+
+# =============================================================================
+# Slack Bridge — standalone beads→Slack notification bridge
+# Watches NATS for decision/mail lifecycle events and notifies Slack.
+# Runs independently from the agent controller (separate deployment).
+# =============================================================================
+slackBridge:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboat/slack-bridge
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  # NATS URL override (auto-wired when nats.enabled=true)
+  natsURL: ""
+
+  # Slack credentials
+  slack:
+    # Direct values (for dev/testing)
+    botToken: ""
+    appToken: ""      # xapp-... token for Socket Mode (real-time events, interactions, modals)
+    signingSecret: ""
+    channel: ""
+    # K8s secret name with keys: bot-token, app-token, signing-secret (for production)
+    secretName: ""
+    # Decision threading mode: "flat" (default) or "agent" (thread under per-agent cards)
+    threadingMode: ""
+
+  # GitHub integration for /unreleased command
+  github:
+    # GitHub API token (optional, for higher rate limits)
+    token: ""
+    # K8s secret name containing the token (key specified by secretKey)
+    secretName: ""
+    secretKey: "token"
+    # Comma-separated repos to check. Suffix with ~ext to mark as external dep.
+    # Default: groblegark/gasboat,groblegark/kbeads~ext,groblegark/coop~ext
+    repos: ""
+
+  # Bouncer — IP whitelist management via /bouncer Slack command.
+  # Patches Traefik Middleware CRs to add/remove IPs from sourceRange.
+  bouncer:
+    enabled: false
+    # Comma-separated Traefik Middleware CR names to manage.
+    # These are the *-ipwhitelist middlewares created by the chart.
+    middlewares: ""
+
+  # Live agent activity dashboard — pinned Slack message updated periodically.
+  dashboard:
+    enabled: true
+    channel: ""       # Dashboard channel (defaults to slack.channel if empty)
+    interval: ""      # Poll interval (e.g., "15s", "30s"); default 15s
+
+  ingress:
+    enabled: false
+    host: ""
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""
+
+  service:
+    type: ClusterIP
+    port: 8090
+
+  # Ingress for the decisions web UI (/ui/) and API (/api/).
+  ingress:
+    enabled: false
+    host: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # State persistence — survives pod restarts, preserves Slack message refs.
+  # When disabled (default), an emptyDir is used (state lost on restart).
+  persistence:
+    enabled: false
+    size: 100Mi
+    storageClass: ""
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Advice Viewer — web UI for viewing and managing advice beads
+# Provides per-agent advice views, advice CRUD, and generation dispatch.
+# =============================================================================
+adviceViewer:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboat/advice-viewer
+    tag: ""
+    pullPolicy: Always
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  # Basic auth credentials (from K8s secret with keys: username, password)
+  # When empty, auth is disabled (dev mode).
+  auth:
+    secretName: ""
+
+  # Comma-separated CIDR ranges for IP whitelisting (e.g. "10.0.0.0/8,192.168.1.0/24")
+  # When empty, all IPs allowed (dev mode).
+  allowedCIDRs: ""
+
+  service:
+    type: ClusterIP
+    port: 8091
+
+  ingress:
+    enabled: false
+    host: ""
+    # Path prefix for the advice viewer (e.g. "/advice"). Traefik strips
+    # the prefix before forwarding; BASE_PATH env var is set so templates
+    # generate correct links.
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Beads3D — 3D visualization frontend for beads issues
+# Static SPA served by nginx, reverse-proxies /api/ to beads daemon.
+# =============================================================================
+beads3d:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/beads3d
+    tag: "2026.224.1"
+    pullPolicy: IfNotPresent
+
+  # Beads daemon URL for nginx reverse proxy (e.g. "http://release-beads:8080")
+  # Auto-wired to the in-chart beads daemon when empty.
+  daemonURL: ""
+
+  # Daemon auth token (inline, for dev/testing). Prefer daemonTokenSecret for production.
+  daemonToken: ""
+
+  # K8s secret name containing the daemon auth token (key: "token").
+  # When empty and externalSecret is enabled, defaults to "{release}-beads3d-daemon-token".
+  daemonTokenSecret: ""
+
+
+  # ExternalSecret for beads daemon auth token (creates a K8s Secret from AWS Secrets Manager)
+  externalSecret:
+    enabled: false
+    secretStoreName: "secretstore"
+    secretStoreKind: ClusterSecretStore
+    refreshInterval: "1h"
+    remoteRef: ""
+    property: "token"
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  ingress:
+    enabled: false
+    host: ""
+    # Path prefix for Beads 3D (e.g. "/3d"). Traefik strips the prefix
+    # before forwarding to nginx. Use this to host beads3d on a shared
+    # domain alongside other gasboat web UIs.
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# TLS — wildcard cert via cert-manager (Let's Encrypt + Route53 DNS-01)
+# Creates a cert-manager Certificate and a DNSEndpoint for the wildcard record.
+# Uses the NLB for TLS passthrough to Traefik (websecure entrypoint).
+# =============================================================================
+tls:
+  enabled: false
+  # Wildcard domain for the certificate
+  domainName: ""  # e.g. "*.gasboat.app.e2e.dev.fics.ai"
+  # cert-manager ClusterIssuer to use
+  issuer: "letsencrypt-production"
+  # DNS: creates a Route53 wildcard record via external-dns DNSEndpoint CRD
+  dns:
+    target: ""  # NLB hostname for TLS passthrough
+
+# =============================================================================
+# Landing Page — static landing page with links to all gasboat services
+# Served by nginx from a ConfigMap-mounted HTML file.
+# =============================================================================
+landing:
+  enabled: false
+
+  image:
+    repository: nginx
+    tag: "1-alpine"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  ingress:
+    enabled: false
+    host: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# JIRA Bridge — standalone beads→JIRA sync bridge
+# Polls JIRA for new tickets, creates task beads, and syncs MR links/status
+# back to JIRA. Runs independently from the agent controller.
+# =============================================================================
+jiraBridge:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboat/jira-bridge
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  # JIRA connection and polling config
+  jira:
+    # JIRA instance URL (required)
+    baseURL: ""
+    # JIRA user email for API auth (required)
+    email: ""
+    # Direct API token (for dev/testing)
+    apiToken: ""
+    # K8s secret name with key: api-token (for production)
+    secretName: ""
+    # Comma-separated project keys to poll (e.g., "PE,DEVOPS")
+    projects: "PE,DEVOPS"
+    # Comma-separated JIRA statuses to ingest
+    statuses: "To Do,Ready for Development"
+    # Comma-separated issue types to ingest
+    issueTypes: "Bug,Task,Story,Epic"
+    # Polling interval (e.g., "60s", "5m")
+    pollInterval: "60s"
+    # BOAT_PROJECTS mapping: comma-separated entries of the form
+    # {project_name}={git_url}:{jira_prefix}
+    # Maps JIRA project prefixes to boat project names so beads get the correct
+    # project label (e.g., PE issues → project:monorepo instead of project:pe).
+    # Example: "gasboat=https://github.com/org/gasboat.git:KD,monorepo=https://gitlab.com/org/repo:PE"
+    boatProjects: ""
+    # Disable JIRA issue transitions (Review on MR merge, etc.).
+    # Enabled (true) until the GitLab bridge (kd-PgCL2BShzU) is built:
+    # the bridge will watch MR merge events, set mr_merged=true on the bead,
+    # and jira-bridge will transition to "Review" only when that field is set.
+    # Note: claim transitions ("In Progress") are controlled separately below.
+    disableTransitions: true
+    # Enable "In Progress" transition when an agent claims a JIRA-sourced bead.
+    # Works independently of disableTransitions — you can show claim progress
+    # on JIRA issues without enabling the Review transition.
+    enableClaimTransition: false
+    # JIRA account ID for self-assignment. When set, the bridge assigns JIRA
+    # issues to this account when an agent claims the bead, making gasboat
+    # progress visible in JIRA dashboards and filters.
+    botAccountID: ""
+
+  service:
+    type: ClusterIP
+    port: 8091
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# GitLab Bridge — standalone beads→GitLab MR merge sync bridge
+# Watches GitLab for MR merges (webhook + polling) and updates bead fields.
+# Runs independently from the agent controller (separate deployment).
+# =============================================================================
+gitlabBridge:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboat/gitlab-bridge
+    tag: ""
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  # GitLab connection and polling config
+  gitlab:
+    # GitLab instance URL (required, e.g., "https://gitlab.com")
+    baseURL: ""
+    # Direct API token (for dev/testing)
+    apiToken: ""
+    # K8s secret name with key: api-token (for production)
+    secretName: ""
+    # Webhook secret for X-Gitlab-Token verification
+    webhookSecret: ""
+    # K8s secret name with key: webhook-secret (for production)
+    webhookSecretName: ""
+    # GitLab group ID to poll for merged MRs (required)
+    groupID: ""
+    # Polling interval (e.g., "5m", "10m")
+    pollInterval: "5m"
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  ingress:
+    enabled: false
+    host: ""
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

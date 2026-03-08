@@ -1,0 +1,79 @@
+{{- if .Values.beads3d.enabled }}
+{{- $daemonURL := include "gasboat.beads3d.daemonURL" . -}}
+{{- $hasDaemonAuth := or .Values.beads3d.daemonToken .Values.beads3d.daemonTokenSecret .Values.beads3d.externalSecret.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gasboat.beads3d.fullname" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gasboat.beads3d.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Static assets with cache headers
+        location /assets/ {
+            expires 7d;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # SPA fallback
+        location / {
+            try_files $uri $uri/ /index.html;
+            expires 5m;
+        }
+
+        # Bus SSE — NATS JetStream events for doots (must precede /api/ catch-all)
+        location /api/bus/ {
+            {{- if $hasDaemonAuth }}
+            include /etc/nginx/snippets/daemon-auth.conf;
+            {{- end }}
+            proxy_pass {{ $daemonURL }}/v1/bus/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+        }
+
+        # Mutation SSE — live bead update stream (must precede /api/ catch-all)
+        location /api/events/ {
+            {{- if $hasDaemonAuth }}
+            include /etc/nginx/snippets/daemon-auth.conf;
+            {{- end }}
+            proxy_pass {{ $daemonURL }}/v1/events/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+        }
+
+        # Reverse-proxy kbeads REST API (/api → /v1, matching Vite dev proxy)
+        location /api/ {
+            {{- if $hasDaemonAuth }}
+            include /etc/nginx/snippets/daemon-auth.conf;
+            {{- end }}
+            proxy_pass {{ $daemonURL }}/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+        }
+    }
+{{- end }}

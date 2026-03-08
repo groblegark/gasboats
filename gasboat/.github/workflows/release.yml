@@ -1,0 +1,60 @@
+name: Release
+# Triggered on calver tag push. Creates a GitHub Release with auto-generated
+# notes and triggers the fics-helm-chart deploy pipeline to pick up the new
+# upstream chart version.
+#
+# Required secrets:
+#   GITLAB_TRIGGER_TOKEN — GitLab pipeline trigger token for fics-helm-chart
+#                          (Settings > CI/CD > Pipeline triggers)
+
+on:
+  push:
+    tags: ["20*"]
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Creating GitHub Release for ${TAG}"
+          gh release create "${TAG}" \
+            --generate-notes \
+            --title "Gasboat ${TAG}"
+
+  trigger-deploy:
+    name: Trigger fics-helm-chart deploy
+    runs-on: ubuntu-latest
+    needs: github-release
+    steps:
+      - name: Trigger GitLab pipeline
+        env:
+          GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          if [ -z "$GITLAB_TRIGGER_TOKEN" ]; then
+            echo "::error::GITLAB_TRIGGER_TOKEN secret is not set. Deploy was NOT triggered."
+            echo "To fix, create a pipeline trigger in fics-helm-chart:"
+            echo "  GitLab > Settings > CI/CD > Pipeline triggers"
+            echo "Then add the token as a GitHub secret named GITLAB_TRIGGER_TOKEN"
+            exit 1
+          fi
+
+          echo "Triggering fics-helm-chart deploy for gasboat ${VERSION}"
+          curl -sf -X POST \
+            "https://gitlab.com/api/v4/projects/61489265/trigger/pipeline" \
+            -F "token=${GITLAB_TRIGGER_TOKEN}" \
+            -F "ref=main" \
+            -F "variables[GASBOAT_DEPLOY]=1"
+          echo "Deploy pipeline triggered for ${VERSION}"
