@@ -1,0 +1,11 @@
+beads3d has been deployed.
+
+Service: {{ include "beads3d.fullname" . }}:{{ .Values.service.port }}
+Daemon:  {{ .Values.daemon.url }}
+
+{{- if .Values.ingress.enabled }}
+Access: https://{{ .Values.ingress.host }}
+{{- else }}
+Port-forward: kubectl port-forward svc/{{ include "beads3d.fullname" . }} 8080:{{ .Values.service.port }}
+Then visit: http://localhost:8080
+{{- end }}

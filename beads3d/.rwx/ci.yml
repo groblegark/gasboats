@@ -1,0 +1,253 @@
+# CI — manual only (no auto-trigger on push/PR).
+# Run manually: rwx run .rwx/ci.yml --init commit-sha=$(git rev-parse HEAD) --wait
+on:
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── Clone ──────────────────────────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads3d.git
+      ref: ${{ init.commit-sha }}
+      preserve-git-dir: true   # needed for update-snapshots to commit/push (bd-xe68g)
+      fetch-full-depth: true   # needed for git push from update-snapshots
+
+  # ── Node.js toolchain ─────────────────────────────────────────────────
+  - key: node
+    run: |
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+      sudo apt-get -y install --no-install-recommends nodejs
+      node --version
+      npm --version
+
+  # ── Install dependencies ──────────────────────────────────────────────
+  - key: deps
+    use: [code, node]
+    run: npm ci
+
+  # ── Build (vite production build) ─────────────────────────────────────
+  - key: build
+    use: deps
+    run: |
+      echo "Building beads3d..."
+      npm run build
+      echo "Build output:"
+      ls -la dist/
+
+  # ── Playwright browser install (cached by Playwright version) ─────────
+  - key: browsers
+    use: deps
+    filter:
+      - package-lock.json
+    run: |
+      npx playwright install --with-deps chromium
+
+  # ── Update visual snapshots (run with --target update-snapshots) ──────
+  # Generates Linux baselines and pushes them to the repo.
+  - key: update-snapshots
+    use: [code, build, browsers]
+    timeout: 30 minutes
+    run: |
+      echo "Generating/updating visual test snapshots..."
+      npx playwright test tests/visual.spec.js --update-snapshots --reporter=list 2>&1 || true
+      echo "Snapshot files generated:"
+      ls -la tests/visual.spec.js-snapshots/*-linux.png 2>/dev/null || echo "No linux snapshots found"
+
+      # Commit and push snapshots back to repo
+      git config user.email "ci@beads3d.dev"
+      git config user.name "beads3d CI"
+      git checkout -b update-snapshots-ci
+      git add tests/visual.spec.js-snapshots/*-linux.png
+      if git diff --cached --quiet; then
+        echo "No new snapshots to commit."
+      else
+        SNAPSHOT_COUNT=$(git diff --cached --name-only | wc -l)
+        git commit -m "test: add ${SNAPSHOT_COUNT} Linux visual test baselines (CI-generated)"
+        git remote set-url origin "https://${GITHUB_USER}:${GHCR_TOKEN}@github.com/groblegark/beads3d.git"
+        git push origin update-snapshots-ci:main
+        echo "Pushed ${SNAPSHOT_COUNT} snapshots to main."
+      fi
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── Tests (Playwright E2E with mock API) ──────────────────────────────
+  - key: test
+    use: [build, browsers]
+    timeout: 30 minutes
+    run: |
+      echo "Running Playwright tests..."
+      npx playwright test --reporter=list 2>&1 | tee test-output.txt
+      echo "Test complete."
+    outputs:
+      artifacts:
+        - key: test-results
+          path: test-results/
+        - key: test-output
+          path: test-output.txt
+
+  # ── Visual UAT: Capture screenshots (bd-98u1i) ──────────────────────
+  # Runs the 15-scenario UAT capture suite and saves screenshots + manifest.
+  # Run with: rwx run .rwx/ci.yml --target visual-uat-capture
+  - key: visual-uat-capture
+    use: [build, browsers]
+    timeout: 10 minutes
+    run: |
+      export UAT_SCREENSHOT_DIR="$PWD/uat-screenshots"
+      echo "Capturing UAT screenshots to $UAT_SCREENSHOT_DIR..."
+      npx playwright test tests/uat-capture.spec.js --project=chromium --reporter=list 2>&1 | tee uat-capture.log
+      echo ""
+      echo "=== UAT Capture Summary ==="
+      SCENARIO_COUNT=$(python3 -c "import json; print(len(json.load(open('$UAT_SCREENSHOT_DIR/manifest.json'))))" 2>/dev/null || echo "0")
+      echo "Scenarios captured: $SCENARIO_COUNT"
+      ls -la "$UAT_SCREENSHOT_DIR"/*.png 2>/dev/null | wc -l | xargs -I{} echo "Screenshots: {} files"
+      du -sh "$UAT_SCREENSHOT_DIR" 2>/dev/null | cut -f1 | xargs -I{} echo "Total size: {}"
+    outputs:
+      artifacts:
+        - key: uat-screenshots
+          path: uat-screenshots/
+        - key: uat-capture-log
+          path: uat-capture.log
+
+  # ── Visual UAT: Claude vision evaluation (bd-98u1i) ─────────────────
+  # Evaluates captured screenshots against the 8-criterion rubric using Claude.
+  # Requires ANTHROPIC_API_KEY secret. Run with: rwx run .rwx/ci.yml --target visual-uat-eval
+  - key: visual-uat-eval
+    use: [node, visual-uat-capture]
+    timeout: 15 minutes
+    run: |
+      export SCREENSHOT_DIR="$PWD/uat-screenshots"
+      export EVAL_DIR="$PWD/uat-eval-results"
+      mkdir -p "$EVAL_DIR"
+
+      echo "Evaluating UAT screenshots with Claude vision..."
+      echo "Model: claude-sonnet-4-6"
+      echo "Screenshots: $SCREENSHOT_DIR"
+      echo ""
+
+      # Read manifest and evaluate each scenario
+      python3 << 'EVALSCRIPT'
+      import json, os, sys, base64, time
+      try:
+          import anthropic
+      except ImportError:
+          os.system("pip install anthropic -q")
+          import anthropic
+
+      screenshot_dir = os.environ.get("SCREENSHOT_DIR", "uat-screenshots")
+      eval_dir = os.environ.get("EVAL_DIR", "uat-eval-results")
+      manifest_path = os.path.join(screenshot_dir, "manifest.json")
+
+      if not os.path.exists(manifest_path):
+          print("ERROR: manifest.json not found")
+          sys.exit(1)
+
+      with open(manifest_path) as f:
+          scenarios = json.load(f)
+
+      client = anthropic.Anthropic()
+      model = "claude-sonnet-4-6"
+
+      system_prompt = """You are a visual QA evaluator for beads3d, a Three.js-based 3D visualization.
+      Rate each criterion 1-5 (5=excellent, 1=failing). Pass threshold is 3.
+      Return ONLY valid JSON with: scenario, overall_pass, criteria (each with score, pass, notes), issues, suggestions."""
+
+      results = []
+      passed = 0
+      failed = 0
+
+      for s in scenarios:
+          img_path = os.path.join(screenshot_dir, s["filename"])
+          if not os.path.exists(img_path):
+              print(f"  SKIP {s['number']:2d}. {s['name']} — screenshot missing")
+              continue
+
+          with open(img_path, "rb") as img_f:
+              img_data = base64.standard_b64encode(img_f.read()).decode("utf-8")
+
+          criteria_text = "\n".join(f"- {c}" for c in s.get("criteria", []))
+          user_prompt = f"""Evaluate this beads3d screenshot.
+      Scenario: {s['name']}
+      Criteria:
+      {criteria_text}
+
+      Return JSON: {{"scenario": "{s['slug']}", "overall_pass": bool, "criteria": {{"<name>": {{"score": N, "pass": bool, "notes": "..."}}}}, "issues": [...], "suggestions": [...]}}"""
+
+          try:
+              resp = client.messages.create(
+                  model=model,
+                  max_tokens=1024,
+                  system=system_prompt,
+                  messages=[{
+                      "role": "user",
+                      "content": [
+                          {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_data}},
+                          {"type": "text", "text": user_prompt}
+                      ]
+                  }]
+              )
+              raw = resp.content[0].text.strip()
+              # Strip markdown code fences if present
+              if raw.startswith("```"):
+                  raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                  if raw.endswith("```"):
+                      raw = raw[:-3]
+              result = json.loads(raw)
+              result["scenario_number"] = s["number"]
+              results.append(result)
+
+              status = "PASS" if result.get("overall_pass") else "FAIL"
+              if result.get("overall_pass"):
+                  passed += 1
+              else:
+                  failed += 1
+              print(f"  {status} {s['number']:2d}. {s['name']}")
+
+              # Save individual eval
+              eval_path = os.path.join(eval_dir, f"eval-{s['slug']}.json")
+              with open(eval_path, "w") as ef:
+                  json.dump(result, ef, indent=2)
+
+              time.sleep(0.5)  # rate limit courtesy
+          except Exception as e:
+              print(f"  ERR  {s['number']:2d}. {s['name']} — {e}")
+              failed += 1
+
+      # Write summary report
+      report = {
+          "total_scenarios": len(scenarios),
+          "evaluated": len(results),
+          "passed": passed,
+          "failed": failed,
+          "overall_pass": failed == 0,
+          "results": results
+      }
+      report_path = os.path.join(eval_dir, "uat-report.json")
+      with open(report_path, "w") as rf:
+          json.dump(report, rf, indent=2)
+
+      print(f"\n=== UAT Evaluation Summary ===")
+      print(f"Passed: {passed}/{len(scenarios)}")
+      print(f"Failed: {failed}/{len(scenarios)}")
+      print(f"Overall: {'PASS' if failed == 0 else 'FAIL'}")
+
+      if failed > 0:
+          print("\nFailed scenarios:")
+          for r in results:
+              if not r.get("overall_pass"):
+                  print(f"  - {r.get('scenario', '?')}")
+          sys.exit(1)
+      EVALSCRIPT
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    outputs:
+      artifacts:
+        - key: uat-eval-results
+          path: uat-eval-results/

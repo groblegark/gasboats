@@ -1,0 +1,13 @@
+# gastown-next deployment values
+image:
+  tag: latest  # Override with CalVer tag at deploy time
+
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
+ingress:
+  enabled: true
+  host: beads3d-next.app.devops.fics.ai
+
+daemon:
+  url: http://gastown-next-bd-daemon-daemon:9080

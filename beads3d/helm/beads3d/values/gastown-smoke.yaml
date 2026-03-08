@@ -1,0 +1,13 @@
+# gastown-smoke deployment values
+image:
+  tag: latest  # Override with CalVer tag at deploy time
+
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
+ingress:
+  enabled: true
+  host: beads3d-smoke.app.devops.fics.ai
+
+daemon:
+  url: http://gastown-smoke-bd-daemon-daemon:9080

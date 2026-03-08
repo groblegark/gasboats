@@ -1,0 +1,147 @@
+# Docker image build + push to GHCR.
+# Triggers: main push, CalVer tags (20*), or manual CLI.
+# Image: ghcr.io/groblegark/beads3d:<tag>
+on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, '20') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: ${{ event.git.branch || event.git.tag }}
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      ref-name: cli
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── Clone ──────────────────────────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads3d.git
+      ref: ${{ init.commit-sha }}
+      preserve-git-dir: true
+
+  # ── Node.js toolchain ─────────────────────────────────────────────────
+  - key: node
+    run: |
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+      sudo apt-get -y install --no-install-recommends nodejs
+      node --version
+      npm --version
+
+  # ── Install dependencies ──────────────────────────────────────────────
+  - key: deps
+    use: [code, node]
+    run: npm ci
+
+  # ── Build (vite production build) ─────────────────────────────────────
+  - key: build
+    use: deps
+    run: |
+      npm run build
+      ls -la dist/
+
+  # ── Build + push OCI image to GHCR ───────────────────────────────────
+  - key: push
+    use: build
+    cache: false
+    run: |
+      # Install crane
+      CRANE_VERSION=0.20.2
+      curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+        | sudo tar -xz -C /usr/local/bin crane
+
+      # Auth to GHCR
+      echo "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GITHUB_USER" --password-stdin
+
+      # Determine tag
+      TAG="${{ init.ref-name }}"
+      if [ "$TAG" = "main" ] || [ "$TAG" = "cli" ]; then
+        TAG="latest"
+      fi
+      REPO="ghcr.io/groblegark/beads3d"
+      echo "Image: ${REPO}:${TAG}"
+
+      # Build layer: dist/ files + nginx.conf
+      mkdir -p /tmp/layer/usr/share/nginx/html
+      mkdir -p /tmp/layer/etc/nginx/conf.d
+      cp -r dist/* /tmp/layer/usr/share/nginx/html/
+      cp nginx.conf /tmp/layer/etc/nginx/conf.d/default.conf
+      cd /tmp/layer
+      sudo tar cf /tmp/layer.tar .
+      cd -
+
+      # Push image: nginx base + our layer (directly to registry)
+      crane append --base nginx:1.27-alpine --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+
+      # Also tag as latest if this is a CalVer tag
+      if [ "$TAG" != "latest" ]; then
+        crane tag "${REPO}:${TAG}" latest
+        echo "Also tagged: ${REPO}:latest"
+      fi
+      echo "Pushed: ${REPO}:${TAG}"
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── Package + push Helm chart to OCI ────────────────────────────────
+  # Only runs on CalVer tag pushes (not main/cli).
+  - key: helm-push
+    use: code
+    cache: false
+    if: ${{ init.ref-name != 'main' && init.ref-name != 'cli' }}
+    run: |
+      # Install helm
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # Auth to GHCR
+      echo "$GHCR_TOKEN" | helm registry login ghcr.io -u "$GITHUB_USER" --password-stdin
+
+      # Package and push
+      CHART="helm/beads3d"
+      VERSION=$(grep '^version:' "$CHART/Chart.yaml" | awk '{print $2}')
+      echo "Publishing beads3d chart v${VERSION}..."
+      helm package "$CHART" --destination /tmp/helm-packages
+      helm push "/tmp/helm-packages/beads3d-${VERSION}.tgz" "oci://ghcr.io/groblegark/charts"
+      echo "Published: oci://ghcr.io/groblegark/charts/beads3d:${VERSION}"
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── Rollout restart to pull new image ───────────────────────────────
+  # Only runs for main/cli builds (not CalVer tags which use separate deploy).
+  - key: deploy
+    use: push
+    cache: false
+    if: ${{ init.ref-name == 'main' || init.ref-name == 'cli' }}
+    run: |
+      set -ex
+
+      # Install kubectl
+      KUBE_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+      curl -fsSL "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+      sudo install /tmp/kubectl /usr/local/bin/kubectl
+
+      # Configure kubeconfig via AWS CLI
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip
+      unzip -q /tmp/awscli.zip -d /tmp
+      sudo /tmp/aws/install
+      aws eks update-kubeconfig --name "${EKS_CLUSTER}" --region us-east-1
+
+      # Rollout restart beads3d in gastown-next
+      NS="gastown-next"
+      DEPLOY="gastown-next-beads3d"
+      kubectl rollout restart deployment "$DEPLOY" -n "$NS"
+      kubectl rollout status deployment "$DEPLOY" -n "$NS" --timeout=120s
+
+      echo "Rolled out ${DEPLOY} in ${NS} — new :latest image will be pulled"
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.E2E_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.E2E_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      EKS_CLUSTER: ${{ secrets.E2E_EKS_CLUSTER }}

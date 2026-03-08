@@ -1,0 +1,2798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>beads3d</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      color: #c0c0c0;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      overflow: hidden;
+    }
+    #graph { width: 100vw; height: 100vh; }
+
+    /* HUD overlay */
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 100;
+      pointer-events: none;
+    }
+    #hud h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #4a9eff;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    #hud .stats {
+      font-size: 11px;
+      color: #666;
+      line-height: 1.6;
+    }
+    #hud .stats span { color: #888; }
+
+    /* Node tooltip */
+    #tooltip {
+      position: fixed;
+      display: none;
+      background: rgba(10, 10, 20, 0.92);
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 11px;
+      line-height: 1.5;
+      max-width: 320px;
+      z-index: 200;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+    #tooltip .title {
+      font-weight: 600;
+      color: #e0e0e0;
+      margin-bottom: 4px;
+    }
+    #tooltip .id { color: #4a9eff; font-size: 10px; }
+    #tooltip .meta { color: #888; font-size: 10px; margin-top: 4px; }
+    #tooltip .hint { color: #555; font-size: 9px; margin-top: 6px; font-style: italic; }
+
+    /* Controls bar (top-right, offset from right sidebar) */
+    #controls {
+      position: fixed;
+      top: 16px;
+      right: 276px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 260px;
+      transition: right 0.2s ease-out;
+    }
+    #controls.sidebar-collapsed {
+      right: 48px;
+    }
+
+    /* Search input */
+    #search-input {
+      background: rgba(20, 20, 35, 0.85);
+      border: 1px solid #2a2a3a;
+      color: #ccc;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      outline: none;
+      backdrop-filter: blur(4px);
+      width: 100%;
+    }
+    #search-input:focus { border-color: #4a9eff; color: #fff; }
+    #search-input::placeholder { color: #555; }
+
+    /* Filter groups */
+    .filter-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+    .filter-group label,
+    .filter-group-legend {
+      font-size: 9px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      width: 100%;
+      margin-bottom: 2px;
+      padding: 0;
+    }
+
+    /* Button style (shared) */
+    .ctrl-btn {
+      background: rgba(20, 20, 35, 0.85);
+      border: 1px solid #2a2a3a;
+      color: #777;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+      backdrop-filter: blur(4px);
+      white-space: nowrap;
+    }
+    .ctrl-btn:hover { border-color: #4a9eff; color: #ccc; }
+    .ctrl-btn.active { border-color: #4a9eff; color: #4a9eff; }
+
+    /* Agent rig filter pills (bd-8o2gd) */
+    .agent-rig-pills {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      margin-top: 2px;
+    }
+    .agent-rig-pills:empty { display: none; }
+    .rig-pill {
+      font-size: 8px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      cursor: pointer;
+      border: 1px solid;
+      transition: all 0.15s;
+      white-space: nowrap;
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rig-pill.excluded {
+      opacity: 0.35;
+      text-decoration: line-through;
+    }
+
+    /* Layout + action buttons row */
+    .btn-row {
+      display: flex;
+      gap: 4px;
+    }
+    .btn-row .ctrl-btn { flex: 1; text-align: center; }
+
+    /* Filter count */
+    #filter-count {
+      font-size: 10px;
+      color: #555;
+      text-align: right;
+    }
+
+    /* ===== Bottom HUD Bar (bd-ddj44) ===== */
+    #bottom-hud {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 120px;
+      z-index: 250;
+      display: flex;
+      align-items: stretch;
+      background: rgba(8, 8, 16, 0.92);
+      border-top: 1px solid #1a1a2a;
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+    }
+    /* Left section — quick actions & legend */
+    #bottom-hud-left {
+      width: 260px;
+      min-width: 200px;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border-right: 1px solid #1a1a2a;
+    }
+    #bottom-hud-left .hud-section-label {
+      font-size: 8px;
+      color: #444;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 4px;
+    }
+    /* Center section — activity stream (agent windows dock here) */
+    #bottom-hud-center {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #bottom-hud-center .hud-section-label {
+      font-size: 8px;
+      color: #444;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      padding: 4px 12px 0;
+      flex-shrink: 0;
+    }
+    /* Unified activity feed (bd-9ndk0.3) */
+    #unified-feed {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 2px 8px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 10px;
+      display: none; /* hidden by default, toggled via button */
+    }
+    #unified-feed.active { display: block; }
+    #unified-feed::-webkit-scrollbar { width: 3px; }
+    #unified-feed::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+    .uf-entry {
+      display: flex;
+      gap: 4px;
+      padding: 1px 0;
+      line-height: 1.3;
+      border-bottom: 1px solid rgba(255,255,255,0.02);
+    }
+    .uf-entry-time { color: #333; flex-shrink: 0; width: 55px; }
+    .uf-entry-agent { color: #ff6b35; flex-shrink: 0; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .uf-entry-icon { flex-shrink: 0; width: 14px; text-align: center; }
+    .uf-entry-text { color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .uf-entry.lifecycle-started .uf-entry-icon { color: #2d8a4e; }
+    .uf-entry.lifecycle-idle .uf-entry-icon { color: #d4a017; }
+    .uf-entry.lifecycle-crashed .uf-entry-icon { color: #d04040; }
+    .uf-entry.mutation .uf-entry-text { color: #59c2ff; }
+    .uf-entry.mutation-close .uf-entry-text { color: #2d8a4e; }
+    .uf-entry.decision-pending .uf-entry-text { color: #d4a017; }
+    .uf-entry.decision-resolved .uf-entry-text { color: #2d8a4e; }
+    .uf-entry.mail-received .uf-entry-text { color: #d2a6ff; }
+    .uf-entry.assistant-msg .uf-entry-icon { color: #5dade2; }
+    .uf-entry.assistant-msg .uf-entry-text { color: #aec6cf; font-style: italic; white-space: pre-wrap; max-height: 3em; overflow: hidden; }
+    .uf-entry.running .uf-entry-icon { color: #d4a017; }
+    .uf-entry .uf-entry-dur { color: #555; flex-shrink: 0; margin-left: auto; }
+    #unified-feed .uf-empty { color: #333; padding: 8px 0; text-align: center; }
+
+    /* Hide agent-windows when unified feed is active */
+    #unified-feed.active ~ #agent-windows { display: none; }
+
+    /* Right section removed — pulse moved to bottom-hud-left (bd-t9unh) */
+
+    /* Quick actions row (bd-ddj44) */
+    #hud-quick-actions {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    #hud-quick-actions .ctrl-btn {
+      font-size: 9px;
+      padding: 3px 8px;
+    }
+
+    /* Project pulse stats (bd-ddj44) */
+    #hud-project-pulse {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 10px;
+    }
+    .pulse-stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pulse-stat-label { color: #555; }
+    .pulse-stat-value { color: #888; font-variant-numeric: tabular-nums; }
+    .pulse-stat-value.good { color: #2d8a4e; }
+    .pulse-stat-value.warn { color: #d4a017; }
+    .pulse-stat-value.bad { color: #d04040; }
+
+    /* Legend removed — colors are self-explanatory (bd-t9unh) */
+
+    /* Connection status — fixed bottom-right (bd-t9unh) */
+    #status {
+      font-size: 10px;
+      color: #444;
+    }
+    #status.connected { color: #2d8a4e; }
+    #status.error { color: #d04040; }
+    #status.reconnecting { color: #d4a017; animation: status-pulse 1.2s ease-in-out infinite; }
+    @keyframes status-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    #status .retry-btn {
+      font-size: 9px;
+      color: #d04040;
+      background: #1a1a2a;
+      border: 1px solid #d04040;
+      border-radius: 3px;
+      padding: 1px 6px;
+      margin-left: 6px;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    #status .retry-btn:hover { background: #2a1a1a; color: #ff5050; }
+
+    /* Keyboard hints — now inside bottom-hud-right (bd-ddj44) */
+    #keyhints {
+      font-size: 9px;
+      color: #333;
+      line-height: 1.5;
+    }
+
+    /* Detail panel container — holds tiling panels (bd-fbmq3) */
+    #detail {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 380px;
+      height: 100vh;
+      z-index: 300;
+      display: none;
+    }
+    .detail-panel {
+      position: fixed;
+      top: 0;
+      width: 380px;
+      height: 100vh;
+      background: rgba(12, 12, 22, 0.95);
+      border-left: 1px solid #1a1a2a;
+      overflow-y: auto;
+      padding: 20px;
+      box-sizing: border-box;
+      transform: translateX(100%);
+      transition: transform 0.2s ease-out;
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+    }
+    .detail-panel.open { transform: translateX(0); }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .detail-id {
+      color: #4a9eff;
+      font-size: 11px;
+    }
+    .detail-close {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .detail-close:hover { color: #fff; }
+
+    .detail-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .tag {
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      background: rgba(40, 40, 60, 0.8);
+      color: #999;
+      border: 1px solid #2a2a3a;
+    }
+    .tag-open { color: #2d8a4e; border-color: #2d8a4e33; }
+    .tag-in_progress { color: #d4a017; border-color: #d4a01733; }
+    .tag-blocked { color: #d04040; border-color: #d0404033; }
+    .tag-assignee { color: #ff6b35; border-color: #ff6b3533; }
+
+    .detail-body {
+      font-size: 11px;
+      line-height: 1.6;
+      color: #aaa;
+    }
+    .detail-body.loading { color: #555; font-style: italic; }
+
+    .detail-section {
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #1a1a2a;
+    }
+    .detail-section h4 {
+      font-size: 10px;
+      color: #4a9eff;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .detail-section pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: inherit;
+      font-size: 11px;
+      color: #bbb;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .dep-item {
+      font-size: 10px;
+      color: #888;
+      padding: 2px 0;
+    }
+    .detail-timestamps {
+      font-size: 9px;
+      color: #555;
+      border-bottom: none;
+    }
+
+    /* Filter dashboard panel (bd-8o2gd phase 2) */
+    #filter-dashboard {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 280px;
+      height: 100vh;
+      background: rgba(12, 12, 22, 0.95);
+      border-right: 1px solid #1a1a2a;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease-out;
+      backdrop-filter: blur(12px);
+      z-index: 250;
+    }
+    #filter-dashboard.open { transform: translateX(0); }
+    .fd-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .fd-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e0e0e0;
+      letter-spacing: 0.5px;
+    }
+    .fd-close {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .fd-close:hover { color: #fff; }
+    .fd-section {
+      border-bottom: 1px solid #1a1a2a;
+      padding: 10px 0;
+    }
+    .fd-section:last-child { border-bottom: none; }
+    .fd-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .fd-section-label {
+      font-size: 10px;
+      color: #4a9eff;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+    .fd-section-arrow {
+      color: #555;
+      font-size: 10px;
+      transition: transform 0.15s;
+    }
+    .fd-section.collapsed .fd-section-arrow { transform: rotate(-90deg); }
+    .fd-section.collapsed .fd-section-body { display: none; }
+    .fd-section-body {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .fd-btn {
+      background: rgba(20, 20, 35, 0.85);
+      border: 1px solid #2a2a3a;
+      color: #777;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 4px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .fd-btn:hover { border-color: #4a9eff; color: #ccc; }
+    .fd-btn.active { border-color: #4a9eff; color: #4a9eff; }
+    .fd-btn.excluded { opacity: 0.35; text-decoration: line-through; }
+    .fd-footer {
+      padding: 10px 0 0;
+      border-top: 1px solid #1a1a2a;
+      font-size: 10px;
+      color: #666;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .fd-reset {
+      background: none;
+      border: 1px solid #333;
+      color: #888;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .fd-reset:hover { border-color: #d04040; color: #d04040; }
+    .fd-priority-range {
+      width: 100%;
+      display: flex;
+      gap: 4px;
+    }
+    .fd-priority-range .fd-btn { flex: 1; text-align: center; }
+    .fd-agent-exclude-input {
+      width: 100%;
+      margin-top: 4px;
+      background: rgba(20, 20, 35, 0.85);
+      border: 1px solid #2a2a3a;
+      color: #ccc;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      outline: none;
+    }
+    .fd-agent-exclude-input:focus { border-color: #4a9eff; }
+    .fd-agent-exclude-input::placeholder { color: #444; }
+    .fd-profile-bar {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    .fd-profile-bar select {
+      flex: 1;
+      background: rgba(20, 20, 35, 0.85);
+      border: 1px solid #2a2a3a;
+      color: #ccc;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      outline: none;
+    }
+    .fd-profile-bar select:focus { border-color: #4a9eff; }
+
+    /* ===== Left Sidebar — Agent Roster & Focused Issue (bd-nnr22) ===== */
+    #left-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 280px;
+      height: calc(100vh - 120px);
+      z-index: 240;
+      display: flex;
+      flex-direction: column;
+      background: rgba(8, 8, 16, 0.92);
+      border-right: 1px solid #1a1a2a;
+      backdrop-filter: blur(12px);
+      transform: translateX(-100%);
+      transition: transform 0.2s ease-out;
+      pointer-events: auto;
+    }
+    #left-sidebar.open { transform: translateX(0); }
+    #left-sidebar::-webkit-scrollbar { width: 4px; }
+    #left-sidebar::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+    .ls-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px 6px;
+      border-bottom: 1px solid #1a1a2a;
+      flex-shrink: 0;
+    }
+    .ls-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #e0e0e0;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .ls-close {
+      background: none;
+      border: none;
+      color: #555;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+    .ls-close:hover { color: #fff; }
+    .ls-section {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .ls-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px 4px;
+      flex-shrink: 0;
+    }
+    .ls-section-label {
+      font-size: 8px;
+      color: #4a9eff;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 600;
+    }
+    .ls-section-count {
+      font-size: 9px;
+      color: #555;
+      font-variant-numeric: tabular-nums;
+    }
+    #ls-agent-roster {
+      flex: 0 0 auto;
+      max-height: 45%;
+      border-bottom: 1px solid #1a1a2a;
+    }
+    #ls-agent-list {
+      overflow-y: auto;
+      padding: 0 8px 8px;
+    }
+    #ls-agent-list::-webkit-scrollbar { width: 3px; }
+    #ls-agent-list::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+    .ls-agent-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .ls-agent-row:hover { background: rgba(74, 158, 255, 0.08); }
+    .ls-agent-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .ls-agent-dot.active { background: #2d8a4e; }
+    .ls-agent-dot.idle { background: #d4a017; }
+    .ls-agent-dot.crashed { background: #d04040; animation: crash-pulse 1s infinite; }
+    .ls-agent-name {
+      font-size: 10px;
+      color: #ccc;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .ls-agent-task {
+      font-size: 9px;
+      color: #666;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ls-agent-meta {
+      font-size: 9px;
+      color: #555;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .ls-agent-empty {
+      font-size: 10px;
+      color: #444;
+      padding: 12px 8px;
+      font-style: italic;
+    }
+    #ls-focused-issue {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #ls-focused-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 12px 12px;
+    }
+    #ls-focused-content::-webkit-scrollbar { width: 3px; }
+    #ls-focused-content::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+    .ls-issue-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .ls-issue-id {
+      font-size: 9px;
+      color: #4a9eff;
+      font-weight: 600;
+    }
+    .ls-issue-status {
+      font-size: 8px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .ls-issue-status.open { background: rgba(45, 138, 78, 0.2); color: #2d8a4e; }
+    .ls-issue-status.in_progress { background: rgba(212, 160, 23, 0.2); color: #d4a017; }
+    .ls-issue-status.closed { background: rgba(85, 85, 85, 0.2); color: #666; }
+    .ls-issue-status.blocked { background: rgba(208, 64, 64, 0.2); color: #d04040; }
+    .ls-issue-priority {
+      font-size: 8px;
+      color: #888;
+    }
+    .ls-issue-title {
+      font-size: 11px;
+      color: #e0e0e0;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+    .ls-issue-field {
+      margin-bottom: 8px;
+    }
+    .ls-issue-field-label {
+      font-size: 8px;
+      color: #4a9eff;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 3px;
+    }
+    .ls-issue-field-value {
+      font-size: 10px;
+      color: #999;
+      line-height: 1.4;
+    }
+    .ls-dep-link {
+      font-size: 9px;
+      color: #4a9eff;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .ls-dep-link:hover { text-decoration: underline; color: #6bb5ff; }
+    .ls-placeholder {
+      font-size: 10px;
+      color: #444;
+      padding: 20px 12px;
+      text-align: center;
+      font-style: italic;
+    }
+
+    /* bd-69y6v: Control panel — slide-out from right */
+    #control-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 300px;
+      height: 100vh;
+      background: rgba(12, 12, 22, 0.96);
+      border-left: 1px solid #1a1a2a;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+      transform: translateX(100%);
+      transition: transform 0.2s ease-out;
+      backdrop-filter: blur(12px);
+      z-index: 260;
+    }
+    #control-panel.open { transform: translateX(0); }
+    #control-panel::-webkit-scrollbar { width: 4px; }
+    #control-panel::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    .cp-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .cp-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e0e0e0;
+      letter-spacing: 0.5px;
+    }
+    .cp-close {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .cp-close:hover { color: #fff; }
+
+    .cp-section {
+      border-bottom: 1px solid #1a1a2a;
+      padding: 10px 0;
+    }
+    .cp-section:last-child { border-bottom: none; }
+    .cp-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .cp-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .cp-section-toggle {
+      font-size: 9px;
+      color: #555;
+      transition: transform 0.15s;
+    }
+    .cp-section.collapsed .cp-section-toggle { transform: rotate(-90deg); }
+    .cp-section-body {
+      padding-top: 8px;
+    }
+    .cp-section.collapsed .cp-section-body { display: none; }
+
+    .cp-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .cp-label {
+      font-size: 10px;
+      color: #888;
+      white-space: nowrap;
+    }
+    .cp-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 3px;
+      background: #2a2a3a;
+      border-radius: 2px;
+      outline: none;
+    }
+    .cp-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #39c5cf;
+      cursor: pointer;
+    }
+    .cp-value {
+      font-size: 9px;
+      color: #555;
+      font-family: 'JetBrains Mono', monospace;
+      min-width: 28px;
+      text-align: right;
+    }
+    .cp-select {
+      flex: 1;
+      background: #1a1a2a;
+      color: #aaa;
+      border: 1px solid #2a2a3a;
+      border-radius: 3px;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 2px 4px;
+      outline: none;
+      cursor: pointer;
+    }
+    .cp-select:focus {
+      border-color: #39c5cf;
+    }
+    .cp-color-input {
+      width: 28px;
+      height: 20px;
+      border: 1px solid #2a2a3a;
+      border-radius: 3px;
+      padding: 0;
+      cursor: pointer;
+      background: none;
+    }
+    .cp-color-input::-webkit-color-swatch-wrapper { padding: 1px; }
+    .cp-color-input::-webkit-color-swatch { border-radius: 2px; border: none; }
+
+    .cp-preset-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .cp-preset-btn {
+      font-size: 9px;
+      color: #888;
+      background: rgba(20, 20, 35, 0.8);
+      border: 1px solid #2a2a3a;
+      border-radius: 3px;
+      padding: 3px 8px;
+      cursor: pointer;
+    }
+    .cp-preset-btn:hover { color: #fff; border-color: #39c5cf; }
+    .cp-preset-btn.active { color: #39c5cf; border-color: #39c5cf; }
+
+    /* Toggle switch for HUD visibility (bd-4hggh) */
+    .cp-toggle {
+      position: relative;
+      width: 28px;
+      height: 14px;
+      background: #2a2a3a;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .cp-toggle.on { background: #39c5cf; }
+    .cp-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      background: #ccc;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .cp-toggle.on::after { transform: translateX(14px); background: #fff; }
+
+    /* Gear icon button for opening control panel */
+    #btn-control-panel {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    /* bd-inqge: Right sidebar — persistent panel */
+    #right-sidebar {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 260px;
+      height: calc(100vh - 120px);
+      background: rgba(10, 10, 18, 0.92);
+      border-left: 1px solid #1a1a2a;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 8px 0;
+      box-sizing: border-box;
+      backdrop-filter: blur(8px);
+      z-index: 95;
+      transition: transform 0.2s ease-out, width 0.2s ease-out;
+      display: flex;
+      flex-direction: column;
+    }
+    #right-sidebar.collapsed { width: 32px; overflow: hidden; }
+    #right-sidebar::-webkit-scrollbar { width: 4px; }
+    #right-sidebar::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    .rs-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 10px; flex-shrink: 0;
+    }
+    .rs-title { font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+    #right-sidebar.collapsed .rs-title { display: none; }
+    .rs-collapse-btn { background: none; border: none; color: #555; cursor: pointer; font-size: 12px; padding: 2px 4px; }
+    .rs-collapse-btn:hover { color: #fff; }
+
+    .rs-section { border-top: 1px solid #1a1a2a; padding: 8px 10px; flex-shrink: 0; }
+    .rs-section:first-of-type { border-top: none; }
+    #right-sidebar.collapsed .rs-section { display: none; }
+    .rs-section-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; margin-bottom: 6px; }
+    .rs-section-label { font-size: 9px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+    .rs-section-toggle { font-size: 9px; color: #555; transition: transform 0.15s; }
+    .rs-section.collapsed .rs-section-toggle { transform: rotate(-90deg); }
+    .rs-section-body { padding-top: 2px; }
+    .rs-section.collapsed .rs-section-body { display: none; }
+
+    .rs-epic-item { margin-bottom: 6px; cursor: pointer; }
+    .rs-epic-item:hover .rs-epic-name { color: #fff; }
+    .rs-epic-name { font-size: 9px; color: #999; font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+    .rs-epic-bar { height: 4px; background: #1a1a2a; border-radius: 2px; overflow: hidden; display: flex; }
+    .rs-epic-bar > span { height: 100%; transition: width 0.3s ease; }
+    .rs-epic-pct { font-size: 8px; color: #555; float: right; }
+
+    .rs-blocked-item { font-size: 9px; color: #d04040; padding: 2px 0; font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .rs-blocked-item:hover { color: #ff6666; text-decoration: underline; }
+    .rs-empty { font-size: 9px; color: #444; font-style: italic; }
+
+    /* Context menu */
+    #context-menu {
+      position: fixed;
+      display: none;
+      background: rgba(12, 12, 22, 0.95);
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      padding: 4px 0;
+      font-size: 11px;
+      z-index: 400;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+      min-width: 180px;
+    }
+    #context-menu .ctx-header {
+      padding: 6px 12px;
+      font-size: 10px;
+      color: #4a9eff;
+      border-bottom: 1px solid #1a1a2a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 240px;
+    }
+    #context-menu .ctx-item {
+      padding: 6px 12px;
+      color: #bbb;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #context-menu .ctx-item:hover {
+      background: rgba(74, 158, 255, 0.1);
+      color: #fff;
+    }
+    #context-menu .ctx-item .ctx-key {
+      margin-left: auto;
+      font-size: 9px;
+      color: #444;
+    }
+    #context-menu .ctx-sep {
+      height: 1px;
+      background: #1a1a2a;
+      margin: 4px 0;
+    }
+    #context-menu .ctx-toast {
+      color: #2d8a4e;
+    }
+    #context-menu .ctx-submenu {
+      position: relative;
+    }
+    #context-menu .ctx-submenu::after {
+      content: '▸';
+      margin-left: auto;
+      font-size: 9px;
+      color: #555;
+    }
+    #context-menu .ctx-submenu-panel {
+      display: none;
+      position: absolute;
+      left: 100%;
+      top: -4px;
+      background: rgba(12, 12, 22, 0.95);
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      padding: 4px 0;
+      min-width: 130px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    }
+    #context-menu .ctx-submenu:hover > .ctx-submenu-panel {
+      display: block;
+    }
+    #context-menu .ctx-sub-item {
+      padding: 5px 12px;
+      color: #bbb;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    #context-menu .ctx-sub-item:hover {
+      background: rgba(74, 158, 255, 0.1);
+      color: #fff;
+    }
+    #context-menu .ctx-sub-item.active {
+      color: #4a9eff;
+    }
+    #context-menu .ctx-sub-item .ctx-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    /* Minimap — positioned above bottom HUD bar (bd-ddj44) */
+    #minimap {
+      position: fixed;
+      bottom: 136px;
+      right: 16px;
+      z-index: 100;
+      width: 180px;
+      height: 140px;
+      background: rgba(10, 10, 20, 0.85);
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      cursor: crosshair;
+      backdrop-filter: blur(4px);
+      image-rendering: pixelated;
+    }
+    #minimap:hover { border-color: #4a9eff; }
+    #minimap-label {
+      position: fixed;
+      bottom: 278px;
+      right: 16px;
+      z-index: 100;
+      font-size: 9px;
+      color: #333;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Rubber-band selection overlay */
+    #select-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 200;
+      pointer-events: none;
+      display: none;
+    }
+
+    /* Bulk action menu (after multi-select) */
+    #bulk-menu {
+      position: fixed;
+      z-index: 250;
+      display: none;
+      background: rgba(12, 12, 22, 0.95);
+      border: 1px solid #4a9eff;
+      border-radius: 8px;
+      padding: 6px 0;
+      min-width: 180px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 24px rgba(74, 158, 255, 0.2);
+      font-size: 12px;
+    }
+    #bulk-menu .bulk-header {
+      padding: 6px 12px;
+      color: #4a9eff;
+      font-weight: 600;
+      font-size: 11px;
+      border-bottom: 1px solid #1a1a2a;
+      margin-bottom: 2px;
+    }
+    #bulk-menu .bulk-item {
+      padding: 6px 12px;
+      color: #bbb;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #bulk-menu .bulk-item:hover {
+      background: rgba(74, 158, 255, 0.12);
+      color: #fff;
+    }
+    #bulk-menu .bulk-sep {
+      height: 1px;
+      background: #1a1a2a;
+      margin: 4px 0;
+    }
+    #bulk-menu .bulk-item .bulk-submenu-panel {
+      display: none;
+      position: absolute;
+      left: 100%;
+      top: -4px;
+      background: rgba(12, 12, 22, 0.95);
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      padding: 4px 0;
+      min-width: 130px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    }
+    #bulk-menu .bulk-submenu {
+      position: relative;
+    }
+    #bulk-menu .bulk-submenu::after {
+      content: '\25B8';
+      margin-left: auto;
+      font-size: 9px;
+      color: #555;
+    }
+    #bulk-menu .bulk-submenu:hover > .bulk-submenu-panel {
+      display: block;
+    }
+
+    /* Visible focus indicators (bd-7zczp a11y) */
+    :focus-visible {
+      outline: 2px solid #4a9eff;
+      outline-offset: 2px;
+    }
+    .ctrl-btn:focus-visible, .fd-btn:focus-visible, .cp-preset-btn:focus-visible {
+      outline: 2px solid #4a9eff;
+      outline-offset: 1px;
+    }
+    .cp-slider:focus-visible {
+      outline: 2px solid #4a9eff;
+      outline-offset: 2px;
+    }
+    .cp-toggle:focus-visible {
+      outline: 2px solid #4a9eff;
+      outline-offset: 2px;
+      border-radius: 7px;
+    }
+
+    /* Reset heading margins in sidebars (bd-7zczp a11y) */
+    .ls-section-label, .rs-section-label {
+      margin: 0;
+      font-weight: 600;
+    }
+
+    /* Skip-to-content link (bd-7zczp a11y) */
+    .skip-link {
+      position: fixed;
+      top: -100%;
+      left: 16px;
+      z-index: 10000;
+      background: #4a9eff;
+      color: #000;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .skip-link:focus {
+      top: 16px;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a4a5a; }
+
+    /* CSS2D overlay — don't intercept mouse events (bd-bwkdk) */
+    #css2d-overlay { pointer-events: none; }
+    #css2d-overlay div { pointer-events: none; }
+
+    /* HTML doot text — crisp at any zoom via CSS2DRenderer (bd-bwkdk) */
+    .doot-text {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      white-space: nowrap;
+      background: rgba(10, 10, 18, 0.82);
+      padding: 2px 6px;
+      border-radius: 3px;
+      border-left: 2px solid var(--doot-color, #ff6b35);
+      pointer-events: none;
+      user-select: none;
+      text-shadow: 0 0 4px var(--doot-color, #ff6b35);
+      /* No CSS transition — JS handles opacity animation to prevent flickering (bd-q9d6h) */
+    }
+
+    /* Duplicate CSS block removed — see consolidated lightbox styles below (bd-7m6td) */
+
+    /* Doot-triggered issue popups (beads-edy1) */
+    #doot-popups {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      z-index: 250;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 8px;
+      pointer-events: none;
+      max-height: 60vh;
+    }
+    .doot-popup {
+      width: 320px;
+      background: rgba(12, 12, 22, 0.92);
+      border: 1px solid #2a2a3a;
+      border-left: 3px solid #4a9eff;
+      border-radius: 6px;
+      padding: 12px 14px;
+      pointer-events: auto;
+      cursor: pointer;
+      transform: translateX(-120%);
+      transition: transform 0.3s ease-out, opacity 0.3s;
+      backdrop-filter: blur(8px);
+      opacity: 0.95;
+      position: relative;
+      overflow: hidden;
+    }
+    .doot-popup.open { transform: translateX(0); }
+    .doot-popup:hover { border-left-color: #ff6b35; opacity: 1; }
+    .doot-popup-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .doot-popup-id { font-size: 9px; color: #666; font-family: monospace; }
+    .doot-popup-title { font-size: 12px; color: #ddd; line-height: 1.3; }
+    .doot-popup-assignee { font-size: 10px; color: #888; margin-top: 4px; }
+    .doot-popup-close {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #555;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 2px;
+    }
+    .doot-popup-close:hover { color: #ff4444; }
+    .doot-popup-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      width: 100%;
+      background: #4a9eff44;
+      animation: doot-countdown linear forwards;
+      transform-origin: left;
+    }
+    @keyframes doot-countdown {
+      from { transform: scaleX(1); }
+      to { transform: scaleX(0); }
+    }
+    .doot-pulse { animation: doot-pulse-anim 0.3s ease-out; }
+    @keyframes doot-pulse-anim {
+      0% { border-left-color: #ff6b35; }
+      100% { border-left-color: #4a9eff; }
+    }
+
+    /* Agent activity feed windows — top dropdown bar (bd-r9z7h) */
+    /* Replaces bottom tray with top-of-screen dropdown panels */
+    #agent-top-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 32px;
+      z-index: 280;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 12px;
+      background: rgba(8, 8, 16, 0.94);
+      border-bottom: 1px solid #1a1a2a;
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    #agent-top-bar::-webkit-scrollbar { height: 2px; }
+    #agent-top-bar::-webkit-scrollbar-thumb { background: #2a2a3a; }
+    #agent-top-bar .top-bar-label {
+      font-size: 8px;
+      color: #444;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      flex-shrink: 0;
+      margin-right: 4px;
+    }
+    /* Hidden container for agent window elements (not displayed in bottom HUD) */
+    #agent-windows {
+      display: none;
+    }
+    .agent-tray-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      background: rgba(20, 20, 35, 0.7);
+      border: 1px solid #2a2a3a;
+      border-radius: 12px;
+      color: #999;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .agent-tray-chip:hover { background: rgba(40, 40, 60, 0.9); color: #ff6b35; border-color: #ff6b35; }
+    .agent-tray-chip.active { background: rgba(255, 107, 53, 0.15); color: #ff6b35; border-color: #ff6b35; }
+    .agent-tray-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    /* Dropdown panel from top bar (bd-r9z7h) */
+    #agent-dropdown {
+      display: none;
+      position: fixed;
+      top: 32px;
+      right: 12px;
+      width: 480px;
+      min-height: 300px;
+      max-height: 70vh;
+      z-index: 279;
+      background: rgba(8, 8, 16, 0.96);
+      border: 1px solid #2a2a3a;
+      border-top: 2px solid #ff6b35;
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+      overflow: hidden;
+      display: none;
+      flex-direction: column;
+    }
+    #agent-dropdown.open {
+      display: flex;
+    }
+
+    .agent-window {
+      width: 100%;
+      background: transparent;
+      border: none;
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
+      transition: height 0.2s ease;
+      flex: 1;
+      min-height: 0;
+    }
+    .agent-window.collapsed { height: 28px; overflow: hidden; }
+    .agent-window:not(.collapsed) { height: 100%; }
+
+    /* bd-9wxm9: Resize handle on top edge of agent window */
+    .agent-window-resize-handle {
+      height: 4px;
+      cursor: ns-resize;
+      background: transparent;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .agent-window-resize-handle:hover,
+    .agent-window-resize-handle.active { background: #39c5cf66; }
+    .agent-window.collapsed .agent-window-resize-handle { display: none; }
+
+    .agent-window-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: rgba(20, 20, 35, 0.9);
+      border-bottom: 1px solid #1a1a2a;
+      cursor: pointer;
+      user-select: none;
+      min-height: 20px;
+      flex-shrink: 0;
+    }
+    .agent-window-header:hover { background: rgba(30, 30, 50, 0.9); }
+    .agent-window-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: #ff6b35;
+      font-family: 'JetBrains Mono', monospace;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .agent-window-name:hover {
+      text-decoration: underline;
+    }
+    .agent-window-badge {
+      font-size: 9px;
+      color: #666;
+      background: #1a1a2a;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    /* bd-5ok9s: enhanced agent status bar */
+    .agent-status-bar {
+      display: flex;
+      gap: 8px;
+      padding: 2px 8px;
+      font-size: 9px;
+      color: #888;
+      background: #0a0a14;
+      border-bottom: 1px solid #1a1a2a;
+      white-space: nowrap;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .agent-status-bar .status-label {
+      color: #555;
+    }
+    .agent-status-bar .status-active { color: #2d8a4e; }
+    .agent-status-bar .status-idle { color: #d4a017; }
+    .agent-status-bar .status-crashed {
+      color: #ff4444;
+      font-weight: bold;
+      animation: crash-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes crash-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .agent-status-bar .status-tool { color: #39c5cf; }
+    .agent-status-bar .status-idle-dur { color: #d4a017; font-variant-numeric: tabular-nums; }
+    .agent-window-rig {
+      font-size: 8px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(20, 20, 30, 0.8);
+      border: 1px solid;
+      white-space: nowrap;
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-window-close {
+      background: none;
+      border: none;
+      color: #444;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .agent-window-close:hover { color: #ff4444; }
+
+    /* bd-dqe6k: Pop-out / dock-back button */
+    .agent-window-popout {
+      background: none;
+      border: none;
+      color: #444;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .agent-window-popout:hover { color: #39c5cf; }
+
+    /* bd-dqe6k: Popped-out floating window */
+    .agent-window.popped-out {
+      position: fixed;
+      z-index: 300;
+      width: 420px;
+      min-width: 300px;
+      min-height: 200px;
+      resize: both;
+      overflow: hidden;
+      border: 1px solid #39c5cf44;
+      border-top: 2px solid #39c5cf;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+      border-radius: 4px;
+    }
+    .agent-window.popped-out:not(.collapsed) { height: 350px; }
+    .agent-window.popped-out .agent-window-header { cursor: grab; }
+    .agent-window.popped-out .agent-window-header:active { cursor: grabbing; }
+
+    .agent-window-beads {
+      padding: 2px 8px 4px;
+      border-bottom: 1px solid #1a1a2a;
+      flex-shrink: 0;
+    }
+    .agent-window-bead {
+      font-size: 9px;
+      color: #888;
+      font-family: 'JetBrains Mono', monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+    .agent-window-bead:hover {
+      color: #c2d94c;
+      text-decoration: underline;
+    }
+
+    .agent-feed {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 4px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      line-height: 1.5;
+    }
+    .agent-feed::-webkit-scrollbar { width: 3px; }
+    .agent-feed::-webkit-scrollbar-thumb { background: #1a1a2a; }
+
+    .agent-entry {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      padding: 1px 8px;
+      color: #999;
+    }
+    .agent-entry:hover { background: rgba(255,255,255,0.02); }
+    .agent-entry-time {
+      color: #555;
+      font-size: 9px;
+      flex-shrink: 0;
+      width: 38px;
+    }
+    .agent-entry-icon {
+      flex-shrink: 0;
+      width: 14px;
+      text-align: center;
+      font-size: 9px;
+    }
+    .agent-entry-text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-entry-dur {
+      color: #555;
+      font-size: 9px;
+      flex-shrink: 0;
+    }
+
+    /* Tool-type colors */
+    .agent-entry.tool-read .agent-entry-icon { color: #4a9eff; }
+    .agent-entry.tool-edit .agent-entry-icon { color: #d4a017; }
+    .agent-entry.tool-bash .agent-entry-icon { color: #ff6b35; }
+    .agent-entry.tool-grep .agent-entry-icon { color: #8b45a6; }
+    .agent-entry.tool-write .agent-entry-icon { color: #2d8a4e; }
+    .agent-entry.tool-task .agent-entry-icon { color: #4a9eff; }
+
+    /* Lifecycle event styles */
+    .agent-entry.lifecycle { color: #666; }
+    .agent-entry.lifecycle-started .agent-entry-text { color: #2d8a4e; }
+    .agent-entry.lifecycle-idle .agent-entry-text { color: #d4a017; }
+    .agent-entry.lifecycle-crashed .agent-entry-text { color: #d04040; }
+    .agent-entry.lifecycle-stopped .agent-entry-text { color: #666; }
+
+    /* Mutation event styles */
+    .agent-entry.mutation .agent-entry-text { color: #4a9eff; }
+    .agent-entry.mutation-close .agent-entry-text { color: #2d8a4e; }
+
+    /* Running state (pre-tool, waiting for post-tool) */
+    .agent-entry.running .agent-entry-text::after {
+      content: ' ...';
+      color: #555;
+      animation: agent-dots 1.5s steps(3, end) infinite;
+    }
+    @keyframes agent-dots {
+      0% { content: ' .'; }
+      33% { content: ' ..'; }
+      66% { content: ' ...'; }
+    }
+
+    .agent-window-empty {
+      color: #333;
+      font-size: 10px;
+      text-align: center;
+      padding: 20px 8px;
+      font-style: italic;
+    }
+
+    /* Mail compose area (bd-t76aw) */
+    .agent-mail-compose {
+      display: flex;
+      gap: 4px;
+      padding: 4px 6px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      background: rgba(10, 10, 20, 0.6);
+      flex-shrink: 0;
+    }
+    .agent-mail-input {
+      flex: 1;
+      background: rgba(20, 20, 35, 0.8);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 3px;
+      color: #ccc;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 3px 6px;
+      outline: none;
+    }
+    .agent-mail-input:focus { border-color: rgba(74, 158, 255, 0.4); }
+    .agent-mail-input::placeholder { color: #444; }
+    .agent-mail-send {
+      background: rgba(74, 158, 255, 0.15);
+      border: 1px solid rgba(74, 158, 255, 0.3);
+      border-radius: 3px;
+      color: #4a9eff;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+    .agent-mail-send:hover { background: rgba(74, 158, 255, 0.3); }
+    .agent-mail-send:disabled { opacity: 0.3; cursor: default; }
+
+    /* Mail event styles (bd-t76aw) */
+    .agent-mail-compose.send-error .agent-mail-input {
+      border-color: #ff4444;
+      color: #ff4444;
+    }
+    .agent-entry.mail .agent-entry-icon { color: #d4a017; }
+    .agent-entry.mail-received .agent-entry-text { color: #d4a017; }
+    .agent-entry.mail-sent .agent-entry-text { color: #4a9eff; font-style: italic; }
+
+    /* Decision events in agent feed (bd-0j7hr) */
+    .agent-entry.decision .agent-entry-icon { color: #d4a017; font-weight: bold; }
+    .agent-entry.decision-pending .agent-entry-text { color: #d4a017; }
+    .agent-entry.decision-resolved .agent-entry-text { color: #2d8a4e; }
+    .agent-entry.decision-expired .agent-entry-text { color: #d04040; }
+    .agent-entry.decision-escalated .agent-entry-text { color: #ff6b35; }
+
+    /* Prompt events — user/system input to agents (bd-7rk7e) */
+    .agent-entry.prompt .agent-entry-icon { color: #9b59b6; }
+    .agent-entry.prompt .agent-entry-text { color: #9b59b6; font-style: italic; }
+
+    /* Agent reasoning / assistant messages (bd-at94i) */
+    .agent-entry.assistant-msg .agent-entry-icon { color: #5dade2; }
+    .agent-entry.assistant-msg .agent-entry-text {
+      color: #aec6cf;
+      font-style: italic;
+      white-space: pre-wrap;
+      max-height: 4.5em;
+      overflow: hidden;
+      line-height: 1.3;
+    }
+
+    /* Agents View overlay — Shift+A (bd-jgvas) */
+    #agents-view {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 500;
+      background: rgba(4, 4, 10, 0.92);
+      backdrop-filter: blur(12px);
+      overflow: hidden;
+    }
+    #agents-view.open { display: flex; flex-direction: column; }
+
+    .agents-view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: rgba(10, 10, 20, 0.95);
+      border-bottom: 1px solid #2a2a3a;
+      flex-shrink: 0;
+    }
+    .agents-view-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #ff6b35;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.5px;
+    }
+    .agents-view-stats {
+      font-size: 11px;
+      color: #666;
+      font-family: 'JetBrains Mono', monospace;
+      display: flex;
+      gap: 12px;
+    }
+    .agents-view-stats .active { color: #2d8a4e; }
+    .agents-view-stats .idle { color: #d4a017; }
+    .agents-view-stats .crashed { color: #d04040; }
+    .agents-view-close {
+      background: none;
+      border: 1px solid #333;
+      color: #888;
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .agents-view-close:hover { color: #fff; border-color: #666; }
+
+    /* bd-bwi52: Tab bar (replaces grid) */
+    .agents-tab-bar {
+      display: flex;
+      gap: 2px;
+      padding: 4px 8px;
+      background: rgba(10, 10, 20, 0.9);
+      border-bottom: 1px solid #2a2a3a;
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex-shrink: 0;
+      scrollbar-width: thin;
+    }
+    .agents-tab-bar::-webkit-scrollbar { height: 3px; }
+    .agents-tab-bar::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    .agent-tab {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      background: rgba(20, 20, 35, 0.6);
+      border: 1px solid #1a1a2a;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      color: #777;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+    .agent-tab:hover { background: rgba(30, 30, 50, 0.8); color: #aaa; }
+    .agent-tab.active {
+      background: rgba(40, 40, 60, 0.95);
+      color: #ff6b35;
+      border-color: #ff6b35;
+      border-bottom: 2px solid transparent;
+    }
+    .agent-tab-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .agent-tab.tab-flash {
+      animation: tab-flash-anim 0.8s ease-out;
+    }
+    @keyframes tab-flash-anim {
+      0% { background: rgba(255, 107, 53, 0.3); color: #ff6b35; }
+      100% { background: rgba(20, 20, 35, 0.6); }
+    }
+
+    /* bd-hubs7: Unread event count badge on tabs */
+    .agent-tab-unread {
+      background: #ff6b35;
+      color: #000;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 0 4px;
+      border-radius: 8px;
+      min-width: 14px;
+      text-align: center;
+      line-height: 14px;
+      margin-left: 4px;
+    }
+
+    /* bd-bwi52: Tab content area — full height single agent view */
+    .agents-tab-content {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .agents-tab-content .agent-window {
+      width: 100%;
+      height: 100%;
+      border: none;
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .agents-tab-content .agent-feed {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Legacy grid support removed — agent-window-flash no longer used */
+
+    /* Search input in agents view header (bd-jgvas Phase 2) */
+    .agents-view-search {
+      background: rgba(20, 20, 35, 0.8);
+      border: 1px solid #2a2a3a;
+      border-radius: 3px;
+      color: #ccc;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 3px 8px;
+      width: 180px;
+      outline: none;
+    }
+    .agents-view-search:focus { border-color: #ff6b35; }
+    .agents-view-search::placeholder { color: #444; }
+
+    /* Decision detail panel (bd-1xskh, bd-9gxt1) */
+    .decision-prompt { white-space: pre-wrap; color: #d4a017; }
+    .decision-options { display: flex; flex-direction: column; gap: 4px; }
+    .decision-opt {
+      background: #2a2a3a; border: 1px solid #3a3a5a; color: #ccc;
+      padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      text-align: left; font-size: 12px; transition: all 0.15s;
+    }
+    .decision-opt:hover { background: #3a3a5a; border-color: #d4a017; color: #fff; }
+    .decision-opt.selected { background: #2d4a2d; border-color: #2d8a4e; color: #2d8a4e; }
+    .decision-opt:disabled { opacity: 0.5; cursor: default; }
+    .decision-opt-bead { font-size: 10px; color: #666; }
+    .decision-selected { color: #2d8a4e; font-weight: bold; }
+    .decision-respond-section { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+    .decision-respond-section h4 { width: 100%; margin: 0 0 4px; }
+    .decision-response-input {
+      flex: 1; min-width: 150px; background: #1a1a2a; border: 1px solid #3a3a5a;
+      color: #ccc; padding: 5px 8px; border-radius: 4px; font-size: 12px;
+    }
+    .decision-response-input:focus { border-color: #d4a017; outline: none; }
+    .decision-send-btn {
+      background: #d4a017; color: #000; border: none; padding: 5px 12px;
+      border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;
+    }
+    .decision-send-btn:hover { background: #e5b028; }
+    .decision-send-btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* Decision toast notifications (bd-tausm) */
+    .decision-toast {
+      position: fixed; top: 60px; right: 20px; z-index: 9999;
+      background: #1a1a2a; border: 1px solid #d4a017; border-radius: 6px;
+      padding: 10px 16px; color: #d4a017; font-size: 13px;
+      max-width: 400px; opacity: 0; transform: translateX(40px);
+      transition: opacity 0.3s, transform 0.3s; pointer-events: auto;
+    }
+    .decision-toast.show { opacity: 1; transform: translateX(0); }
+    .decision-toast.resolved { border-color: #2d8a4e; color: #2d8a4e; }
+    .decision-toast.urgent { border-color: #d04040; border-width: 2px; animation: toast-shake 0.3s; }
+    @keyframes toast-shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-6px); }
+      75% { transform: translateX(6px); }
+    }
+
+    /* Decision lightbox floating window (beads-zuc3, bd-7m6td) */
+    /* z-index 10100/10101 ensures lightbox renders above all popups, toasts, and alerts */
+    .decision-lightbox-backdrop {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.45); z-index: 10100;
+      opacity: 0; transition: opacity 0.2s;
+    }
+    .decision-lightbox-backdrop.show { opacity: 1; }
+    .decision-lightbox {
+      position: fixed; top: 12%; left: 50%; transform: translateX(-50%);
+      width: 680px; min-width: 380px; min-height: 280px; max-height: 72vh;
+      background: rgba(12, 12, 25, 0.96); border: 1px solid #d4a017;
+      border-radius: 8px; z-index: 10101; display: flex; flex-direction: column;
+      box-shadow: 0 0 30px rgba(212, 160, 23, 0.15), 0 8px 32px rgba(0, 0, 0, 0.6);
+      opacity: 0; transform: translateX(-50%) translateY(12px);
+      transition: opacity 0.25s, transform 0.25s;
+    }
+    .decision-lightbox.show {
+      opacity: 1; transform: translateX(-50%) translateY(0);
+    }
+    /* Suppress popups/toasts when lightbox is visible — body gets .dlb-active class (bd-7m6td) */
+    .dlb-active #doot-popups { display: none !important; }
+    .dlb-active .decision-toast { display: none !important; }
+    .decision-lightbox.resolved-border { border-color: #2d8a4e; box-shadow: 0 0 30px rgba(45, 138, 78, 0.15), 0 8px 32px rgba(0, 0, 0, 0.6); }
+    .decision-lightbox-header {
+      display: flex; align-items: center; padding: 10px 16px;
+      border-bottom: 1px solid #2a2a3a; cursor: grab; user-select: none;
+    }
+    .decision-lightbox-header:active { cursor: grabbing; }
+    .decision-lightbox-title {
+      font-size: 13px; font-weight: 700; color: #d4a017; letter-spacing: 0.5px; flex: 1;
+    }
+    .decision-lightbox-badge {
+      background: #d4a017; color: #000; font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 8px; margin-left: 8px;
+    }
+    .decision-lightbox-badge.zero { background: #2d8a4e; }
+    .decision-lightbox-close {
+      background: none; border: none; color: #666; font-size: 18px;
+      cursor: pointer; padding: 0 4px; margin-left: 8px;
+    }
+    .decision-lightbox-close:hover { color: #ff4444; }
+    .decision-lightbox-close:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .decision-lightbox-btn {
+      background: none; border: none; color: #888; font-size: 16px;
+      cursor: pointer; padding: 2px 6px; border-radius: 3px; line-height: 1;
+    }
+    .decision-lightbox-btn:hover { color: #ccc; background: rgba(255,255,255,0.08); }
+    .decision-lightbox-btn:focus-visible { outline: 2px solid #d4a017; outline-offset: 2px; }
+    .decision-lightbox-resize {
+      position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
+      cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #d4a01744 50%);
+      border-radius: 0 0 8px 0;
+    }
+    .decision-lightbox-resize:hover { background: linear-gradient(135deg, transparent 50%, #d4a01788 50%); }
+    .decision-lightbox-body {
+      display: flex; flex: 1; overflow: hidden; min-height: 0;
+    }
+    .decision-lightbox-list {
+      width: 200px; min-width: 160px; border-right: 1px solid #2a2a3a;
+      overflow-y: auto; padding: 8px 0;
+    }
+    .decision-lightbox-list::-webkit-scrollbar { width: 3px; }
+    .decision-lightbox-list::-webkit-scrollbar-thumb { background: #2a2a3a; }
+    .dlb-list-item {
+      padding: 8px 12px; cursor: pointer; border-left: 3px solid transparent;
+      font-size: 11px; color: #999; line-height: 1.4;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .dlb-list-item:hover { background: rgba(30, 30, 50, 0.6); color: #ccc; }
+    .dlb-list-item.active { background: rgba(30, 30, 50, 0.8); color: #fff; border-left-color: #d4a017; }
+    .dlb-list-item.pending { border-left-color: #d4a017; }
+    .dlb-list-item.resolved { border-left-color: #2d8a4e; color: #666; }
+    .dlb-list-item.resolved.active { color: #aaa; }
+    .dlb-list-item:focus-visible { outline: 2px solid #4a9eff; outline-offset: -2px; }
+    .dlb-list-agent { font-size: 9px; color: #666; margin-top: 2px; }
+    .dlb-list-time { font-size: 9px; color: #555; }
+    .decision-lightbox-detail {
+      flex: 1; overflow-y: auto; padding: 16px 20px; min-width: 0;
+    }
+    .decision-lightbox-detail::-webkit-scrollbar { width: 4px; }
+    .decision-lightbox-detail::-webkit-scrollbar-thumb { background: #2a2a3a; }
+    .dlb-state {
+      font-size: 12px; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;
+    }
+    .dlb-state.pending { color: #d4a017; }
+    .dlb-state.resolved { color: #2d8a4e; }
+    .dlb-state.expired { color: #d04040; }
+    .dlb-section { margin-bottom: 14px; }
+    .dlb-section h4 {
+      font-size: 10px; color: #666; text-transform: uppercase;
+      letter-spacing: 0.5px; margin: 0 0 6px;
+    }
+    .dlb-prompt {
+      white-space: pre-wrap; color: #d4a017; font-size: 13px;
+      line-height: 1.5; word-break: break-word;
+    }
+    .dlb-context {
+      white-space: pre-wrap; color: #aaa; font-size: 12px;
+      line-height: 1.4; word-break: break-word;
+    }
+    .dlb-options { display: flex; flex-direction: column; gap: 6px; }
+    .dlb-opt {
+      background: #1e1e30; border: 1px solid #3a3a5a; color: #ccc;
+      padding: 10px 14px; border-radius: 6px; cursor: pointer;
+      text-align: left; font-size: 13px; line-height: 1.4;
+      transition: all 0.15s;
+    }
+    .dlb-opt:hover { background: #2a2a40; border-color: #d4a017; color: #fff; }
+    .dlb-opt:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .dlb-opt.selected { background: #1e3a1e; border-color: #2d8a4e; color: #2d8a4e; }
+    .dlb-opt:disabled { opacity: 0.5; cursor: default; }
+    .dlb-opt-bead { font-size: 10px; color: #666; margin-left: 4px; }
+    .dlb-selected-label { color: #2d8a4e; font-weight: 700; font-size: 13px; }
+    .dlb-respond {
+      display: flex; gap: 8px; align-items: flex-start;
+    }
+    .dlb-response-input {
+      flex: 1; min-height: 60px; background: #1a1a2a; border: 1px solid #3a3a5a;
+      color: #ccc; padding: 8px 10px; border-radius: 6px; font-size: 13px;
+      font-family: inherit; resize: vertical;
+    }
+    .dlb-response-input:focus { border-color: #d4a017; outline: none; }
+    .dlb-send-btn {
+      background: #d4a017; color: #000; border: none; padding: 8px 16px;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 700;
+      white-space: nowrap; align-self: flex-end;
+    }
+    .dlb-send-btn:hover { background: #e5b028; }
+    .dlb-send-btn:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .dlb-send-btn:disabled { opacity: 0.5; cursor: default; }
+    .dlb-meta { font-size: 10px; color: #555; }
+    .dlb-empty { color: #555; font-size: 12px; text-align: center; padding: 40px 20px; }
+    /* Decisions HUD button */
+    .hud-decisions-btn {
+      position: relative;
+    }
+    .hud-decisions-badge {
+      position: absolute; top: -4px; right: -4px;
+      background: #d4a017; color: #000; font-size: 9px; font-weight: 700;
+      width: 16px; height: 16px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .hud-decisions-badge.zero { display: none; }
+    @media (max-width: 600px) {
+      .decision-lightbox { width: 95vw; min-width: 0; top: 5%; max-height: 85vh; }
+      .decision-lightbox-body { flex-direction: column; }
+      .decision-lightbox-list { width: 100%; min-width: 0; max-height: 120px; border-right: none; border-bottom: 1px solid #2a2a3a; }
+    }
+
+    /* Epic cycling HUD indicator (bd-pnngb) */
+    #epic-hud {
+      display: none;
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 300;
+      background: rgba(8, 8, 16, 0.88);
+      border: 1px solid #2a2a3a;
+      border-radius: 20px;
+      padding: 6px 18px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #ddd;
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+      white-space: nowrap;
+      transition: opacity 0.4s ease;
+    }
+  </style>
+</head>
+<body>
+  <a href="#graph" class="skip-link">Skip to graph</a>
+  <main id="graph" role="application" aria-label="3D issue graph visualization"></main>
+
+  <div id="hud" aria-label="Graph statistics">
+    <h1>beads3d</h1>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div id="controls" role="toolbar" aria-label="Graph controls">
+    <div role="search">
+      <input type="text" id="search-input" placeholder="search ( / ) · enter fly · ↑↓ cycle" autocomplete="off" spellcheck="false" aria-label="Search issues">
+    </div>
+
+    <fieldset class="filter-group" role="group" aria-label="Status filters">
+      <legend class="filter-group-legend">status</legend>
+      <button class="ctrl-btn filter-status" data-status="open" aria-pressed="false">open</button>
+      <button class="ctrl-btn filter-status" data-status="in_progress" aria-pressed="false">active</button>
+      <button class="ctrl-btn filter-status" data-status="closed" aria-pressed="false">closed</button>
+    </fieldset>
+
+    <fieldset class="filter-group" role="group" aria-label="Type filters">
+      <legend class="filter-group-legend">type</legend>
+      <button class="ctrl-btn filter-type" data-type="epic" aria-pressed="false">epic</button>
+      <button class="ctrl-btn filter-type" data-type="feature" aria-pressed="false">feature</button>
+      <button class="ctrl-btn filter-type" data-type="bug" aria-pressed="false">bug</button>
+      <button class="ctrl-btn filter-type" data-type="task" aria-pressed="false">task</button>
+      <button class="ctrl-btn filter-type" data-type="jack" aria-pressed="false">jack</button>
+    </fieldset>
+
+    <fieldset class="filter-group" id="agent-filter-group" role="group" aria-label="Agent filters">
+      <legend class="filter-group-legend">agents</legend>
+      <button class="ctrl-btn filter-agent-toggle active" id="btn-agent-show" aria-pressed="true">show</button>
+      <button class="ctrl-btn filter-agent-toggle" id="btn-agent-orphaned" aria-pressed="false">orphaned</button>
+      <div class="agent-rig-pills" id="agent-rig-pills"></div>
+    </fieldset>
+
+    <fieldset class="filter-group" role="group" aria-label="Age filters">
+      <legend class="filter-group-legend">age</legend>
+      <button class="ctrl-btn filter-age active" data-days="7" aria-pressed="true">7d</button>
+      <button class="ctrl-btn filter-age" data-days="30" aria-pressed="false">30d</button>
+      <button class="ctrl-btn filter-age" data-days="90" aria-pressed="false">90d</button>
+      <button class="ctrl-btn filter-age" data-days="0" aria-pressed="false">all</button>
+    </fieldset>
+
+    <fieldset class="filter-group" role="group" aria-label="Layout mode">
+      <legend class="filter-group-legend">layout</legend>
+      <div class="btn-row" id="layout-controls" role="radiogroup" aria-label="Layout mode">
+        <button class="ctrl-btn active" id="btn-layout-free" role="radio" aria-checked="true">free</button>
+        <button class="ctrl-btn" id="btn-layout-dag" role="radio" aria-checked="false">dag</button>
+        <button class="ctrl-btn" id="btn-layout-radial" role="radio" aria-checked="false">radial</button>
+        <button class="ctrl-btn" id="btn-layout-cluster" role="radio" aria-checked="false">cluster</button>
+      </div>
+    </fieldset>
+
+    <div class="btn-row">
+      <button class="ctrl-btn" id="btn-bloom" aria-label="Toggle bloom effect" aria-pressed="false">bloom</button>
+      <button class="ctrl-btn" id="btn-labels" aria-label="Toggle labels (L)">labels (l)</button>
+      <button class="ctrl-btn" id="btn-refresh" aria-label="Refresh graph">refresh</button>
+      <button class="ctrl-btn" id="btn-control-panel" title="Control panel (g)" aria-label="Open control panel">&#x2699;</button>
+    </div>
+
+    <div class="btn-row">
+      <button class="ctrl-btn" id="btn-screenshot" aria-label="Take screenshot (P)">screenshot (p)</button>
+      <button class="ctrl-btn" id="btn-export" aria-label="Export graph data (X)">export (x)</button>
+    </div>
+
+    <div id="filter-count"></div>
+  </div>
+
+  <!-- Decision Lightbox (beads-zuc3, beads-f29q) — floating window for decision interactions -->
+  <div id="decision-lightbox-backdrop" class="decision-lightbox-backdrop" style="display:none" aria-hidden="true"></div>
+  <div id="decision-lightbox" class="decision-lightbox" role="dialog" aria-modal="true" aria-label="Decision center" style="display:none" aria-hidden="true">
+    <div id="dlb-header" class="decision-lightbox-header">
+      <span class="decision-lightbox-title">Decisions</span>
+      <span id="dlb-badge" class="decision-lightbox-badge empty">0</span>
+      <button class="decision-lightbox-btn" id="dlb-minimize" aria-label="Minimize" title="Minimize">&#x2013;</button>
+      <button class="decision-lightbox-btn" id="dlb-close" aria-label="Close" title="Close">&times;</button>
+    </div>
+    <div class="decision-lightbox-body">
+      <div id="dlb-list" class="decision-lightbox-list" role="listbox" aria-label="Decision list"></div>
+      <div id="dlb-detail" class="decision-lightbox-detail"></div>
+    </div>
+    <div id="dlb-resize-handle" class="decision-lightbox-resize" aria-hidden="true"></div>
+  </div>
+
+  <div id="tooltip" role="tooltip" aria-hidden="true"></div>
+  <span id="minimap-label" aria-hidden="true">minimap</span>
+  <canvas id="minimap" width="360" height="280" aria-hidden="true" aria-label="Graph minimap"></canvas>
+
+  <!-- Top Agent Bar (bd-r9z7h) — agent chips with dropdown panels -->
+  <nav id="agent-top-bar" aria-label="Agent top bar">
+    <span class="top-bar-label">Agents</span>
+  </nav>
+  <div id="agent-dropdown"></div>
+
+  <!-- Bottom HUD Bar (bd-ddj44) -->
+  <nav id="bottom-hud" aria-label="Bottom HUD bar">
+    <!-- Left: project pulse + quick actions (bd-t9unh) -->
+    <div id="bottom-hud-left">
+      <div>
+        <div class="hud-section-label">Project Pulse</div>
+        <div id="hud-project-pulse"></div>
+      </div>
+      <div>
+        <div id="hud-quick-actions" role="toolbar" aria-label="Quick actions">
+          <button class="ctrl-btn" id="hud-btn-refresh" title="Refresh graph (r)" aria-label="Refresh graph">refresh</button>
+          <button class="ctrl-btn" id="hud-btn-labels" title="Toggle labels (l)" aria-label="Toggle labels">labels</button>
+          <button class="ctrl-btn" id="hud-btn-agents" title="Agents view (A)" aria-label="Open agents view">agents</button>
+          <button class="ctrl-btn hud-decisions-btn" id="hud-btn-decisions" title="Decision center (d)" aria-label="Open decision center">decisions<span class="hud-decisions-badge zero" id="hud-decisions-badge">0</span></button>
+          <button class="ctrl-btn" id="hud-btn-bloom" title="Toggle bloom (b)" aria-label="Toggle bloom effect">bloom</button>
+          <button class="ctrl-btn" id="hud-btn-search" title="Focus search (/)" aria-label="Focus search input">search</button>
+          <button class="ctrl-btn" id="hud-btn-minimap" title="Toggle minimap (m)" aria-label="Toggle minimap">minimap</button>
+          <button class="ctrl-btn" id="hud-btn-sidebar" title="Toggle sidebar (f)" aria-label="Toggle left sidebar">sidebar</button>
+          <button class="ctrl-btn" id="hud-btn-controls" title="Toggle controls (g)" aria-label="Toggle controls panel">controls</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center: unified activity stream + agent windows (bd-9ndk0.3) -->
+    <div id="bottom-hud-center">
+      <div class="hud-section-label">
+        Activity Stream
+        <span id="unified-feed-toggle" class="ctrl-btn" style="font-size:8px;padding:1px 5px;margin-left:6px;cursor:pointer" title="Toggle unified/split view">unified</span>
+      </div>
+      <div id="unified-feed"></div>
+      <div id="agent-windows"></div>
+    </div>
+
+    <!-- Status indicator (connection) -->
+    <div id="status" aria-live="polite" aria-atomic="true" role="status" style="position:fixed;bottom:4px;right:8px;font-size:9px;color:#555;z-index:260">connecting...</div>
+  </nav>
+
+  <!-- Left Sidebar — Agent Roster & Focused Issue (bd-nnr22) -->
+  <aside id="left-sidebar" aria-label="Left sidebar">
+    <div class="ls-header">
+      <span class="ls-title">Sidebar</span>
+      <button class="ls-close" id="ls-close" aria-label="Close sidebar">&times;</button>
+    </div>
+    <section id="ls-agent-roster" class="ls-section" aria-label="Agent roster">
+      <div class="ls-section-header">
+        <h2 class="ls-section-label">Agent Roster</h2>
+        <span class="ls-section-count" id="ls-agent-count" aria-label="Agent count">0</span>
+      </div>
+      <div id="ls-agent-list" role="list" aria-label="Connected agents">
+        <div class="ls-agent-empty" role="listitem">No agents connected</div>
+      </div>
+    </section>
+    <section id="ls-focused-issue" class="ls-section" aria-label="Focused issue details">
+      <div class="ls-section-header">
+        <h2 class="ls-section-label">Focused Issue</h2>
+      </div>
+      <div id="ls-focused-content">
+        <div class="ls-placeholder">Click a node to inspect</div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- Filter dashboard slide-out panel (bd-8o2gd phase 2) -->
+  <aside id="filter-dashboard" aria-label="Filter dashboard">
+    <div class="fd-header">
+      <span class="fd-title">Filters</span>
+      <button class="fd-close" id="fd-close" aria-label="Close filter dashboard">&times;</button>
+    </div>
+
+    <div class="fd-profile-bar">
+      <select id="fd-profile-select"><option value="">— default —</option></select>
+      <button class="fd-btn" id="fd-profile-save" title="Save current filters to selected profile">save</button>
+      <button class="fd-btn" id="fd-profile-save-as" title="Save as new profile">save as</button>
+      <button class="fd-btn" id="fd-profile-delete" title="Delete selected profile">del</button>
+    </div>
+
+    <div class="fd-section" id="fd-status">
+      <div class="fd-section-header"><span class="fd-section-label">Status</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body">
+        <button class="fd-btn fd-status" data-status="open">open</button>
+        <button class="fd-btn fd-status" data-status="in_progress">active</button>
+        <button class="fd-btn fd-status" data-status="closed">closed</button>
+      </div>
+    </div>
+
+    <div class="fd-section" id="fd-types">
+      <div class="fd-section-header"><span class="fd-section-label">Types</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body">
+        <button class="fd-btn fd-type" data-type="epic">epic</button>
+        <button class="fd-btn fd-type" data-type="feature">feature</button>
+        <button class="fd-btn fd-type" data-type="bug">bug</button>
+        <button class="fd-btn fd-type" data-type="task">task</button>
+        <button class="fd-btn fd-type" data-type="jack">jack</button>
+      </div>
+    </div>
+
+    <div class="fd-section" id="fd-priority">
+      <div class="fd-section-header"><span class="fd-section-label">Priority</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body">
+        <div class="fd-priority-range">
+          <button class="fd-btn fd-priority" data-priority="0">P0</button>
+          <button class="fd-btn fd-priority" data-priority="1">P1</button>
+          <button class="fd-btn fd-priority" data-priority="2">P2</button>
+          <button class="fd-btn fd-priority" data-priority="3">P3</button>
+          <button class="fd-btn fd-priority" data-priority="4">P4</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="fd-section" id="fd-age">
+      <div class="fd-section-header"><span class="fd-section-label">Age</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body">
+        <button class="fd-btn fd-age" data-days="7">7d</button>
+        <button class="fd-btn fd-age" data-days="30">30d</button>
+        <button class="fd-btn fd-age" data-days="90">90d</button>
+        <button class="fd-btn fd-age" data-days="0">all</button>
+      </div>
+    </div>
+
+    <div class="fd-section" id="fd-agents">
+      <div class="fd-section-header"><span class="fd-section-label">Agents</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body">
+        <button class="fd-btn fd-agent-toggle active" id="fd-agent-show">show</button>
+        <button class="fd-btn fd-agent-toggle" id="fd-agent-orphaned">orphaned</button>
+        <div class="agent-rig-pills" id="fd-rig-pills"></div>
+        <input type="text" class="fd-agent-exclude-input" id="fd-agent-exclude" placeholder="hide agents: gt-*, bd-beads-*" spellcheck="false" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="fd-section" id="fd-assignee">
+      <div class="fd-section-header"><span class="fd-section-label">Assignee</span><span class="fd-section-arrow">&#9660;</span></div>
+      <div class="fd-section-body" id="fd-assignee-body"></div>
+    </div>
+
+    <div class="fd-footer">
+      <span id="fd-node-count" aria-live="polite">0/0 nodes</span>
+      <button class="fd-reset" id="fd-share" title="Copy shareable URL" aria-label="Copy shareable URL">share</button>
+      <button class="fd-reset" id="fd-reset" aria-label="Reset all filters">reset</button>
+    </div>
+  </aside>
+
+  <!-- bd-inqge: Right sidebar -->
+  <aside id="right-sidebar" aria-label="Project sidebar">
+    <div class="rs-header">
+      <span class="rs-title">PROJECT</span>
+      <button class="rs-collapse-btn" id="rs-collapse" title="Collapse sidebar" aria-label="Collapse project sidebar" aria-expanded="true">&#x25B6;</button>
+    </div>
+
+    <section class="rs-section" id="rs-epics" aria-label="Epic progress">
+      <div class="rs-section-header">
+        <h2 class="rs-section-label">Epic Progress</h2>
+        <span class="rs-section-toggle" aria-hidden="true">&#9660;</span>
+      </div>
+      <div class="rs-section-body" id="rs-epics-body">
+        <div class="rs-empty">loading...</div>
+      </div>
+    </section>
+
+    <section class="rs-section" id="rs-health" aria-label="Dependency health">
+      <div class="rs-section-header">
+        <h2 class="rs-section-label">Dep Health</h2>
+        <span class="rs-section-toggle" aria-hidden="true">&#9660;</span>
+      </div>
+      <div class="rs-section-body" id="rs-health-body">
+        <div class="rs-empty">loading...</div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- bd-69y6v: Control panel -->
+  <aside id="control-panel" role="dialog" aria-label="Control panel" aria-modal="false">
+    <div class="cp-header">
+      <span class="cp-title">CONTROL PANEL</span>
+      <button class="cp-close" id="cp-close" aria-label="Close control panel">&times;</button>
+    </div>
+
+    <div class="cp-section" id="cp-bloom">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Bloom</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">threshold</span>
+          <input type="range" class="cp-slider" id="cp-bloom-threshold" min="0" max="1" step="0.05" value="0.35">
+          <span class="cp-value" id="cp-bloom-threshold-val">0.35</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">strength</span>
+          <input type="range" class="cp-slider" id="cp-bloom-strength" min="0" max="3" step="0.1" value="0.7">
+          <span class="cp-value" id="cp-bloom-strength-val">0.70</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">radius</span>
+          <input type="range" class="cp-slider" id="cp-bloom-radius" min="0" max="1" step="0.05" value="0.4">
+          <span class="cp-value" id="cp-bloom-radius-val">0.40</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-shaders">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Shaders</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">glow opacity</span>
+          <input type="range" class="cp-slider" id="cp-fresnel-opacity" min="0" max="1" step="0.05" value="0.4">
+          <span class="cp-value" id="cp-fresnel-opacity-val">0.40</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">glow power</span>
+          <input type="range" class="cp-slider" id="cp-fresnel-power" min="0.5" max="5" step="0.1" value="2.0">
+          <span class="cp-value" id="cp-fresnel-power-val">2.0</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">pulse speed</span>
+          <input type="range" class="cp-slider" id="cp-pulse-speed" min="0.5" max="8" step="0.5" value="4.0">
+          <span class="cp-value" id="cp-pulse-speed-val">4.0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-stars">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Star Field</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">star count</span>
+          <input type="range" class="cp-slider" id="cp-star-count" min="0" max="5000" step="100" value="2000">
+          <span class="cp-value" id="cp-star-count-val">2000</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">twinkle speed</span>
+          <input type="range" class="cp-slider" id="cp-twinkle-speed" min="0" max="3" step="0.1" value="1.0">
+          <span class="cp-value" id="cp-twinkle-speed-val">1.0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-colors">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Colors</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">background</span>
+          <input type="color" class="cp-color-input" id="cp-bg-color" value="#000005">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">open</span>
+          <input type="color" class="cp-color-input" id="cp-color-open" value="#2d8a4e">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">active</span>
+          <input type="color" class="cp-color-input" id="cp-color-active" value="#d4a017">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">blocked</span>
+          <input type="color" class="cp-color-input" id="cp-color-blocked" value="#d04040">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">agent</span>
+          <input type="color" class="cp-color-input" id="cp-color-agent" value="#ff6b35">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">epic</span>
+          <input type="color" class="cp-color-input" id="cp-color-epic" value="#8b45a6">
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">jack</span>
+          <input type="color" class="cp-color-input" id="cp-color-jack" value="#e06830">
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-labels">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Labels</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">show labels</span>
+          <div class="cp-toggle on" id="cp-label-toggle"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">font size</span>
+          <input type="range" class="cp-slider" id="cp-label-size" min="6" max="24" step="1" value="11">
+          <span class="cp-value" id="cp-label-size-val">11</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">opacity</span>
+          <input type="range" class="cp-slider" id="cp-label-opacity" min="0" max="1" step="0.05" value="0.8">
+          <span class="cp-value" id="cp-label-opacity-val">0.80</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">show ID</span>
+          <div class="cp-toggle on" id="cp-label-show-id"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">show title</span>
+          <div class="cp-toggle on" id="cp-label-show-title"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">show status</span>
+          <div class="cp-toggle on" id="cp-label-show-status"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">bg opacity</span>
+          <input type="range" class="cp-slider" id="cp-label-bg-opacity" min="0" max="1" step="0.05" value="0.85">
+          <span class="cp-value" id="cp-label-bg-opacity-val">0.85</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">border</span>
+          <div class="cp-toggle on" id="cp-label-border"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-edges">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Edges</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row"><span class="cp-label">blocks</span><div class="cp-toggle on" id="cp-edge-blocks"></div></div>
+        <div class="cp-row"><span class="cp-label">parent-child</span><div class="cp-toggle on" id="cp-edge-parent-child"></div></div>
+        <div class="cp-row"><span class="cp-label">child-of</span><div class="cp-toggle on" id="cp-edge-child-of"></div></div>
+        <div class="cp-row"><span class="cp-label">waits-for</span><div class="cp-toggle on" id="cp-edge-waits-for"></div></div>
+        <div class="cp-row"><span class="cp-label">relates-to</span><div class="cp-toggle on" id="cp-edge-relates-to"></div></div>
+        <div class="cp-row"><span class="cp-label">action-item</span><div class="cp-toggle on" id="cp-edge-action-item"></div></div>
+        <div class="cp-row"><span class="cp-label">escalate</span><div class="cp-toggle on" id="cp-edge-escalate"></div></div>
+        <div class="cp-row"><span class="cp-label">duplicate</span><div class="cp-toggle on" id="cp-edge-duplicate"></div></div>
+        <div class="cp-row"><span class="cp-label">jira-link</span><div class="cp-toggle on" id="cp-edge-jira-link"></div></div>
+        <div class="cp-row"><span class="cp-label">assigned_to</span><div class="cp-toggle on" id="cp-edge-assigned-to"></div></div>
+        <div class="cp-row"><span class="cp-label">rig conflicts</span><div class="cp-toggle" id="cp-edge-rig-conflict"></div></div>
+        <div class="cp-row">
+          <span class="cp-label">max edges/node</span>
+          <input type="range" class="cp-slider" id="cp-edge-max-per-node" min="0" max="30" step="1" value="0">
+          <span class="cp-value" id="cp-edge-max-per-node-val">off</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-layout">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Layout</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">layout mode</span>
+          <select class="cp-select" id="cp-layout-mode">
+            <option value="free" selected>free</option>
+            <option value="dag">dag</option>
+            <option value="radial">radial</option>
+            <option value="cluster">cluster</option>
+          </select>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">charge strength</span>
+          <input type="range" class="cp-slider" id="cp-force-strength" min="0" max="300" step="5" value="60">
+          <span class="cp-value" id="cp-force-strength-val">60</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">link distance</span>
+          <input type="range" class="cp-slider" id="cp-link-distance" min="5" max="200" step="5" value="60">
+          <span class="cp-value" id="cp-link-distance-val">60</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">center force</span>
+          <input type="range" class="cp-slider" id="cp-center-force" min="0" max="2" step="0.05" value="1">
+          <span class="cp-value" id="cp-center-force-val">1.00</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">collision radius</span>
+          <input type="range" class="cp-slider" id="cp-collision-radius" min="0" max="30" step="1" value="0">
+          <span class="cp-value" id="cp-collision-radius-val">0</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">alpha decay</span>
+          <input type="range" class="cp-slider" id="cp-alpha-decay" min="0" max="0.1" step="0.002" value="0.023">
+          <span class="cp-value" id="cp-alpha-decay-val">0.023</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">agent tether</span>
+          <input type="range" class="cp-slider" id="cp-agent-tether" min="0" max="1" step="0.05" value="0.5">
+          <span class="cp-value" id="cp-agent-tether-val">0.50</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-animation">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Animation</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">fly speed</span>
+          <input type="range" class="cp-slider" id="cp-fly-speed" min="200" max="3000" step="100" value="1000">
+          <span class="cp-value" id="cp-fly-speed-val">1000</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-particles">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Particles / VFX</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row" style="margin-bottom:8px">
+          <span class="cp-label" style="font-weight:bold">intensity</span>
+          <input type="range" class="cp-slider" id="cp-vfx-intensity" min="0" max="4" step="0.25" value="1">
+          <span class="cp-value" id="cp-vfx-intensity-val">1.00</span>
+        </div>
+        <div class="cp-row" style="margin-bottom:8px;gap:4px">
+          <button class="ctrl-btn" id="cp-vfx-subtle" style="font-size:9px;padding:2px 6px" title="Subtle (0.25x)">subtle</button>
+          <button class="ctrl-btn" id="cp-vfx-normal" style="font-size:9px;padding:2px 6px" title="Normal (1.0x)">normal</button>
+          <button class="ctrl-btn" id="cp-vfx-dramatic" style="font-size:9px;padding:2px 6px" title="Dramatic (2.0x)">dramatic</button>
+          <button class="ctrl-btn" id="cp-vfx-max" style="font-size:9px;padding:2px 6px" title="MAXIMUM (4.0x)">MAX</button>
+        </div>
+        <div class="cp-row"><span class="cp-label">create burst</span><div class="cp-toggle on" id="cp-vfx-create"></div></div>
+        <div class="cp-row"><span class="cp-label">close implosion</span><div class="cp-toggle on" id="cp-vfx-close"></div></div>
+        <div class="cp-row"><span class="cp-label">status shockwave</span><div class="cp-toggle on" id="cp-vfx-shockwave"></div></div>
+        <div class="cp-row"><span class="cp-label">claim comet</span><div class="cp-toggle on" id="cp-vfx-comet"></div></div>
+        <div class="cp-row"><span class="cp-label">ambient aura</span><div class="cp-toggle on" id="cp-vfx-aura"></div></div>
+        <hr style="border-color:#2a2a3a;margin:6px 0">
+        <div class="cp-row">
+          <span class="cp-label">orbit speed</span>
+          <input type="range" class="cp-slider" id="cp-orbit-speed" min="0.5" max="6" step="0.25" value="2.5">
+          <span class="cp-value" id="cp-orbit-speed-val">2.50</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">orbit density</span>
+          <input type="range" class="cp-slider" id="cp-orbit-rate" min="0.02" max="0.3" step="0.01" value="0.08">
+          <span class="cp-value" id="cp-orbit-rate-val">0.08</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">orbit size</span>
+          <input type="range" class="cp-slider" id="cp-orbit-size" min="0.5" max="4" step="0.25" value="1.5">
+          <span class="cp-value" id="cp-orbit-size-val">1.50</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">hover glow</span>
+          <input type="range" class="cp-slider" id="cp-hover-rate" min="0.05" max="0.5" step="0.01" value="0.15">
+          <span class="cp-value" id="cp-hover-rate-val">0.15</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">stream density</span>
+          <input type="range" class="cp-slider" id="cp-stream-rate" min="0.04" max="0.4" step="0.01" value="0.12">
+          <span class="cp-value" id="cp-stream-rate-val">0.12</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">stream speed</span>
+          <input type="range" class="cp-slider" id="cp-stream-speed" min="1" max="8" step="0.5" value="3">
+          <span class="cp-value" id="cp-stream-speed-val">3.00</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">lifetime</span>
+          <input type="range" class="cp-slider" id="cp-particle-lifetime" min="0.2" max="2" step="0.1" value="0.8">
+          <span class="cp-value" id="cp-particle-lifetime-val">0.80</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">selection glow</span>
+          <input type="range" class="cp-slider" id="cp-selection-glow" min="0" max="2" step="0.1" value="1">
+          <span class="cp-value" id="cp-selection-glow-val">1.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-hud">
+      <div class="cp-section-header">
+        <span class="cp-section-label">HUD Visibility</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">stats overlay</span>
+          <div class="cp-toggle on" id="cp-hud-stats" data-target="hud"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">bottom bar</span>
+          <div class="cp-toggle on" id="cp-hud-bottom" data-target="bottom-hud"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">controls</span>
+          <div class="cp-toggle on" id="cp-hud-controls" data-target="controls"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">left sidebar</span>
+          <div class="cp-toggle on" id="cp-hud-left-sidebar" data-target="left-sidebar"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">right sidebar</span>
+          <div class="cp-toggle on" id="cp-hud-right-sidebar" data-target="right-sidebar"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">minimap</span>
+          <div class="cp-toggle on" id="cp-hud-minimap" data-target="minimap"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">tooltip</span>
+          <div class="cp-toggle on" id="cp-hud-tooltip" data-target="tooltip"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-camera">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Camera</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-row">
+          <span class="cp-label">field of view</span>
+          <input type="range" class="cp-slider" id="cp-camera-fov" min="20" max="120" step="5" value="75">
+          <span class="cp-value" id="cp-camera-fov-val">75</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">auto-rotate</span>
+          <div class="cp-toggle" id="cp-camera-autorotate"></div>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">rotate speed</span>
+          <input type="range" class="cp-slider" id="cp-camera-rotate-speed" min="0.5" max="10" step="0.5" value="2.0">
+          <span class="cp-value" id="cp-camera-rotate-speed-val">2.0</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">zoom speed</span>
+          <input type="range" class="cp-slider" id="cp-camera-zoom-speed" min="0.1" max="5" step="0.1" value="1.0">
+          <span class="cp-value" id="cp-camera-zoom-speed-val">1.0</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">near clip</span>
+          <input type="range" class="cp-slider" id="cp-camera-near" min="0.1" max="10" step="0.1" value="0.1">
+          <span class="cp-value" id="cp-camera-near-val">0.1</span>
+        </div>
+        <div class="cp-row">
+          <span class="cp-label">far clip</span>
+          <input type="range" class="cp-slider" id="cp-camera-far" min="1000" max="100000" step="1000" value="50000">
+          <span class="cp-value" id="cp-camera-far-val">50000</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-section" id="cp-presets">
+      <div class="cp-section-header">
+        <span class="cp-section-label">Presets</span>
+        <span class="cp-section-toggle">&#9660;</span>
+      </div>
+      <div class="cp-section-body">
+        <div class="cp-preset-row" id="cp-preset-buttons"></div>
+        <div class="cp-preset-row" style="margin-top:6px; gap:6px; display:flex;">
+          <button class="cp-preset-btn" id="cp-preset-export" style="color:#39c5cf;">export</button>
+          <button class="cp-preset-btn" id="cp-preset-import" style="color:#39c5cf;">import</button>
+          <button class="cp-preset-btn" id="cp-preset-copy-url" style="color:#39c5cf;">copy URL</button>
+          <input type="file" id="cp-preset-file-input" accept=".json" style="display:none;">
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Duplicate lightbox HTML removed (bd-7m6td) — see beads-f29q lightbox above -->
+
+  <div id="detail" role="complementary" aria-label="Issue detail panel"></div>
+  <div id="context-menu" role="menu" aria-label="Context menu"></div>
+  <canvas id="select-overlay" aria-hidden="true"></canvas>
+  <div id="bulk-menu" role="menu" aria-label="Bulk actions menu"></div>
+  <div id="agents-view" role="dialog" aria-label="Agents view" aria-modal="true"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

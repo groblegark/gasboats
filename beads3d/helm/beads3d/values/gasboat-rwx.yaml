@@ -1,0 +1,13 @@
+# gasboat-rwx deployment values
+image:
+  tag: latest  # Override with CalVer tag at deploy time
+
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
+ingress:
+  enabled: true
+  host: beads3d-gasboat.app.devops.fics.ai
+
+daemon:
+  url: http://gasboat-rwx-beads:8080

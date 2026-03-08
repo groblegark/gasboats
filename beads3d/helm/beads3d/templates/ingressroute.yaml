@@ -1,0 +1,58 @@
+{{- if and .Values.ingress.enabled .Values.ingress.host }}
+{{- $fullname := include "beads3d.fullname" . -}}
+{{- $host := .Values.ingress.host -}}
+{{- $port := .Values.service.port | default 80 -}}
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "beads3d.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`{{ $host }}`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: {{ $fullname }}
+          port: {{ $port }}
+      {{- if or .Values.ingress.ipWhitelist.enabled .Values.ingress.basicAuth.enabled }}
+      middlewares:
+        {{- if .Values.ingress.ipWhitelist.enabled }}
+        - name: {{ $fullname }}-ipwhitelist
+        {{- end }}
+        {{- if .Values.ingress.basicAuth.enabled }}
+        - name: {{ $fullname }}-basicauth
+        {{- end }}
+      {{- end }}
+{{- if .Values.ingress.ipWhitelist.enabled }}
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-ipwhitelist
+  labels:
+    {{- include "beads3d.labels" . | nindent 4 }}
+spec:
+  ipWhiteList:
+    sourceRange:
+      {{- toYaml .Values.ingress.ipWhitelist.sourceRange | nindent 6 }}
+    ipStrategy:
+      depth: {{ .Values.ingress.ipWhitelist.depth | default 1 }}
+{{- end }}
+{{- if .Values.ingress.basicAuth.enabled }}
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-basicauth
+  labels:
+    {{- include "beads3d.labels" . | nindent 4 }}
+spec:
+  basicAuth:
+    secret: {{ .Values.ingress.basicAuth.secret }}
+{{- end }}
+{{- end }}
