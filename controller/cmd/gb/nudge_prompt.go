@@ -76,6 +76,7 @@ func detectNudgeType() string {
 // nudgeVars holds substitution variables for nudge prompt templates.
 type nudgeVars struct {
 	Project      string
+	Role         string
 	ProjectHint  string
 	TaskHint     string
 	MonorepoHint string
@@ -111,6 +112,7 @@ func buildNudgeVars() nudgeVars {
 
 	return nudgeVars{
 		Project:      project,
+		Role:         os.Getenv("BOAT_ROLE"),
 		ProjectHint:  projectHint,
 		TaskHint:     taskHint,
 		MonorepoHint: monorepoHint,
@@ -147,7 +149,7 @@ func resolveNudgeFromConfig(promptType string, vars nudgeVars) string {
 	role := os.Getenv("BOAT_ROLE")
 	project := defaultGBProject()
 
-	subs := []string{"global:*"}
+	subs := []string{"global"}
 	if project != "" {
 		subs = append(subs, "project:"+project)
 	}
@@ -172,6 +174,7 @@ func resolveNudgeFromConfig(promptType string, vars nudgeVars) string {
 func substituteNudgeVars(tmpl string, vars nudgeVars) string {
 	r := strings.NewReplacer(
 		"{{.Project}}", vars.Project,
+		"{{.Role}}", vars.Role,
 		"{{.ProjectHint}}", vars.ProjectHint,
 		"{{.TaskHint}}", vars.TaskHint,
 		"{{.MonorepoHint}}", vars.MonorepoHint,
