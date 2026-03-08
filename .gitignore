@@ -1,0 +1,24 @@
+# Go
+gasboat/controller/bin/
+kbeads/kd
+kbeads/kd-*
+
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tgz
