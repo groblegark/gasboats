@@ -270,7 +270,7 @@ coopmux:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboats/coop
+    repository: ghcr.io/groblegark/gasboats/coopmux
     tag: ""
     pullPolicy: Always
 
