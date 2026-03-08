@@ -35,6 +35,26 @@ make lint             # lint all
 Each component retains its own CLAUDE.md with component-specific instructions.
 See `gasboat/CLAUDE.md`, `coop/CLAUDE.md`, `kbeads/CLAUDE.md`, `beads3d/CLAUDE.md`.
 
+## Release
+
+One tag, one pipeline, all components released together.
+
+```sh
+./scripts/release.sh          # bump Chart.yaml, commit, tag (calver YYYY.DDD.N)
+git push origin main <TAG>    # triggers all CI:
+#   - RWX docker.yml: builds + pushes all images to GHCR
+#   - RWX helm.yml: packages + pushes Helm chart
+#   - GitHub release.yml: creates release + triggers deploy
+```
+
+Formula: `kd formula apply kd-mfqqJTLtJu --var version=YYYY.DDD.N`
+
+## CI
+
+- **GitHub Actions**: path-filtered validation (only test changed components)
+- **RWX**: parallel build/test/lint with per-component caching
+- All images pushed to `ghcr.io/groblegark/gasboats/<component>:<calver>`
+
 ## Commits
 
 Use short, imperative subject lines. Scope in parentheses with component prefix:
