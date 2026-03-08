@@ -1,0 +1,984 @@
+# OCI image builds for gasboats monorepo — crane-based push to GHCR.
+#
+# Architecture:
+#   build-* tasks     -> compile binaries as artifacts (cached by filters)
+#   agent-install-*   -> 7 parallel cached agent layer installs
+#   push-*  tasks     -> crane-append layers to ubuntu:24.04, push to GHCR
+#
+# Images produced (all under ghcr.io/groblegark/gasboats/):
+#   push-controller     -> controller
+#   push-agent          -> agent (7-way parallelized + from-source coop/kd/gb)
+#   push-slack-bridge   -> slack-bridge
+#   push-jira-bridge    -> jira-bridge
+#   push-gitlab-bridge  -> gitlab-bridge
+#   push-advice-viewer  -> advice-viewer
+#   push-kbeads         -> kbeads
+#   push-beads3d        -> beads3d
+#   push-coop           -> coop (coopmux)
+#
+# Key monorepo improvement: coop and kd are built FROM SOURCE, not downloaded
+# from GitHub releases. No cross-repo dispatch needed.
+
+on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, '20') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: ${{ event.git.ref }}
+      status-checks:
+        name: Docker
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: pr
+      status-checks:
+        - tasks: [build-controller, build-gb, build-slack-bridge, build-jira-bridge, build-gitlab-bridge, build-advice-viewer, build-coop, build-kd]
+          name: Docker
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      ref-name: cli
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ═══════════════════════════════════════════════════════════════════════
+  # Build tasks — compile all binaries in parallel, output artifacts
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # ── Clone gasboats monorepo ──────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/gasboats.git
+      ref: ${{ init.commit-sha }}
+
+  # ── Go toolchain ───────────────────────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+
+  # ── Rust toolchain (for coop) ──────────────────────────────────────
+  - key: rust
+    filter:
+      - .rwx/docker.yml
+    run: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      . "$HOME/.cargo/env"
+      rustc --version
+
+  # ── Node.js (for beads3d) ──────────────────────────────────────────
+  - key: node
+    filter:
+      - .rwx/docker.yml
+    run: |
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+      node --version
+
+  # ── Controller Go mod download (cached) ─────────────────────────────
+  - key: gasboat-deps
+    use: [code, go]
+    run: cd gasboat/controller && go mod download
+    filter:
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+
+  # ── kbeads Go mod download (cached) ─────────────────────────────────
+  - key: kbeads-deps
+    use: [code, go]
+    run: cd kbeads && go mod download
+    filter:
+      - kbeads/go.mod
+      - kbeads/go.sum
+
+  # ── Coop Rust deps (cached) ─────────────────────────────────────────
+  - key: coop-deps
+    use: [code, rust]
+    run: |
+      . "$HOME/.cargo/env"
+      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
+      cd coop && cargo fetch
+    filter:
+      - coop/Cargo.lock
+      - coop/Cargo.toml
+
+  # ── beads3d npm deps (cached) ───────────────────────────────────────
+  - key: beads3d-deps
+    use: [code, node]
+    run: cd beads3d && npm ci
+    filter:
+      - beads3d/package-lock.json
+
+  # ── Build controller binary → artifact ─────────────────────────────
+  - key: build-controller
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../../controller-bin ./cmd/controller/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/**/*.html
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: controller-binary
+          path: controller-bin
+
+  # ── Build gb CLI binary → artifact ─────────────────────────────────
+  - key: build-gb
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w" \
+        -o ../../gb ./cmd/gb/
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: gb-binary
+          path: gb
+
+  # ── Build slack-bridge binary → artifact ───────────────────────────
+  - key: build-slack-bridge
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../../slack-bridge ./cmd/slack-bridge/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: slack-bridge-binary
+          path: slack-bridge
+
+  # ── Build jira-bridge binary → artifact ────────────────────────────
+  - key: build-jira-bridge
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../../jira-bridge ./cmd/jira-bridge/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: jira-bridge-binary
+          path: jira-bridge
+
+  # ── Build gitlab-bridge binary → artifact ──────────────────────────
+  - key: build-gitlab-bridge
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../../gitlab-bridge ./cmd/gitlab-bridge/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: gitlab-bridge-binary
+          path: gitlab-bridge
+
+  # ── Build advice-viewer binary → artifact ──────────────────────────
+  - key: build-advice-viewer
+    use: gasboat-deps
+    run: |
+      cd gasboat/controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../../advice-viewer ./cmd/advice-viewer/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - gasboat/controller/**/*.go
+      - gasboat/controller/go.mod
+      - gasboat/controller/go.sum
+    outputs:
+      artifacts:
+        - key: advice-viewer-binary
+          path: advice-viewer
+
+  # ── Build coop from source → artifact (MONOREPO: no more download) ─
+  - key: build-coop
+    use: coop-deps
+    timeout: 10m
+    run: |
+      . "$HOME/.cargo/env"
+      cd coop
+      CARGO_TARGET_DIR=/tmp/coop-target cargo build --release --workspace
+      mkdir -p ../coop-bin
+      cp /tmp/coop-target/release/coop ../coop-bin/coop
+      cp /tmp/coop-target/release/coopmux ../coop-bin/coopmux
+      ls -la ../coop-bin/
+    filter:
+      - coop/crates/**
+      - coop/Cargo.toml
+      - coop/Cargo.lock
+    outputs:
+      artifacts:
+        - key: coop-binaries
+          path: coop-bin
+
+  # ── Build kd from source → artifact (MONOREPO: no more download) ───
+  - key: build-kd
+    use: kbeads-deps
+    run: |
+      cd kbeads
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME}" \
+        -o ../kd-bin/kd ./cmd/kd/
+      ls -la ../kd-bin/
+    env:
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - kbeads/**/*.go
+      - kbeads/go.mod
+      - kbeads/go.sum
+    outputs:
+      artifacts:
+        - key: kd-binaries
+          path: kd-bin
+
+  # ── Build beads3d → artifact (MONOREPO: no more retag-latest) ──────
+  - key: build-beads3d
+    use: beads3d-deps
+    run: |
+      cd beads3d && npm run build
+      tar -cf ../beads3d-dist.tar -C dist .
+    filter:
+      - beads3d/src/**
+      - beads3d/package.json
+      - beads3d/vite.config.js
+    outputs:
+      artifacts:
+        - key: beads3d-dist
+          path: beads3d-dist.tar
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Push tasks — crane-append layers to ubuntu:24.04, push to GHCR.
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # ── Shared crane install + GHCR login ────────────────────────────────
+  - key: install-crane
+    cache: false
+    run: |
+      set -ex
+      curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz" \
+        | tar xz -C /tmp crane
+      sudo mv /tmp/crane /usr/local/bin/
+      echo "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GITHUB_USER" --password-stdin
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── Push controller ─────────────────────────────────────────────────
+  - key: push-controller
+    use: [code, build-controller, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-controller.artifacts.controller-binary }} /tmp/layer/controller
+      chmod 755 /tmp/layer/controller
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/controller"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /controller --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      APP_VERSION=$(grep '^appVersion:' gasboat/helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push slack-bridge ───────────────────────────────────────────────
+  - key: push-slack-bridge
+    use: [code, build-slack-bridge, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-slack-bridge.artifacts.slack-bridge-binary }} /tmp/layer/slack-bridge
+      chmod 755 /tmp/layer/slack-bridge
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/slack-bridge"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /slack-bridge --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push jira-bridge ────────────────────────────────────────────────
+  - key: push-jira-bridge
+    use: [build-jira-bridge, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-jira-bridge.artifacts.jira-bridge-binary }} /tmp/layer/jira-bridge
+      chmod 755 /tmp/layer/jira-bridge
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/jira-bridge"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /jira-bridge --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push gitlab-bridge ──────────────────────────────────────────────
+  - key: push-gitlab-bridge
+    use: [build-gitlab-bridge, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-gitlab-bridge.artifacts.gitlab-bridge-binary }} /tmp/layer/gitlab-bridge
+      chmod 755 /tmp/layer/gitlab-bridge
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/gitlab-bridge"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /gitlab-bridge --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push advice-viewer ──────────────────────────────────────────────
+  - key: push-advice-viewer
+    use: [build-advice-viewer, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-advice-viewer.artifacts.advice-viewer-binary }} /tmp/layer/advice-viewer
+      chmod 755 /tmp/layer/advice-viewer
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/advice-viewer"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /advice-viewer --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push kbeads (MONOREPO: built from source, no cross-repo dispatch) ─
+  - key: push-kbeads
+    use: [build-kd, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/usr/local/bin /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-kd.artifacts.kd-binaries }}/kd /tmp/layer/usr/local/bin/kd
+      chmod 755 /tmp/layer/usr/local/bin/kd
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/kbeads"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /usr/local/bin/kd --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push coop/coopmux (MONOREPO: built from source) ────────────────
+  - key: push-coop
+    use: [build-coop, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      # Coop binary image
+      mkdir -p /tmp/coop-layer/usr/local/bin /tmp/coop-layer/etc/ssl/certs
+      cp ${{ tasks.build-coop.artifacts.coop-binaries }}/coop /tmp/coop-layer/usr/local/bin/coop
+      chmod 755 /tmp/coop-layer/usr/local/bin/coop
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/coop-layer/etc/ssl/certs/
+      tar -cf /tmp/coop-layer.tar -C /tmp/coop-layer .
+
+      REPO="ghcr.io/groblegark/gasboats/coop"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/coop-layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /usr/local/bin/coop --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+
+      # Coopmux image
+      mkdir -p /tmp/mux-layer/usr/local/bin /tmp/mux-layer/etc/ssl/certs
+      cp ${{ tasks.build-coop.artifacts.coop-binaries }}/coopmux /tmp/mux-layer/usr/local/bin/coopmux
+      chmod 755 /tmp/mux-layer/usr/local/bin/coopmux
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/mux-layer/etc/ssl/certs/
+      tar -cf /tmp/mux-layer.tar -C /tmp/mux-layer .
+
+      REPO="ghcr.io/groblegark/gasboats/coopmux"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/mux-layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /usr/local/bin/coopmux --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Push beads3d (MONOREPO: built from source, no more retag) ──────
+  - key: push-beads3d
+    use: [build-beads3d, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      # nginx + built dist
+      mkdir -p /tmp/layer/usr/share/nginx/html
+      tar -xf ${{ tasks.build-beads3d.artifacts.beads3d-dist }} -C /tmp/layer/usr/share/nginx/html
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/beads3d"
+      crane append --base nginx:1.27-alpine --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane tag "${REPO}:${TAG}" latest
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Agent image — 7 parallel cached install tasks + 1 assembly task.
+  # Each install task filters on its own .rwx/agent-*.lock file so only
+  # the relevant cache is busted when a version changes.
+  #
+  # MONOREPO CHANGE: coop and kd come from build-coop and build-kd tasks
+  # (built from source) instead of download-coop and download-kd
+  # (downloaded from GitHub releases).
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # ── System packages: apt-get + dpkg copy + shared libs ──────────────
+  - key: agent-install-syspackages
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-syspackages.lock
+    run: |
+      set -e
+      export DEBIAN_FRONTEND=noninteractive
+      OUT=/tmp/syspackages
+      mkdir -p $OUT/usr/local/bin $OUT/usr/bin $OUT/etc
+
+      sudo apt-get -y update
+      sudo apt-get -y install --no-install-recommends \
+        curl git git-lfs jq xz-utils ca-certificates screen tmux \
+        openssh-client sudo \
+        python3 python3-pip python3-venv \
+        make unzip \
+        gcc g++ libc6-dev binutils \
+        pkg-config libssl-dev \
+        libcurl3t64-gnutls libicu74 libicu-dev \
+        postgresql-client shellcheck \
+        ffmpeg cmake libsdl2-dev
+
+      for pkg in git git-man git-lfs curl jq screen tmux ca-certificates xz-utils \
+          openssh-client sudo libapparmor1 \
+          python3 python3-minimal python3.12 python3.12-minimal \
+          python3-pip python3-venv python3.12-venv \
+          libpython3.12-stdlib libpython3.12-minimal \
+          make gcc g++ unzip binutils shellcheck \
+          gcc-14 g++-14 cpp-14 libgcc-14-dev \
+          libc6-dev linux-libc-dev binutils-x86-64-linux-gnu \
+          pkg-config libssl-dev \
+          libcurl4t64 libcurl3t64-gnutls \
+          libnghttp2-14 libbrotli1 libpsl5t64 libonig5 libexpat1 \
+          libicu74 libicu-dev icu-devtools \
+          postgresql-client libpq5 \
+          ffmpeg cmake libsdl2-dev; do
+        dpkg -L "$pkg" 2>/dev/null | while read -r f; do
+          [ -e "$f" ] || continue
+          [ -d "$f" ] && { mkdir -p "$OUT$f"; continue; }
+          mkdir -p "$OUT$(dirname "$f")" && cp -a "$f" "$OUT${f}" 2>/dev/null || true
+        done || true
+      done
+
+      for bin in /usr/bin/git /usr/bin/curl /usr/bin/jq /usr/bin/screen /usr/bin/tmux \
+          /usr/bin/python3 /usr/bin/ssh /usr/bin/make /usr/bin/gcc \
+          /usr/bin/sudo /usr/bin/psql /usr/bin/ffmpeg /usr/bin/cmake; do
+        [ -f "$bin" ] || continue
+        ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
+          [ -f "$lib" ] || continue
+          mkdir -p "$OUT$(dirname "$lib")"
+          cp -n "$lib" "$OUT${lib}" 2>/dev/null || true
+        done || true
+      done
+
+      # gcc internals
+      find /usr/libexec/gcc -name 'cc1*' -o -name 'lto1' 2>/dev/null | while read -r bin; do
+        ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
+          [ -f "$lib" ] || continue
+          mkdir -p "$OUT$(dirname "$lib")"
+          cp -n "$lib" "$OUT${lib}" 2>/dev/null || true
+        done || true
+      done || true
+
+      # ICU, headers, misc libs
+      find /usr/lib/x86_64-linux-gnu -name 'libicu*.so*' 2>/dev/null | while read -r f; do
+        mkdir -p "$OUT$(dirname "$f")" && cp -a "$f" "$OUT${f}" 2>/dev/null || true
+      done || true
+      [ -d /usr/include/unicode ] && mkdir -p $OUT/usr/include/unicode && cp -a /usr/include/unicode/* $OUT/usr/include/unicode/ 2>/dev/null || true
+      for d in /usr/include/c++/14 /usr/include/c++/13; do
+        if [ -d "$d" ]; then
+          mkdir -p "$OUT$d" && cp -a "$d"/* "$OUT$d/" 2>/dev/null || true
+          td="/usr/include/x86_64-linux-gnu/c++/$(basename $d)"
+          [ -d "$td" ] && mkdir -p "$OUT$td" && cp -a "$td"/* "$OUT$td/" 2>/dev/null || true
+          break
+        fi
+      done
+      find /usr/lib/x86_64-linux-gnu/pkgconfig -name 'icu*.pc' 2>/dev/null | while read -r f; do
+        mkdir -p "$OUT$(dirname "$f")" && cp "$f" "$OUT${f}" 2>/dev/null || true
+      done || true
+      cp -r /usr/lib/git-core $OUT/usr/lib/ 2>/dev/null || true
+      [ -d /usr/libexec/gcc ] && mkdir -p $OUT/usr/libexec && cp -r /usr/libexec/gcc $OUT/usr/libexec/ 2>/dev/null || true
+      for bin in /usr/bin/x86_64-linux-gnu-as /usr/bin/x86_64-linux-gnu-ld /usr/bin/as /usr/bin/ld; do
+        [ -f "$bin" ] || continue
+        ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
+          [ -f "$lib" ] || continue
+          mkdir -p "$OUT$(dirname "$lib")" && cp -n "$lib" "$OUT${lib}" 2>/dev/null || true
+        done || true
+      done
+      for script in /usr/lib/x86_64-linux-gnu/libc.so /usr/lib/x86_64-linux-gnu/libm.so; do
+        [ -f "$script" ] || continue
+        grep -oP '/lib/x86_64-linux-gnu/\S+' "$script" 2>/dev/null | tr -d ')' | while read -r ref; do
+          [ -f "$OUT$ref" ] && continue
+          src="/usr${ref}"; [ -f "$src" ] || src="$ref"; [ -f "$src" ] || continue
+          mkdir -p "$OUT$(dirname "$ref")" && cp "$src" "$OUT$ref" 2>/dev/null || true
+        done || true
+      done
+      for d in /usr/lib/gcc/x86_64-linux-gnu/14 /usr/lib/gcc/x86_64-linux-gnu/13; do
+        [ -d "$d" ] && mkdir -p "$OUT$d" && cp -a "$d"/* "$OUT$d/" 2>/dev/null && break || true
+      done
+      find /usr/lib/x86_64-linux-gnu -name 'libcurl-gnutls*' 2>/dev/null | while read -r f; do
+        mkdir -p "$OUT$(dirname "$f")" && cp -a "$f" "$OUT${f}" 2>/dev/null || true
+      done || true
+      mkdir -p $OUT/usr/libexec/sudo && cp /usr/libexec/sudo/*.so* $OUT/usr/libexec/sudo/ 2>/dev/null || true
+      ln -sf python3 $OUT/usr/bin/python
+
+      sudo tar -cf syspackages.tar -C $OUT .
+    outputs:
+      artifacts:
+        - key: syspackages-tar
+          path: syspackages.tar
+
+  # ── Node.js + Claude Code (agent layer) ────────────────────────────
+  - key: agent-install-node
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-node.lock
+    run: |
+      set -e
+      export DEBIAN_FRONTEND=noninteractive
+      OUT=/tmp/node-layer
+      mkdir -p $OUT/usr/local
+
+      NODE_FULL=$(curl -fsSL "https://nodejs.org/dist/index.json" \
+        | jq -r '[.[] | select(.version | startswith("v24."))][0].version')
+      [ "${NODE_FULL}" != "null" ] && [ -n "${NODE_FULL}" ] && \
+      curl -fsSL "https://nodejs.org/dist/${NODE_FULL}/node-${NODE_FULL}-linux-x64.tar.xz" \
+        | tar -xJ --strip-components=1 -C $OUT/usr/local
+
+      PATH=$OUT/usr/local/bin:$PATH npm install -g @anthropic-ai/claude-code
+
+      tar -cf node.tar -C $OUT .
+    outputs:
+      artifacts:
+        - key: node-tar
+          path: node.tar
+
+  # ── Playwright + Chromium (agent layer) ────────────────────────────
+  - key: agent-install-playwright
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-playwright.lock
+    run: |
+      set -e
+      export DEBIAN_FRONTEND=noninteractive
+      OUT=/tmp/playwright-layer
+      mkdir -p $OUT/ms-playwright $OUT/usr/local
+
+      sudo apt-get -y update
+      NODE_FULL=$(curl -fsSL "https://nodejs.org/dist/index.json" \
+        | jq -r '[.[] | select(.version | startswith("v24."))][0].version')
+      curl -fsSL "https://nodejs.org/dist/${NODE_FULL}/node-${NODE_FULL}-linux-x64.tar.xz" \
+        | tar -xJ --strip-components=1 -C $OUT/usr/local
+
+      PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
+
+      # Capture browser system deps
+      DEPS_OUT=/tmp/pw-deps
+      mkdir -p $DEPS_OUT
+      for lib in $(find $OUT/ms-playwright -name '*.so*' -type f 2>/dev/null); do
+        ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
+          [ -f "$dep" ] || continue
+          mkdir -p "$DEPS_OUT$(dirname "$dep")"
+          cp -n "$dep" "$DEPS_OUT${dep}" 2>/dev/null || true
+        done || true
+      done
+      tar -cf /tmp/pwdeps.tar -C $DEPS_OUT . 2>/dev/null || true
+      tar -cf playwright.tar -C $OUT .
+      # Append system deps
+      tar -rf playwright.tar -C $DEPS_OUT . 2>/dev/null || true
+    outputs:
+      artifacts:
+        - key: playwright-tar
+          path: playwright.tar
+
+  # ── Go toolchain (agent layer) ─────────────────────────────────────
+  - key: agent-install-go
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-go.lock
+    run: |
+      set -e
+      OUT=/tmp/go-layer
+      mkdir -p $OUT/usr/local
+
+      GO_LATEST=$(curl -fsSL "https://go.dev/dl/?mode=json" \
+        | jq -r '[.[] | select(.version | startswith("go1.25"))][0].version')
+      curl -fsSL "https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz" | tar -C $OUT/usr/local -xz
+
+      GOPATH=/tmp/go $OUT/usr/local/go/bin/go install golang.org/x/tools/gopls@latest
+      mkdir -p $OUT/usr/local/go/bin
+      mv /tmp/go/bin/gopls $OUT/usr/local/go/bin/gopls
+      rm -rf /tmp/go
+
+      # golangci-lint
+      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b $OUT/usr/local/bin v1.64.8
+
+      # Task CLI
+      GOPATH=/tmp/go $OUT/usr/local/go/bin/go install github.com/go-task/task/v3/cmd/task@latest
+      mv /tmp/go/bin/task $OUT/usr/local/bin/task
+      rm -rf /tmp/go
+
+      tar -cf go.tar -C $OUT .
+    outputs:
+      artifacts:
+        - key: go-tar
+          path: go.tar
+
+  # ── Rust toolchain (agent layer) ───────────────────────────────────
+  - key: agent-install-rust
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-rust.lock
+    run: |
+      set -e
+      OUT=/tmp/rust-layer
+      mkdir -p $OUT/usr/local/rustup $OUT/usr/local/cargo
+
+      sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      export RUSTUP_HOME=$OUT/usr/local/rustup
+      export CARGO_HOME=$OUT/usr/local/cargo
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile default \
+            --component rust-analyzer
+
+      # quench
+      $OUT/usr/local/cargo/bin/cargo install quench --git https://github.com/alfredjeanlab/quench
+      mv $OUT/usr/local/cargo/bin/quench $OUT/usr/local/bin/quench 2>/dev/null || mkdir -p $OUT/usr/local/bin && mv $CARGO_HOME/bin/quench $OUT/usr/local/bin/quench
+
+      chmod -R a+rw $OUT/usr/local/rustup $OUT/usr/local/cargo
+
+      tar -cf rust.tar -C $OUT .
+    outputs:
+      artifacts:
+        - key: rust-tar
+          path: rust.tar
+
+  # ── CLI tools (agent layer) ────────────────────────────────────────
+  - key: agent-install-clis
+    timeout: 10m
+    filter:
+      - gasboat/.rwx/agent-clis.lock
+    run: |
+      set -e
+      OUT=/tmp/clis-layer
+      mkdir -p $OUT/usr/local/bin $OUT/opt $OUT/usr/local/share/helm/plugins
+
+      # All downloads in parallel
+      (
+        # kubectl
+        KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+        curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o $OUT/usr/local/bin/kubectl
+        chmod +x $OUT/usr/local/bin/kubectl
+      ) &
+      (
+        # GitHub CLI
+        GH_VERSION=$(curl -fsSL "https://api.github.com/repos/cli/cli/releases/latest" | jq -r .tag_name | sed "s/^v//")
+        curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+          | tar -xz --strip-components=2 -C $OUT/usr/local/bin "gh_${GH_VERSION}_linux_amd64/bin/gh"
+      ) &
+      (
+        # GitLab CLI
+        GLAB_VERSION=$(curl -fsSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases" | jq -r '.[0].tag_name | ltrimstr("v")')
+        curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_amd64.tar.gz" \
+          | tar -xz --strip-components=1 -C $OUT/usr/local/bin bin/glab
+      ) &
+      (
+        # Docker CLI
+        curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz" \
+          | tar -xz --strip-components=1 -C $OUT/usr/local/bin docker/docker
+      ) &
+      (
+        # AWS CLI
+        curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip
+        unzip -q /tmp/awscli.zip -d /tmp
+        /tmp/aws/install --install-dir $OUT/opt/aws-cli --bin-dir $OUT/usr/local/bin
+        rm -rf /tmp/awscli.zip /tmp/aws
+      ) &
+      (
+        # Helm
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | HELM_INSTALL_DIR=$OUT/usr/local/bin bash
+      ) &
+      (
+        # Terraform + Terragrunt
+        curl -fsSL "https://releases.hashicorp.com/terraform/1.11.3/terraform_1.11.3_linux_amd64.zip" -o /tmp/terraform.zip
+        unzip -q /tmp/terraform.zip -d $OUT/usr/local/bin
+        rm /tmp/terraform.zip
+        curl -fsSL "https://github.com/gruntwork-io/terragrunt/releases/download/v0.77.11/terragrunt_linux_amd64" \
+          -o $OUT/usr/local/bin/terragrunt
+        chmod +x $OUT/usr/local/bin/terragrunt
+      ) &
+      (
+        # uv
+        curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh
+        mv /root/.local/bin/uv $OUT/usr/local/bin/uv 2>/dev/null || true
+        mv /root/.local/bin/uvx $OUT/usr/local/bin/uvx 2>/dev/null || true
+      ) &
+      (
+        # Bun
+        curl -fsSL https://bun.sh/install | BUN_INSTALL=$OUT/usr/local/bun bash
+        ln -sf $OUT/usr/local/bun/bin/bun $OUT/usr/local/bin/bun
+        ln -sf $OUT/usr/local/bun/bin/bunx $OUT/usr/local/bin/bunx
+      ) &
+      (
+        # yq
+        YQ_VERSION=$(curl -fsSL "https://api.github.com/repos/mikefarah/yq/releases/latest" | jq -r .tag_name)
+        curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o $OUT/usr/local/bin/yq
+        chmod +x $OUT/usr/local/bin/yq
+      ) &
+      (
+        # stern
+        curl -fsSL "https://github.com/stern/stern/releases/download/v1.30.0/stern_1.30.0_linux_amd64.tar.gz" \
+          | tar -xz -C $OUT/usr/local/bin stern
+      ) &
+      (
+        # hadolint
+        curl -fsSL "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64" \
+          -o $OUT/usr/local/bin/hadolint
+        chmod +x $OUT/usr/local/bin/hadolint
+      ) &
+      (
+        # RTK
+        curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v0.23.0/rtk-x86_64-unknown-linux-musl.tar.gz" \
+          | tar -xz -C $OUT/usr/local/bin rtk
+      ) &
+      (
+        # Claudeless
+        curl -fsSL "https://github.com/alfredjeanlab/claudeless/releases/download/v0.4.0/claudeless-linux-x86_64.tar.gz" \
+          | tar -xz -C $OUT/usr/local/bin claudeless
+        chmod +x $OUT/usr/local/bin/claudeless
+      ) &
+      (
+        # whisper-cli
+        sudo apt-get update && sudo apt-get install -y cmake libsdl2-dev gcc g++ make
+        curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz" \
+          | tar -xz -C /tmp
+        cmake -S /tmp/whisper.cpp-1.8.3 -B /tmp/whisper-build \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        cmake --build /tmp/whisper-build --config Release -j$(nproc) --target whisper-cli
+        cp /tmp/whisper-build/bin/whisper-cli $OUT/usr/local/bin/whisper-cli
+        rm -rf /tmp/whisper.cpp-1.8.3 /tmp/whisper-build
+      ) &
+      wait
+
+      sudo tar -cf clis.tar -C $OUT .
+    outputs:
+      artifacts:
+        - key: clis-tar
+          path: clis.tar
+
+  # ── Agent assembly: merge all layers + push ────────────────────────
+  - key: push-agent
+    use: [code, build-gb, build-coop, build-kd, install-crane, agent-install-syspackages, agent-install-node, agent-install-playwright, agent-install-go, agent-install-rust, agent-install-clis]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    timeout: 10m
+    run: |
+      set -e
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      LAYER=/tmp/layer
+      mkdir -p $LAYER
+
+      # Unpack all cached install layers in parallel
+      echo "=== Unpacking cached layers (parallel) ==="
+      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER &
+      sudo tar -xf ${{ tasks.agent-install-node.artifacts.node-tar }} -C $LAYER &
+      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER &
+      sudo tar -xf ${{ tasks.agent-install-go.artifacts.go-tar }} -C $LAYER &
+      sudo tar -xf ${{ tasks.agent-install-rust.artifacts.rust-tar }} -C $LAYER &
+      sudo tar -xf ${{ tasks.agent-install-clis.artifacts.clis-tar }} -C $LAYER &
+      wait
+      echo "=== All layers unpacked ==="
+
+      # Project binaries — ALL FROM SOURCE (monorepo advantage)
+      echo "=== Adding project binaries (built from source) ==="
+      cp ${{ tasks.build-gb.artifacts.gb-binary }} $LAYER/usr/local/bin/gb
+      cp ${{ tasks.build-coop.artifacts.coop-binaries }}/coop $LAYER/usr/local/bin/coop
+      cp ${{ tasks.build-kd.artifacts.kd-binaries }}/kd $LAYER/usr/local/bin/kd
+      chmod +x $LAYER/usr/local/bin/gb $LAYER/usr/local/bin/coop $LAYER/usr/local/bin/kd
+
+      # Hook scripts, scenarios, entrypoint
+      mkdir -p $LAYER/hooks $LAYER/scenarios
+      cp gasboat/images/agent/hooks/*.sh $LAYER/hooks/
+      chmod +x $LAYER/hooks/*.sh
+      cp gasboat/images/agent/scenarios/*.toml $LAYER/scenarios/
+      cp gasboat/images/agent/entrypoint.sh $LAYER/entrypoint.sh
+      chmod +x $LAYER/entrypoint.sh
+
+      # CA certs + version metadata
+      mkdir -p $LAYER/etc/ssl/certs
+      cp /etc/ssl/certs/ca-certificates.crt $LAYER/etc/ssl/certs/
+      echo "${TAG}" > $LAYER/etc/gasboat-version
+
+      # Sudoers config
+      sudo mkdir -p $LAYER/etc/sudoers.d
+      printf 'Defaults   env_reset\nDefaults   secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin"\nroot ALL=(ALL:ALL) ALL\n#includedir /etc/sudoers.d\n' | sudo tee $LAYER/etc/sudoers > /dev/null
+      sudo chmod 0440 $LAYER/etc/sudoers
+      printf 'agent ALL=(ALL) NOPASSWD: ALL\n' | sudo tee $LAYER/etc/sudoers.d/agent > /dev/null
+      sudo chmod 0440 $LAYER/etc/sudoers.d/agent
+      sudo cp /etc/sudo.conf $LAYER/etc/sudo.conf 2>/dev/null || true
+
+      # Agent user (rename ubuntu→agent, UID 1000)
+      cp /etc/passwd $LAYER/etc/passwd
+      sed -i "s/^ubuntu:/agent:/" $LAYER/etc/passwd
+      sed -i "s|/home/ubuntu|/home/agent|" $LAYER/etc/passwd
+      sed -i "s|/bin/sh|/bin/bash|" $LAYER/etc/passwd
+      cp /etc/group $LAYER/etc/group
+      sed -i "s/^ubuntu:/agent:/" $LAYER/etc/group
+      mkdir -p $LAYER/home/agent/workspace
+
+      # Fix ownership
+      sudo chown root:root $LAYER/usr/bin/sudo 2>/dev/null || true
+      sudo chmod 4755 $LAYER/usr/bin/sudo 2>/dev/null || true
+      sudo chown root:root $LAYER/etc/sudoers $LAYER/etc/sudoers.d 2>/dev/null || true
+      sudo chown root:root $LAYER/etc/sudo.conf 2>/dev/null || true
+      sudo chown -R 1000:1000 $LAYER/home/agent
+
+      # Create tar and push
+      echo "=== Pushing image ==="
+      sudo tar -cf /tmp/layer.tar -C $LAYER .
+
+      REPO="ghcr.io/groblegark/gasboats/agent"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" \
+        --entrypoint /entrypoint.sh \
+        --user 1000 \
+        --workdir /home/agent/workspace \
+        --env PATH="/usr/local/bun/bin:/usr/local/cargo/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+        --env RUSTUP_HOME=/usr/local/rustup \
+        --env CARGO_HOME=/usr/local/cargo \
+        --env BUN_INSTALL=/usr/local/bun \
+        --env HELM_PLUGINS=/usr/local/share/helm/plugins \
+        -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      APP_VERSION=$(grep '^appVersion:' gasboat/helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
