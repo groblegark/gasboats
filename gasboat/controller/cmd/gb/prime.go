@@ -60,8 +60,11 @@ func runPrime(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 1. Workflow context.
+	// 0. Identity announcement.
 	role := os.Getenv("BOAT_ROLE")
+	outputIdentity(w, agentID, role)
+
+	// 1. Workflow context.
 	outputWorkflowContext(w, role)
 
 	// 2. Advice.
@@ -129,13 +132,40 @@ func resolvePrimeAgentIdentity(cmd *cobra.Command) string {
 	return ""
 }
 
+// outputIdentity outputs the agent's identity (name, role, project) so it can
+// announce itself at session start. This runs before workflow context so the
+// agent knows who it is from the very first line of prime output.
+func outputIdentity(w io.Writer, agentID, role string) {
+	project := defaultGBProject()
+
+	// Only output if we have meaningful identity info.
+	if agentID == "" && role == "" && project == "" {
+		return
+	}
+
+	fmt.Fprintln(w, "## Your Identity")
+	fmt.Fprintln(w)
+	if agentID != "" {
+		fmt.Fprintf(w, "- **Agent**: %s\n", agentID)
+	}
+	if role != "" {
+		fmt.Fprintf(w, "- **Role**: %s\n", role)
+	}
+	if project != "" {
+		fmt.Fprintf(w, "- **Project**: %s\n", project)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Announce your role and project in your first message to the team (e.g. via `gb squawk`).")
+	fmt.Fprintln(w)
+}
+
 // outputWorkflowContext fetches workflow context from config beads (claude-instructions
 // category), falling back to hardcoded defaults.
 func outputWorkflowContext(w io.Writer, role string) {
 	ctx := context.Background()
 
 	// Build subscriptions for config resolution.
-	subs := []string{"global:*"}
+	subs := []string{"global"}
 	if role != "" {
 		subs = append(subs, "role:"+role)
 	}
