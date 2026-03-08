@@ -1,28 +1,27 @@
-.PHONY: build build-controller build-bridge build-wl-bridge build-kbeads build-coop build-beads3d test lint
+.PHONY: build build-gasboat build-kbeads build-coop build-beads3d test lint clean
 
 # Build all components
-build: build-controller build-bridge build-wl-bridge build-kbeads build-coop build-beads3d
+build: build-gasboat build-kbeads build-coop build-beads3d
 
 # Go components (via go.work)
-build-controller:
-	cd gasboat/controller && go build ./cmd/controller/
-
-build-bridge:
-	cd gasboat/controller && go build ./cmd/slack-bridge/
-
-build-wl-bridge:
-	cd gasboat/controller && go build ./cmd/wl-bridge/
+build-gasboat:
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/controller ./cmd/controller/
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/slack-bridge ./cmd/slack-bridge/
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/gb ./cmd/gb/
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/jira-bridge ./cmd/jira-bridge/
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/gitlab-bridge ./cmd/gitlab-bridge/
+	cd gasboat/controller && CGO_ENABLED=0 go build -o bin/advice-viewer ./cmd/advice-viewer/
 
 build-kbeads:
-	cd kbeads && go build ./cmd/...
+	cd kbeads && CGO_ENABLED=0 go build -o bin/kd ./cmd/kd/
 
 # Rust components
 build-coop:
-	cd coop && cargo build --workspace
+	cd coop && cargo build --workspace --release
 
 # JS components
 build-beads3d:
-	cd beads3d && npm run build
+	cd beads3d && npm ci && npm run build
 
 # Test all
 test: test-go test-rust test-js
@@ -42,3 +41,10 @@ lint:
 	cd gasboat/controller && go vet ./...
 	cd kbeads && go vet ./...
 	cd coop && cargo clippy --workspace
+
+# Clean
+clean:
+	rm -rf gasboat/controller/bin/
+	rm -rf kbeads/bin/
+	cd coop && cargo clean
+	rm -rf beads3d/dist/
