@@ -72,7 +72,7 @@ agents:
   # --- Controller deployment ---
 
   image:
-    repository: ghcr.io/groblegark/gasboat
+    repository: ghcr.io/groblegark/gasboats/controller
     tag: ""
     pullPolicy: Always
 
@@ -98,7 +98,7 @@ agents:
 
   # Image used for agent pods spawned by the controller (includes gb + kd CLIs)
   agentImage:
-    repository: ghcr.io/groblegark/gasboat/agent
+    repository: ghcr.io/groblegark/gasboats/agent
     tag: ""
 
   # ServiceAccount for spawned agent pods (not the controller itself).
@@ -270,7 +270,7 @@ coopmux:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/coop
+    repository: ghcr.io/groblegark/gasboats/coop
     tag: ""
     pullPolicy: Always
 
@@ -426,7 +426,7 @@ postgres:
 # =============================================================================
 beads:
   image:
-    repository: ghcr.io/groblegark/kbeads
+    repository: ghcr.io/groblegark/gasboats/kbeads
     tag: ""
     pullPolicy: Always
 
@@ -529,7 +529,7 @@ slackBridge:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboat/slack-bridge
+    repository: ghcr.io/groblegark/gasboats/slack-bridge
     tag: ""
     pullPolicy: Always
 
@@ -561,7 +561,7 @@ slackBridge:
     secretName: ""
     secretKey: "token"
     # Comma-separated repos to check. Suffix with ~ext to mark as external dep.
-    # Default: groblegark/gasboat,groblegark/kbeads~ext,groblegark/coop~ext
+    # Default: groblegark/gasboats (monorepo — all components in one repo)
     repos: ""
 
   # Bouncer — IP whitelist management via /bouncer Slack command.
@@ -634,7 +634,7 @@ adviceViewer:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboat/advice-viewer
+    repository: ghcr.io/groblegark/gasboats/advice-viewer
     tag: ""
     pullPolicy: Always
 
@@ -690,7 +690,7 @@ beads3d:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/beads3d
+    repository: ghcr.io/groblegark/gasboats/beads3d
     tag: "2026.224.1"
     pullPolicy: IfNotPresent
 
@@ -811,7 +811,7 @@ jiraBridge:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboat/jira-bridge
+    repository: ghcr.io/groblegark/gasboats/jira-bridge
     tag: ""
     pullPolicy: Always
 
@@ -885,7 +885,7 @@ gitlabBridge:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboat/gitlab-bridge
+    repository: ghcr.io/groblegark/gasboats/gitlab-bridge
     tag: ""
     pullPolicy: Always
 

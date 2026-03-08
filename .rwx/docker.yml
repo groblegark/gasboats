@@ -733,19 +733,18 @@ tasks:
         | jq -r '[.[] | select(.version | startswith("go1.25"))][0].version')
       curl -fsSL "https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz" | tar -C $OUT/usr/local -xz
 
-      GOPATH=/tmp/go $OUT/usr/local/go/bin/go install golang.org/x/tools/gopls@latest
-      mkdir -p $OUT/usr/local/go/bin
-      mv /tmp/go/bin/gopls $OUT/usr/local/go/bin/gopls
-      rm -rf /tmp/go
+      GOROOT=$OUT/usr/local/go GOPATH=/tmp/gopath $OUT/usr/local/go/bin/go install golang.org/x/tools/gopls@latest 2>/dev/null || true
+      cp /tmp/gopath/bin/gopls $OUT/usr/local/go/bin/ 2>/dev/null || true
 
       # golangci-lint
       curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
         | sh -s -- -b $OUT/usr/local/bin v1.64.8
 
       # Task CLI
-      GOPATH=/tmp/go $OUT/usr/local/go/bin/go install github.com/go-task/task/v3/cmd/task@latest
-      mv /tmp/go/bin/task $OUT/usr/local/bin/task
-      rm -rf /tmp/go
+      GOROOT=$OUT/usr/local/go GOPATH=/tmp/gopath $OUT/usr/local/go/bin/go install github.com/go-task/task/v3/cmd/task@latest
+      mv /tmp/gopath/bin/task $OUT/usr/local/bin/task
+      chmod -R u+w /tmp/gopath 2>/dev/null || true
+      rm -rf /tmp/gopath
 
       tar -cf go.tar -C $OUT .
     outputs:
