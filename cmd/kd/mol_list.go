@@ -73,20 +73,16 @@ func printMolList(beads []*model.Bead, total int) {
 	fmt.Printf("\n%d molecules (%d total)\n", len(beads), total)
 }
 
-// molFormulaID extracts the formula_id (or legacy template_id) from a molecule's fields.
+// molFormulaID extracts the formula_id from a molecule's fields.
 func molFormulaID(b *model.Bead) string {
 	if len(b.Fields) == 0 {
 		return ""
 	}
 	var f struct {
-		FormulaID  string `json:"formula_id"`
-		TemplateID string `json:"template_id"`
+		FormulaID string `json:"formula_id"`
 	}
 	if json.Unmarshal(b.Fields, &f) == nil {
-		if f.FormulaID != "" {
-			return f.FormulaID
-		}
-		return f.TemplateID
+		return f.FormulaID
 	}
 	return ""
 }

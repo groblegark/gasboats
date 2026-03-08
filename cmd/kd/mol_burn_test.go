@@ -125,27 +125,6 @@ func TestBurnCmd_NotMolecule(t *testing.T) {
 	}
 }
 
-func TestBurnCmd_LegacyBundle(t *testing.T) {
-	mc := newMockClient()
-	mc.Beads["kd-bundle"] = &model.Bead{
-		ID: "kd-bundle", Title: "Old bundle", Type: "bundle",
-	}
-	mc.RevDeps["kd-bundle"] = []*model.Dependency{}
-	withMockClient(t, mc)
-
-	cmd := newBurnCmd()
-	cmd.SetArgs([]string{"kd-bundle", "--force"})
-	out := captureStdout(t, func() {
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("burn bundle: %v", err)
-		}
-	})
-
-	// Legacy "bundle" type should be accepted.
-	if !strings.Contains(out, "Burned molecule kd-bundle") {
-		t.Errorf("output missing confirmation, got:\n%s", out)
-	}
-}
 
 func TestBurnCmd_ChildDeleteError(t *testing.T) {
 	mc := newMockClient()

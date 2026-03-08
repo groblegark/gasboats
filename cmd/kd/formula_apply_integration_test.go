@@ -377,25 +377,6 @@ func TestRunFormulaApply_NotFormula(t *testing.T) {
 	}
 }
 
-func TestRunFormulaApply_LegacyTemplate(t *testing.T) {
-	mc := newMockClient()
-	mc.CreateIDs = []string{"kd-m", "kd-s"}
-	mc.Beads["kd-tmpl"] = &model.Bead{
-		ID:    "kd-tmpl",
-		Title: "Legacy",
-		Type:  "template",
-		Fields: makeFormulaFields(nil, []FormulaStep{
-			{ID: "s1", Title: "Do thing"},
-		}),
-	}
-	withMockClient(t, mc)
-
-	// Legacy "template" type should be accepted.
-	err := runFormulaApply(formulaApplyOpts{FormulaID: "kd-tmpl"})
-	if err != nil {
-		t.Fatalf("legacy template: %v", err)
-	}
-}
 
 func TestRunFormulaApply_EmptyFields(t *testing.T) {
 	mc := newMockClient()

@@ -30,8 +30,7 @@ func runFormulaApply(opts formulaApplyOpts) error {
 	if err != nil {
 		return fmt.Errorf("resolving formula: %w", err)
 	}
-	// Accept both "formula" and legacy "template" type.
-	if string(bead.Type) != "formula" && string(bead.Type) != "template" {
+	if string(bead.Type) != "formula" {
 		return fmt.Errorf("bead %s is type %q, not formula", opts.FormulaID, bead.Type)
 	}
 

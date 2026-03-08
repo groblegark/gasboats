@@ -13,19 +13,10 @@ import (
 
 func TestMolFormulaID_FormulaID(t *testing.T) {
 	b := &model.Bead{
-		Fields: json.RawMessage(`{"formula_id":"kd-f-1","template_id":"kd-t-1"}`),
+		Fields: json.RawMessage(`{"formula_id":"kd-f-1"}`),
 	}
 	if got := molFormulaID(b); got != "kd-f-1" {
-		t.Errorf("molFormulaID = %q, want kd-f-1 (prefer formula_id)", got)
-	}
-}
-
-func TestMolFormulaID_LegacyTemplateID(t *testing.T) {
-	b := &model.Bead{
-		Fields: json.RawMessage(`{"template_id":"kd-t-1"}`),
-	}
-	if got := molFormulaID(b); got != "kd-t-1" {
-		t.Errorf("molFormulaID = %q, want kd-t-1 (fallback to template_id)", got)
+		t.Errorf("molFormulaID = %q, want kd-f-1", got)
 	}
 }
 
@@ -67,7 +58,7 @@ func TestPrintMolList_WithBeads(t *testing.T) {
 			ID:     "kd-mol-2",
 			Status: model.StatusInProgress,
 			Title:  "Deploy pipeline",
-			Fields: json.RawMessage(`{"template_id":"kd-t-old"}`),
+			Fields: json.RawMessage(`{"formula_id":"kd-f-old"}`),
 		},
 	}
 
@@ -77,7 +68,7 @@ func TestPrintMolList_WithBeads(t *testing.T) {
 
 	for _, want := range []string{
 		"kd-mol-1", "open", "Auth workflow", "kd-f-1", "alice",
-		"kd-mol-2", "in_progress", "Deploy pipeline", "kd-t-old",
+		"kd-mol-2", "in_progress", "Deploy pipeline", "kd-f-old",
 		"2 molecules (5 total)",
 	} {
 		if !strings.Contains(out, want) {
@@ -169,29 +160,6 @@ func TestMolShowCmd_DisplaysMolecule(t *testing.T) {
 	}
 }
 
-func TestMolShowCmd_LegacyBundle(t *testing.T) {
-	mc := newMockClient()
-	mc.Beads["kd-bundle"] = &model.Bead{
-		ID:     "kd-bundle",
-		Title:  "Old bundle",
-		Type:   "bundle",
-		Status: model.StatusOpen,
-		Fields: json.RawMessage(`{"template_id":"kd-t-1"}`),
-	}
-	mc.RevDeps["kd-bundle"] = []*model.Dependency{}
-	withMockClient(t, mc)
-
-	cmd := molShowCmd
-	out := captureStdout(t, func() {
-		if err := cmd.RunE(cmd, []string{"kd-bundle"}); err != nil {
-			t.Fatalf("mol show bundle: %v", err)
-		}
-	})
-
-	if !strings.Contains(out, "Formula:     kd-t-1") {
-		t.Errorf("output should show legacy template_id as formula, got:\n%s", out)
-	}
-}
 
 func TestMolShowCmd_NotMolecule(t *testing.T) {
 	mc := newMockClient()

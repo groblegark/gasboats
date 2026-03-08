@@ -140,8 +140,6 @@ func init() {
 	rootCmd.AddCommand(jackCmd)
 	rootCmd.AddCommand(formulaCmd)
 	rootCmd.AddCommand(molCmd)
-	rootCmd.AddCommand(templateCmd) // hidden alias
-	rootCmd.AddCommand(bundleCmd)   // hidden alias
 
 	// System
 	rootCmd.AddCommand(serveCmd)
