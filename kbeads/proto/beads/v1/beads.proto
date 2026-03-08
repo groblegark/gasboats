@@ -1,0 +1,197 @@
+syntax = "proto3";
+package beads.v1;
+option go_package = "github.com/groblegark/kbeads/gen/beads/v1;beadsv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "beads/v1/types.proto";
+
+// CreateBeadRequest contains the fields needed to create a new bead.
+message CreateBeadRequest {
+  string title = 1;
+  string kind = 2;
+  string type = 3;
+  string description = 4;
+  string notes = 5;
+  int32 priority = 6;
+  string assignee = 7;
+  string owner = 8;
+  optional google.protobuf.Timestamp due_at = 9;
+  optional google.protobuf.Timestamp defer_until = 10;
+  bytes fields = 11;
+  repeated string labels = 12;
+  string created_by = 13;
+}
+
+// CreateBeadResponse returns the newly created bead.
+message CreateBeadResponse {
+  Bead bead = 1;
+}
+
+// GetBeadRequest identifies a bead to retrieve.
+message GetBeadRequest {
+  string id = 1;
+}
+
+// GetBeadResponse returns a single bead.
+message GetBeadResponse {
+  Bead bead = 1;
+}
+
+// ListBeadsRequest contains filter criteria for listing beads.
+message ListBeadsRequest {
+  repeated string status = 1;
+  repeated string type = 2;
+  repeated string kind = 3;
+  google.protobuf.Int32Value priority = 4;
+  string assignee = 5;
+  repeated string labels = 6;
+  string search = 7;
+  int32 limit = 8;
+  int32 offset = 9;
+  string sort = 10;
+  map<string, string> field_filters = 11;
+}
+
+// ListBeadsResponse returns a page of beads and the total count.
+message ListBeadsResponse {
+  repeated Bead beads = 1;
+  int32 total = 2;
+}
+
+// UpdateBeadRequest updates fields on an existing bead.
+// Optional scalar fields use the optional keyword so the server can
+// distinguish between "not provided" and "set to zero/empty".
+message UpdateBeadRequest {
+  string id = 1;
+  optional string title = 2;
+  optional string description = 3;
+  optional string notes = 4;
+  optional string status = 5;
+  optional int32 priority = 6;
+  optional string assignee = 7;
+  optional string owner = 8;
+  optional google.protobuf.Timestamp due_at = 9;
+  optional google.protobuf.Timestamp defer_until = 10;
+  optional bytes fields = 11;
+  repeated string labels = 12;
+}
+
+// UpdateBeadResponse returns the updated bead.
+message UpdateBeadResponse {
+  Bead bead = 1;
+}
+
+// CloseBeadRequest marks a bead as closed.
+message CloseBeadRequest {
+  string id = 1;
+  string closed_by = 2;
+}
+
+// CloseBeadResponse returns the closed bead.
+message CloseBeadResponse {
+  Bead bead = 1;
+}
+
+// DeleteBeadRequest identifies a bead to delete.
+message DeleteBeadRequest {
+  string id = 1;
+}
+
+// DeleteBeadResponse is empty on success.
+message DeleteBeadResponse {}
+
+// AddDependencyRequest creates a dependency between two beads.
+message AddDependencyRequest {
+  string bead_id = 1;
+  string depends_on_id = 2;
+  string type = 3;
+  string created_by = 4;
+}
+
+// AddDependencyResponse returns the created dependency.
+message AddDependencyResponse {
+  Dependency dependency = 1;
+}
+
+// RemoveDependencyRequest removes a dependency between two beads.
+message RemoveDependencyRequest {
+  string bead_id = 1;
+  string depends_on_id = 2;
+  string type = 3;
+}
+
+// RemoveDependencyResponse is empty on success.
+message RemoveDependencyResponse {}
+
+// GetDependenciesRequest retrieves dependencies for a bead.
+message GetDependenciesRequest {
+  string bead_id = 1;
+}
+
+// GetDependenciesResponse returns the list of dependencies.
+message GetDependenciesResponse {
+  repeated Dependency dependencies = 1;
+}
+
+// AddLabelRequest adds a label to a bead.
+message AddLabelRequest {
+  string bead_id = 1;
+  string label = 2;
+}
+
+// AddLabelResponse returns the updated bead.
+message AddLabelResponse {
+  Bead bead = 1;
+}
+
+// RemoveLabelRequest removes a label from a bead.
+message RemoveLabelRequest {
+  string bead_id = 1;
+  string label = 2;
+}
+
+// RemoveLabelResponse is empty on success.
+message RemoveLabelResponse {}
+
+// GetLabelsRequest retrieves labels for a bead.
+message GetLabelsRequest {
+  string bead_id = 1;
+}
+
+// GetLabelsResponse returns the list of labels.
+message GetLabelsResponse {
+  repeated string labels = 1;
+}
+
+// AddCommentRequest adds a comment to a bead.
+message AddCommentRequest {
+  string bead_id = 1;
+  string author = 2;
+  string text = 3;
+}
+
+// AddCommentResponse returns the created comment.
+message AddCommentResponse {
+  Comment comment = 1;
+}
+
+// GetCommentsRequest retrieves comments for a bead.
+message GetCommentsRequest {
+  string bead_id = 1;
+}
+
+// GetCommentsResponse returns the list of comments.
+message GetCommentsResponse {
+  repeated Comment comments = 1;
+}
+
+// GetEventsRequest retrieves events for a bead.
+message GetEventsRequest {
+  string bead_id = 1;
+}
+
+// GetEventsResponse returns the list of events.
+message GetEventsResponse {
+  repeated Event events = 1;
+}

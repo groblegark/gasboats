@@ -1,0 +1,292 @@
+# Release workflow — parallel builds on separate compute, then publish.
+# Replaces sequential GitHub Actions release with RWX-native DAG parallelism.
+on:
+  github:
+    push:
+      if: ${{ starts-with(event.git.tag, '20') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: ${{ event.git.ref }}
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      ref-name: dev
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── System deps (cached until lock changes) ─────────────────────────
+  - key: system-deps
+    filter:
+      - .rwx/release-deps.lock
+    run: |
+      echo "Installing release dependencies..."
+      sudo apt-get update
+      sudo apt-get install -y libicu-dev gcc g++
+
+  # ── Full clone with history (needed for changelog) ─────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/kbeads.git
+      ref: ${{ init.commit-sha }}
+      fetch-full-depth: true
+      preserve-git-dir: true
+
+  # ── Go toolchain ───────────────────────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+    filter:
+      - .go-version
+
+  # ── Zig cross-compiler for darwin builds ───────────────────────────
+  - key: zig
+    filter:
+      - .rwx/zig-version.lock
+    run: |
+      echo "Installing Zig 0.14.0 for cross-compilation..."
+      curl -fsSL "https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz" \
+        | tar -xJ -C /tmp
+      sudo ln -sf /tmp/zig-linux-x86_64-0.14.0/zig /usr/local/bin/zig
+      zig version
+
+      # Zig CC wrappers for darwin cross-compilation.
+      # Strip macOS system libs zig can't resolve, use dynamic_lookup.
+      # No flock needed — each darwin target runs on separate RWX compute.
+      mkdir -p /tmp/zigcc
+      for pair in \
+        "cc-x86_64-macos:x86_64-macos" \
+        "cc-aarch64-macos:aarch64-macos"; do
+        name="${pair%%:*}"
+        target="${pair##*:}"
+        printf '%s\n' '#!/bin/sh' \
+          'is_link=false' \
+          'for arg in "$@"; do case "$arg" in *.out) is_link=true ;; esac; done' \
+          'if $is_link; then' \
+          '  args="-Wl,-undefined,dynamic_lookup"' \
+          '  skip_next=false' \
+          '  for arg in "$@"; do' \
+          '    if $skip_next; then skip_next=false; continue; fi' \
+          '    case "$arg" in -lresolv) continue ;; -framework) skip_next=true; continue ;; esac' \
+          '    args="$args $arg"' \
+          '  done' \
+          "  exec zig cc -target ${target} \$args" \
+          'else' \
+          "  exec zig cc -target ${target} \"\$@\"" \
+          'fi' > "/tmp/zigcc/$name"
+        chmod +x "/tmp/zigcc/$name"
+      done
+
+  # ── Go deps (cached by lockfiles) ──────────────────────────────────
+  - key: go-deps
+    use: [code, go, system-deps]
+    filter:
+      - go.mod
+      - go.sum
+    run: go mod download
+
+  # ── Build: linux/amd64 (native gcc) ───────────────────────────────
+  - key: build-linux-amd64
+    use: [code, go-deps]
+    filter:
+      - .rwx/release.yml
+      - "**/*.go"
+      - "**/*.sql"
+      - go.mod
+      - go.sum
+      - "!**/*_test.go"
+    run: |
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+      COMMIT="${COMMIT_SHA}"
+      SHORT="${COMMIT_SHA:0:7}"
+
+      CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+        go build -ldflags "-s -w \
+          -X main.Version=${TAG} \
+          -X main.Build=${SHORT} \
+          -X main.Commit=${COMMIT}" \
+        -o kd ./cmd/kd
+    env:
+      REF_NAME: ${{ init.ref-name }}
+      COMMIT_SHA: ${{ init.commit-sha }}
+    outputs:
+      artifacts:
+        - key: binary
+          path: kd
+
+  # ── Build: darwin/amd64 (zig cross-compile) ────────────────────────
+  - key: build-darwin-amd64
+    use: [code, go-deps, zig]
+    filter:
+      - .rwx/release.yml
+      - "**/*.go"
+      - "**/*.sql"
+      - go.mod
+      - go.sum
+      - "!**/*_test.go"
+    run: |
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+      COMMIT="${COMMIT_SHA}"
+      SHORT="${COMMIT_SHA:0:7}"
+
+      CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 \
+        CC=/tmp/zigcc/cc-x86_64-macos \
+        CGO_CFLAGS="-DZSTD_DISABLE_ASM -DDEACTIVATE_SIMD" \
+        go build -tags "gms_pure_go,netgo" \
+        -ldflags "-s -w \
+          -X main.Version=${TAG} \
+          -X main.Build=${SHORT} \
+          -X main.Commit=${COMMIT}" \
+        -o kd ./cmd/kd
+    env:
+      REF_NAME: ${{ init.ref-name }}
+      COMMIT_SHA: ${{ init.commit-sha }}
+    outputs:
+      artifacts:
+        - key: binary
+          path: kd
+
+  # ── Build: darwin/arm64 (zig cross-compile) ────────────────────────
+  - key: build-darwin-arm64
+    use: [code, go-deps, zig]
+    filter:
+      - .rwx/release.yml
+      - "**/*.go"
+      - "**/*.sql"
+      - go.mod
+      - go.sum
+      - "!**/*_test.go"
+    run: |
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+      COMMIT="${COMMIT_SHA}"
+      SHORT="${COMMIT_SHA:0:7}"
+
+      CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+        CC=/tmp/zigcc/cc-aarch64-macos \
+        CGO_CFLAGS="-DZSTD_DISABLE_ASM -DDEACTIVATE_SIMD" \
+        go build -tags "gms_pure_go,netgo" \
+        -ldflags "-s -w \
+          -X main.Version=${TAG} \
+          -X main.Build=${SHORT} \
+          -X main.Commit=${COMMIT}" \
+        -o kd ./cmd/kd
+    env:
+      REF_NAME: ${{ init.ref-name }}
+      COMMIT_SHA: ${{ init.commit-sha }}
+    outputs:
+      artifacts:
+        - key: binary
+          path: kd
+
+  # ── GitHub CLI (cached, for creating releases) ─────────────────────
+  - key: gh-cli
+    filter:
+      - .rwx/release-deps.lock
+    run: |
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+      sudo apt-get update
+      sudo apt-get install -y gh
+
+  # ── Release: archive, checksum, publish ────────────────────────────
+  - key: release
+    use: [code, build-linux-amd64, build-darwin-amd64, build-darwin-arm64, gh-cli]
+    cache: false
+    run: |
+      set -e
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+      IS_SNAPSHOT=false
+      if [[ "$TAG" == "dev" ]]; then
+        TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '0.0.0')-next"
+        IS_SNAPSHOT=true
+      fi
+
+      PROJECT="kd"
+      DIST="dist"
+      mkdir -p "$DIST"
+
+      # Package each target into a tar.gz archive
+      for target in linux_amd64 darwin_amd64 darwin_arm64; do
+        case "$target" in
+          linux_amd64)  BINARY="${{ tasks.build-linux-amd64.artifacts.binary }}" ;;
+          darwin_amd64) BINARY="${{ tasks.build-darwin-amd64.artifacts.binary }}" ;;
+          darwin_arm64) BINARY="${{ tasks.build-darwin-arm64.artifacts.binary }}" ;;
+        esac
+
+        ARCHIVE="${PROJECT}_${TAG}_${target}.tar.gz"
+        STAGING=$(mktemp -d)
+        cp "$BINARY" "$STAGING/kd"
+        chmod +x "$STAGING/kd"
+        cp LICENSE README.md "$STAGING/" 2>/dev/null || true
+
+        tar -czf "$DIST/$ARCHIVE" -C "$STAGING" .
+        rm -rf "$STAGING"
+        echo "Created: $DIST/$ARCHIVE"
+      done
+
+      # Generate checksums
+      cd "$DIST"
+      sha256sum *.tar.gz > checksums.txt
+      cat checksums.txt
+      cd ..
+
+      if $IS_SNAPSHOT; then
+        echo "Snapshot build — skipping GitHub release"
+        ls -la "$DIST/"
+        exit 0
+      fi
+
+      # Generate changelog from previous tag
+      PREV_TAG=$(git tag --sort=-v:refname | grep -E '^20' | head -2 | tail -1 || true)
+      if [[ -n "$PREV_TAG" ]]; then
+        CHANGELOG=$(git log --oneline "${PREV_TAG}..HEAD" \
+          --no-merges \
+          --grep='^docs:' --grep='^test:' --grep='^chore:' --grep='Merge pull request' --grep='Merge branch' \
+          --invert-grep \
+          --format='* %H %s')
+      else
+        CHANGELOG=$(git log --oneline HEAD~20..HEAD \
+          --no-merges \
+          --format='* %H %s')
+      fi
+
+      # Delete any existing draft release (auto-trigger may have created one)
+      gh release delete "$TAG" --repo groblegark/kbeads --yes 2>/dev/null || true
+
+      # Create GitHub release
+      BODY="## Changelog"$'\n'"${CHANGELOG}"
+      gh release create "$TAG" \
+        --repo groblegark/kbeads \
+        --title "$TAG" \
+        --notes "$BODY" \
+        $DIST/*.tar.gz $DIST/checksums.txt 2>&1
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      REF_NAME: ${{ init.ref-name }}
+
+  # ── Dispatch to gasboat (only for real releases) ─────────────────
+  - key: dispatch-gasboat
+    use: release
+    if: ${{ init.ref-name != 'dev' }}
+    run: |
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      echo "Dispatching to gasboat for agent rebuild (kd: $TAG)..."
+      curl -fsSL -X POST https://cloud.rwx.com/mint/api/runs/dispatches \
+        -H "Authorization: Bearer $RWX_ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"key\": \"gasboat-agent-rebuild\", \"params\": {\"trigger-source\": \"kbeads-release-$TAG\", \"kd-version\": \"$TAG\"}, \"ref\": \"main\", \"title\": \"Agent rebuild (kd $TAG)\"}"
+    env:
+      RWX_ACCESS_TOKEN: ${{ secrets.RWX_ACCESS_TOKEN }}
+      REF_NAME: ${{ init.ref-name }}

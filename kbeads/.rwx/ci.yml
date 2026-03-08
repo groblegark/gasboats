@@ -1,0 +1,136 @@
+# CI — manual only (no auto-trigger on push/PR).
+# Run manually: rwx run .rwx/ci.yml --init commit-sha=$(git rev-parse HEAD) --wait
+on:
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      trigger: cli
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── System deps (heavily cached via filter) ────────────────────────────
+  - key: system-deps
+    filter:
+      - .rwx/system-deps.lock  # Only rebuild when lock file changes
+    run: |
+      echo "Installing system dependencies (should be cached)..."
+      sudo apt-get update
+      sudo apt-get install -y libicu-dev gcc g++
+
+  # ── Clone ────────────────────────────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/kbeads.git
+      ref: ${{ init.commit-sha }}
+
+  # ── Go toolchain (cached by version) ───────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+    filter:
+      - go.mod
+
+  # ── golangci-lint (cached with fix) ─────────────────────────────────────
+  - key: golangci-lint
+    use: go
+    filter:
+      - .rwx/ci.yml
+    run: |
+      echo "Building golangci-lint from source (needs Go 1.25 for go1.25 target)..."
+      go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+
+  # ── Download modules (cached by lockfiles) ──────────────────────────────
+  - key: go-deps
+    use: [code, go, system-deps]
+    run: go mod download
+    filter:
+      - go.mod
+      - go.sum
+
+  # ── Git config (minimal, cached) ────────────────────────────────────────
+  - key: git-config
+    use: go-deps
+    filter:
+      - .rwx/ci.yml
+    run: |
+      git config --global user.name "CI Bot"
+      git config --global user.email "ci@kbeads.test"
+
+  # ── Build (only when source changes) ────────────────────────────────────
+  - key: build
+    use: [code, go-deps, git-config]
+    filter:
+      - "cmd/kd/*.go"
+      - "internal/**/*.go"
+      - "gen/**/*.go"
+      - "internal/store/postgres/migrations/*.sql"
+      - "go.mod"
+      - "go.sum"
+    run: |
+      echo "Building (cache miss if code changed)..."
+      time go build -v ./cmd/kd
+
+  # ── Lint (parallel with build) ──────────────────────────────────────────
+  - key: lint
+    use: [code, git-config, golangci-lint, go-deps]
+    filter:
+      - "**/*.go"
+      - "**/*.sql"
+      - "go.mod"
+      - "go.sum"
+    run: golangci-lint run --timeout=5m
+
+  # ── Fast tests (parallel execution, no race for speed) ─────────────────
+  - key: test
+    use: build
+    filter:
+      - "**/*.go"
+      - "**/*_test.go"
+      - "**/*.sql"
+      - "go.mod"
+      - "go.sum"
+    run: |
+      echo "Running tests with parallel execution..."
+      go test -v -short -parallel 8 -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
+
+      # Check coverage (integer comparison — truncates decimal)
+      # Use tail -1 to get only the final "total:" line (grep may match functions containing "total")
+      COVERAGE=$(go tool cover -func=coverage.out | grep total | tail -1 | awk '{print $3}' | sed 's/%//')
+      COVERAGE_INT=${COVERAGE%%.*}
+      MIN_COVERAGE=25
+      echo "Coverage: $COVERAGE%"
+      if [ "$COVERAGE_INT" -lt "$MIN_COVERAGE" ]; then
+        echo "Coverage below ${MIN_COVERAGE}% threshold"
+        exit 1
+      fi
+    outputs:
+      artifacts:
+        - key: coverage
+          path: coverage.out
+
+  # ── Quench quality checks ──────────────────────────────────────────────
+  - key: quench
+    use: [code, go-deps, git-config]
+    cache: false
+    run: |
+      echo "Installing quench build deps (openssl, pkg-config)..."
+      sudo apt-get update
+      sudo apt-get install -y pkg-config libssl-dev
+
+      echo "Installing Rust toolchain for quench..."
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      . "$HOME/.cargo/env"
+
+      echo "Installing quench..."
+      cargo install quench --git https://github.com/alfredjeanlab/quench
+
+      echo "Running quench checks..."
+      # docs.toc false-positives in RWX: the kbeads/ prefix in CLAUDE.md
+      # directory tree resolves locally but not when cloned to a different
+      # path. docs is warn-level in quench.toml so skip it here.
+      quench check --no-docs
