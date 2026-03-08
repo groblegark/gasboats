@@ -41,18 +41,30 @@ func TestDetectNudgeType(t *testing.T) {
 func TestSubstituteNudgeVars(t *testing.T) {
 	vars := nudgeVars{
 		Project:      "myproject",
+		Role:         "captain",
 		ProjectHint:  " focus on myproject",
 		TaskHint:     " task kd-123",
 		MonorepoHint: " repos hint",
 		BoatPrompt:   "do the thing",
 	}
 
-	tmpl := "Project: {{.Project}}, hint:{{.ProjectHint}}, task:{{.TaskHint}}, mono:{{.MonorepoHint}}, prompt:{{.BoatPrompt}}"
+	tmpl := "Project: {{.Project}}, role:{{.Role}}, hint:{{.ProjectHint}}, task:{{.TaskHint}}, mono:{{.MonorepoHint}}, prompt:{{.BoatPrompt}}"
 	got := substituteNudgeVars(tmpl, vars)
-	expected := "Project: myproject, hint: focus on myproject, task: task kd-123, mono: repos hint, prompt:do the thing"
+	expected := "Project: myproject, role:captain, hint: focus on myproject, task: task kd-123, mono: repos hint, prompt:do the thing"
 
 	if got != expected {
 		t.Errorf("substituteNudgeVars() =\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+func TestBuildNudgeVars_RoleFromEnv(t *testing.T) {
+	t.Setenv("BOAT_ROLE", "worker")
+	t.Setenv("BOAT_TASK_ID", "")
+	t.Setenv("BOAT_PROMPT", "")
+	t.Setenv("BOAT_REFERENCE_REPOS", "")
+	vars := buildNudgeVars()
+	if vars.Role != "worker" {
+		t.Errorf("Role = %q, want %q", vars.Role, "worker")
 	}
 }
 

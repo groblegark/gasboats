@@ -77,6 +77,59 @@ func setupTestDaemon(t *testing.T, agentBead *mockBead, projectBeads []mockBead)
 	}
 }
 
+// --- outputIdentity tests ---
+
+func TestOutputIdentity_AllFields(t *testing.T) {
+	t.Setenv("BOAT_PROJECT", "gasboat")
+
+	var buf bytes.Buffer
+	outputIdentity(&buf, "test-agent", "captain")
+	out := buf.String()
+
+	if !strings.Contains(out, "## Your Identity") {
+		t.Error("output should contain identity header")
+	}
+	if !strings.Contains(out, "**Agent**: test-agent") {
+		t.Error("output should contain agent name")
+	}
+	if !strings.Contains(out, "**Role**: captain") {
+		t.Error("output should contain role")
+	}
+	if !strings.Contains(out, "**Project**: gasboat") {
+		t.Error("output should contain project")
+	}
+	if !strings.Contains(out, "Announce your role") {
+		t.Error("output should contain announcement instruction")
+	}
+}
+
+func TestOutputIdentity_NoInfo(t *testing.T) {
+	t.Setenv("BOAT_PROJECT", "")
+
+	var buf bytes.Buffer
+	outputIdentity(&buf, "", "")
+	out := buf.String()
+
+	if out != "" {
+		t.Errorf("expected empty output when no identity info, got %q", out)
+	}
+}
+
+func TestOutputIdentity_RoleOnly(t *testing.T) {
+	t.Setenv("BOAT_PROJECT", "")
+
+	var buf bytes.Buffer
+	outputIdentity(&buf, "", "worker")
+	out := buf.String()
+
+	if !strings.Contains(out, "**Role**: worker") {
+		t.Error("output should contain role")
+	}
+	if strings.Contains(out, "**Agent**") {
+		t.Error("output should not contain agent when empty")
+	}
+}
+
 // --- outputConfigSections tests (replaced outputWorkflowContextHardcoded) ---
 
 func TestOutputConfigSections_RendersAllSections(t *testing.T) {
