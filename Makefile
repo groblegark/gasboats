@@ -18,7 +18,7 @@ build-kbeads:
 
 # Rust components
 build-coop:
-	cargo build --workspace
+	cd coop && cargo build --workspace
 
 # JS components
 build-beads3d:
@@ -32,7 +32,7 @@ test-go:
 	cd kbeads && go test ./...
 
 test-rust:
-	cargo test --workspace
+	cd coop && cargo test --workspace
 
 test-js:
 	cd beads3d && npm test
@@ -41,4 +41,4 @@ test-js:
 lint:
 	cd gasboat/controller && go vet ./...
 	cd kbeads && go vet ./...
-	cargo clippy --workspace
+	cd coop && cargo clippy --workspace

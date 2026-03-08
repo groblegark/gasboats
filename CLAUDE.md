@@ -14,7 +14,7 @@ Unified repository for the gasboat platform — K8s agent controller, terminal m
 ## Workspaces
 
 - **Go**: `go.work` at repo root links `gasboat/controller` and `kbeads`
-- **Rust**: `Cargo.toml` workspace at repo root links `coop/crates/*`
+- **Rust**: `coop/Cargo.toml` is a self-contained workspace (`coop/crates/*`)
 - **JS**: `beads3d/` is standalone (no npm workspaces needed for single project)
 
 ## Build
