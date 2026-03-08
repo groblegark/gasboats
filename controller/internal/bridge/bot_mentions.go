@@ -381,10 +381,19 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 			_ = b.state.SetThreadAgent(channel, threadTS, assignedAgent)
 		}
 		if b.api != nil {
+			msg := fmt.Sprintf(":zap: Assigned a prewarmed agent — should be ready in seconds! (tracking: `%s`)", beadID)
 			_, msgTS, _ := b.api.PostMessage(channel,
-				slack.MsgOptionText(
-					fmt.Sprintf(":zap: Assigned a prewarmed agent — should be ready in seconds! (tracking: `%s`)", beadID),
-					false),
+				slack.MsgOptionText(msg, false),
+				slack.MsgOptionBlocks(
+					slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", msg, false, false), nil, nil),
+					slack.NewActionBlock("thread_agent_actions",
+						slack.NewButtonBlockElement("restart_thread_agent", assignedAgent,
+							slack.NewTextBlockObject("plain_text", "Restart Agent", false, false)),
+						slack.NewButtonBlockElement("kill_thread_agent", assignedAgent,
+							slack.NewTextBlockObject("plain_text", "Kill Agent", false, false)).
+							WithStyle(slack.StyleDanger),
+					),
+				),
 				slack.MsgOptionTS(threadTS),
 			)
 			if msgTS != "" {
@@ -442,12 +451,21 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		_ = b.state.SetThreadAgent(channel, threadTS, agentName)
 	}
 
-	// Post confirmation reply in thread.
+	// Post confirmation reply in thread with kill/restart buttons.
 	if b.api != nil {
+		msg := fmt.Sprintf(":zap: Spinning up an agent to help here... (tracking: `%s`)", beadID)
 		_, msgTS, _ := b.api.PostMessage(channel,
-			slack.MsgOptionText(
-				fmt.Sprintf(":zap: Spinning up an agent to help here... (tracking: `%s`)", beadID),
-				false),
+			slack.MsgOptionText(msg, false),
+			slack.MsgOptionBlocks(
+				slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", msg, false, false), nil, nil),
+				slack.NewActionBlock("thread_agent_actions",
+					slack.NewButtonBlockElement("restart_thread_agent", agentName,
+						slack.NewTextBlockObject("plain_text", "Restart Agent", false, false)),
+					slack.NewButtonBlockElement("kill_thread_agent", agentName,
+						slack.NewTextBlockObject("plain_text", "Kill Agent", false, false)).
+						WithStyle(slack.StyleDanger),
+				),
+			),
 			slack.MsgOptionTS(threadTS),
 		)
 		if msgTS != "" {
