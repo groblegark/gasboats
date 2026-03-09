@@ -1,6 +1,12 @@
 version: "2"
 
 linters:
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"
+        - "-ST1005"
   exclusions:
     presets:
       - std-error-handling
