@@ -295,7 +295,7 @@ func Parse() *Config {
 		AgentStorageClass:  os.Getenv("AGENT_STORAGE_CLASS"),
 		ClaudeModel:             os.Getenv("CLAUDE_MODEL"),
 		ClaudeTeamsEnabled:      envBoolOr("CLAUDE_TEAMS_ENABLED", false),
-		ClaudeTeammateMode:      envOr("CLAUDE_TEAMMATE_MODE", "tmux"),
+		ClaudeTeammateMode:      envOr("CLAUDE_TEAMMATE_MODE", ""),
 		ClaudeTeamsMaxTeammates:  envIntOr("CLAUDE_TEAMS_MAX_TEAMMATES", 0),
 		ClaudeTeamsCPURequest:    os.Getenv("CLAUDE_TEAMS_CPU_REQUEST"),
 		ClaudeTeamsCPULimit:      os.Getenv("CLAUDE_TEAMS_CPU_LIMIT"),
