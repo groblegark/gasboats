@@ -19,7 +19,7 @@ type AdviceDiff struct {
 // role. The caller provides the agent's current matched advice and the target
 // role. Returns the diff (added/removed items).
 func DiffAdviceForRole(ctx context.Context, daemon *beadsapi.Client, agentID, targetRole string, currentMatched []MatchedAdvice) (*AdviceDiff, error) {
-	allAdvice, err := ListAllAdvice(ctx, daemon)
+	allAdvice, err := ListOpenAdvice(ctx, daemon)
 	if err != nil {
 		return nil, err
 	}

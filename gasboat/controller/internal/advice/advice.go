@@ -18,7 +18,7 @@ type MatchedAdvice struct {
 // ListAdviceForAgent fetches open advice beads and filters them by the agent's
 // subscriptions. Returns matched advice and the computed subscription list.
 func ListAdviceForAgent(ctx context.Context, daemon *beadsapi.Client, agentID string) ([]MatchedAdvice, []string, error) {
-	allAdvice, err := ListAllAdvice(ctx, daemon)
+	allAdvice, err := ListOpenAdvice(ctx, daemon)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -44,8 +44,9 @@ func ListAdviceForAgent(ctx context.Context, daemon *beadsapi.Client, agentID st
 	return matched, subs, nil
 }
 
-// ListAllAdvice fetches all open advice beads from the daemon.
-func ListAllAdvice(ctx context.Context, daemon *beadsapi.Client) ([]*beadsapi.BeadDetail, error) {
+// ListOpenAdvice fetches all open advice beads from the daemon.
+// Closed advice beads are excluded so they don't appear in gb prime.
+func ListOpenAdvice(ctx context.Context, daemon *beadsapi.Client) ([]*beadsapi.BeadDetail, error) {
 	result, err := daemon.ListBeadsFiltered(ctx, beadsapi.ListBeadsQuery{
 		Types:    []string{"advice"},
 		Statuses: []string{"open"},
@@ -54,5 +55,19 @@ func ListAllAdvice(ctx context.Context, daemon *beadsapi.Client) ([]*beadsapi.Be
 	if err != nil {
 		return nil, err
 	}
-	return result.Beads, nil
+	// Belt-and-suspenders: filter out any non-open beads client-side
+	// in case the server doesn't honor the status filter.
+	open := make([]*beadsapi.BeadDetail, 0, len(result.Beads))
+	for _, b := range result.Beads {
+		if b.Status == "closed" {
+			continue
+		}
+		open = append(open, b)
+	}
+	return open, nil
+}
+
+// ListAllAdvice is a deprecated alias for ListOpenAdvice.
+func ListAllAdvice(ctx context.Context, daemon *beadsapi.Client) ([]*beadsapi.BeadDetail, error) {
+	return ListOpenAdvice(ctx, daemon)
 }

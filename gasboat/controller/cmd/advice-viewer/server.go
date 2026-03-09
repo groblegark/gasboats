@@ -154,7 +154,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 // handleAdviceList shows all advice beads.
 func (s *Server) handleAdviceList(w http.ResponseWriter, r *http.Request) {
-	allAdvice, err := advice.ListAllAdvice(r.Context(), s.daemon)
+	allAdvice, err := advice.ListOpenAdvice(r.Context(), s.daemon)
 	if err != nil {
 		s.logger.Error("listing advice", "error", err)
 		http.Error(w, "Failed to list advice", http.StatusInternalServerError)
