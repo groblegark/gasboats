@@ -1,6 +1,6 @@
 version: "2"
 
 linters:
-  settings:
-    errcheck:
-      check-blank: false
+  exclusions:
+    presets:
+      - std-error-handling
