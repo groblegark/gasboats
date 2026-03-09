@@ -241,6 +241,7 @@ type ProjectCacheEntry struct {
 	StorageClass   string // Override PVC storage class
 	ServiceAccount string // Override K8s ServiceAccount for this project's agents
 	RTKEnabled     bool   // Enable RTK token optimization for this project's agents
+	DockerEnabled  bool   // Enable Docker-in-Docker sidecar for this project's agents
 
 	// Tier 1: resource overrides (Kubernetes quantity strings, e.g. "500m", "1Gi").
 	// Zero value means "use the global default".
