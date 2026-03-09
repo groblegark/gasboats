@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -62,8 +63,22 @@ func printFormulaList(beads []*model.Bead, total int) {
 		return
 	}
 
+	// Sort by title then by creation date (newest last) so duplicates are grouped.
+	sort.Slice(beads, func(i, j int) bool {
+		if beads[i].Title != beads[j].Title {
+			return beads[i].Title < beads[j].Title
+		}
+		return beads[i].CreatedAt.Before(beads[j].CreatedAt)
+	})
+
+	// Track duplicate titles.
+	titleCount := map[string]int{}
+	for _, b := range beads {
+		titleCount[b.Title]++
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTITLE\tSTEPS\tVARS\tAGENT\tLABELS")
+	fmt.Fprintln(w, "ID\tTITLE\tSTEPS\tVARS\tAGENT\tCREATED\tLABELS")
 	for _, b := range beads {
 		title := b.Title
 		if len(title) > 50 {
@@ -72,11 +87,25 @@ func printFormulaList(beads []*model.Bead, total int) {
 
 		steps, vars, agent := formulaFieldSummary(b)
 		lblStr := strings.Join(b.Labels, ", ")
+		created := b.CreatedAt.Format("2006-01-02")
 
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n", b.ID, title, steps, vars, agent, lblStr)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n", b.ID, title, steps, vars, agent, created, lblStr)
 	}
 	w.Flush()
 	fmt.Printf("\n%d formulas (%d total)\n", len(beads), total)
+
+	// Warn about duplicate titles.
+	var dups []string
+	for title, count := range titleCount {
+		if count > 1 {
+			dups = append(dups, fmt.Sprintf("  %q (%d copies)", title, count))
+		}
+	}
+	if len(dups) > 0 {
+		sort.Strings(dups)
+		fmt.Fprintf(os.Stderr, "\nWarning: duplicate formula titles found:\n%s\n", strings.Join(dups, "\n"))
+		fmt.Fprintln(os.Stderr, "Consider closing older versions with: kd close <id>")
+	}
 }
 
 // formulaFieldSummary extracts step count, var count, and assigned agent from a formula bead's fields.
