@@ -630,6 +630,48 @@ slackBridge:
 # Advice Viewer — web UI for viewing and managing advice beads
 # Provides per-agent advice views, advice CRUD, and generation dispatch.
 # =============================================================================
+rolesServer:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboats/roles-server
+    tag: ""
+    pullPolicy: Always
+
+  logLevel: ""
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  ingress:
+    enabled: false
+    host: ""
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Advice Viewer — web UI for viewing and managing advice beads
+# Provides per-agent advice views, advice CRUD, and generation dispatch.
+# =============================================================================
 adviceViewer:
   enabled: false
 

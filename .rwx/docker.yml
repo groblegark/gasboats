@@ -44,7 +44,7 @@ on:
         coop-version: latest
         kd-version: latest
       status-checks:
-        - tasks: [build-controller, build-gb, build-slack-bridge, build-jira-bridge, build-gitlab-bridge, build-advice-viewer, download-coop, download-kd]
+        - tasks: [build-controller, build-gb, build-slack-bridge, build-jira-bridge, build-gitlab-bridge, build-advice-viewer, build-roles-server, download-coop, download-kd]
           name: Docker
   dispatch:
     - key: gasboat-agent-rebuild
@@ -195,6 +195,29 @@ tasks:
       artifacts:
         - key: advice-viewer-binary
           path: advice-viewer
+
+  # ── Build roles-server binary → artifact ────────────────────────────
+  - key: build-roles-server
+    use: go-deps
+    run: |
+      cd controller
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -ldflags="-s -w -X main.version=${REF_NAME} -X main.commit=${COMMIT_SHA}" \
+        -o ../roles-server ./cmd/roles-server/
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    filter:
+      - controller/**/*.go
+      - controller/**/*.html
+      - controller/go.mod
+      - controller/go.sum
+    outputs:
+      artifacts:
+        - key: roles-server-binary
+          path: roles-server
 
   # ── Build jira-bridge binary → artifact ────────────────────────────
   - key: build-jira-bridge
@@ -471,6 +494,36 @@ tasks:
       REPO="ghcr.io/groblegark/gasboats/advice-viewer"
       crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
       crane mutate "${REPO}:${TAG}" --entrypoint /advice-viewer --user nobody -t "${REPO}:${TAG}"
+      crane tag "${REPO}:${TAG}" latest
+      APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+      if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
+        crane tag "${REPO}:${TAG}" "$APP_VERSION"
+      fi
+      echo "Pushed ${REPO}:${TAG}"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+
+  # ── Push roles-server (minimal static binary) ──────────────────────
+  - key: push-roles-server
+    use: [build-roles-server, install-crane]
+    if: ${{ init.ref-name != 'pr' }}
+    cache: false
+    run: |
+      set -ex
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+
+      mkdir -p /tmp/layer/etc/ssl/certs
+      cp ${{ tasks.build-roles-server.artifacts.roles-server-binary }} /tmp/layer/roles-server
+      chmod 755 /tmp/layer/roles-server
+      cp /etc/ssl/certs/ca-certificates.crt /tmp/layer/etc/ssl/certs/
+      tar -cf /tmp/layer.tar -C /tmp/layer .
+
+      REPO="ghcr.io/groblegark/gasboats/roles-server"
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane mutate "${REPO}:${TAG}" --entrypoint /roles-server --user nobody -t "${REPO}:${TAG}"
       crane tag "${REPO}:${TAG}" latest
       APP_VERSION=$(grep '^appVersion:' helm/gasboat/Chart.yaml | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
       if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$TAG" ]; then
