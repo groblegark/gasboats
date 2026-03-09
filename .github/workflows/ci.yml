@@ -79,11 +79,11 @@ jobs:
           go-version-file: gasboat/controller/go.mod
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1
+          version: v2.11
           working-directory: gasboat/controller
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1
+          version: v2.11
           working-directory: kbeads
 
   # Rust tests (coop)
