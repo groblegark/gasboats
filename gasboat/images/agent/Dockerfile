@@ -109,6 +109,7 @@ USER root
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GO_VERSION=1.25
 ARG DOCKER_VERSION=27.5.1
+ARG DOCKER_COMPOSE_VERSION=2.35.1
 ARG TARGETARCH
 
 # ── Additional system packages ───────────────────────────────────
@@ -153,10 +154,14 @@ RUN GLAB_VERSION=$(curl -fsSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fc
     curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${TARGETARCH}.tar.gz" \
       | tar -xz --strip-components=1 -C /usr/local/bin bin/glab
 
-# ── Docker CLI (client only) ─────────────────────────────────────
+# ── Docker CLI (client only) + Compose plugin ───────────────────
 RUN case "${TARGETARCH}" in arm64) DOCKER_ARCH=aarch64 ;; *) DOCKER_ARCH=x86_64 ;; esac && \
     curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \
-      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
+      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
+    mkdir -p /usr/local/lib/docker/cli-plugins && \
+    curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${TARGETARCH}" \
+      -o /usr/local/lib/docker/cli-plugins/docker-compose && \
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
 # ── AWS CLI ──────────────────────────────────────────────────────
 RUN case "${TARGETARCH}" in arm64) AWS_ARCH=aarch64 ;; *) AWS_ARCH=x86_64 ;; esac && \
