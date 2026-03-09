@@ -128,8 +128,8 @@ jobs:
       matrix:
         include:
           - image: controller
-            context: gasboat
-            dockerfile: gasboat/images/controller/Dockerfile
+            context: gasboat/controller
+            dockerfile: gasboat/controller/Dockerfile
           - image: slack-bridge
             context: gasboat
             dockerfile: gasboat/images/slack-bridge/Dockerfile
