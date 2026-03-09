@@ -13,7 +13,7 @@ import (
 	"gasboat/controller/internal/beadsapi"
 )
 
-// RolesAPI serves the read-only roles API endpoints.
+// RolesAPI serves the roles API endpoints.
 type RolesAPI struct {
 	client *beadsapi.Client
 	logger *slog.Logger
@@ -29,7 +29,15 @@ func (a *RolesAPI) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/roles", a.handleListRoles)
 	mux.HandleFunc("GET /api/roles/{role}", a.handleGetRole)
 	mux.HandleFunc("GET /api/config-beads", a.handleListConfigBeads)
+	mux.HandleFunc("POST /api/config-beads", a.handleCreateConfigBead)
+	mux.HandleFunc("GET /api/config-beads/{id}", a.handleGetConfigBead)
+	mux.HandleFunc("PUT /api/config-beads/{id}", a.handleUpdateConfigBead)
+	mux.HandleFunc("DELETE /api/config-beads/{id}", a.handleDeleteConfigBead)
 	mux.HandleFunc("GET /api/advice", a.handleListAdvice)
+	mux.HandleFunc("POST /api/advice", a.handleCreateAdviceBead)
+	mux.HandleFunc("GET /api/advice/{id}", a.handleGetAdviceBead)
+	mux.HandleFunc("PUT /api/advice/{id}", a.handleUpdateAdviceBead)
+	mux.HandleFunc("DELETE /api/advice/{id}", a.handleDeleteAdviceBead)
 	mux.HandleFunc("GET /api/projects", a.handleListProjects)
 }
 
@@ -359,6 +367,245 @@ func (a *RolesAPI) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"projects": projects})
+}
+
+// createBeadRequest is the JSON body for creating a config or advice bead.
+type createBeadRequest struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
+	Value       string   `json:"value,omitempty"` // JSON string for config beads
+}
+
+// updateBeadRequest is the JSON body for updating a config or advice bead.
+type updateBeadRequest struct {
+	Title       *string  `json:"title,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Labels      []string `json:"labels,omitempty"` // full replacement set
+	Value       *string  `json:"value,omitempty"`  // JSON string for config beads
+}
+
+// handleGetConfigBead returns a single config bead by ID.
+func (a *RolesAPI) handleGetConfigBead(w http.ResponseWriter, r *http.Request) {
+	bead, err := a.client.GetBead(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.logger.Error("failed to get config bead", "id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get config bead")
+		return
+	}
+	writeJSON(w, toConfigBead(bead))
+}
+
+// handleCreateConfigBead creates a new config bead.
+func (a *RolesAPI) handleCreateConfigBead(w http.ResponseWriter, r *http.Request) {
+	var req createBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+
+	id, err := a.client.CreateBead(r.Context(), beadsapi.CreateBeadRequest{
+		Title:       req.Title,
+		Type:        "config",
+		Kind:        "config",
+		Description: req.Value,
+		Labels:      req.Labels,
+	})
+	if err != nil {
+		a.logger.Error("failed to create config bead", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create config bead")
+		return
+	}
+
+	// Store the value in the fields too for read compatibility.
+	if req.Value != "" {
+		if err := a.client.UpdateBeadFields(r.Context(), id, map[string]string{"value": req.Value}); err != nil {
+			a.logger.Error("failed to set config bead value field", "id", id, "error", err)
+		}
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]string{"id": id})
+}
+
+// handleUpdateConfigBead updates an existing config bead.
+func (a *RolesAPI) handleUpdateConfigBead(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	beadID := r.PathValue("id")
+
+	var req updateBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Update title if provided.
+	if req.Title != nil {
+		if err := a.client.UpdateBead(ctx, beadID, beadsapi.UpdateBeadRequest{Title: req.Title}); err != nil {
+			a.logger.Error("failed to update config bead title", "id", beadID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update config bead")
+			return
+		}
+	}
+
+	// Update value (stored in both description and fields).
+	if req.Value != nil {
+		if err := a.client.UpdateBeadDescription(ctx, beadID, *req.Value); err != nil {
+			a.logger.Error("failed to update config bead value", "id", beadID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update config bead value")
+			return
+		}
+		if err := a.client.UpdateBeadFields(ctx, beadID, map[string]string{"value": *req.Value}); err != nil {
+			a.logger.Error("failed to update config bead value field", "id", beadID, "error", err)
+		}
+	}
+
+	// Reconcile labels if provided.
+	if req.Labels != nil {
+		if err := a.reconcileLabels(ctx, beadID, req.Labels); err != nil {
+			a.logger.Error("failed to update config bead labels", "id", beadID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update labels")
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteConfigBead closes a config bead.
+func (a *RolesAPI) handleDeleteConfigBead(w http.ResponseWriter, r *http.Request) {
+	if err := a.client.CloseBead(r.Context(), r.PathValue("id"), nil); err != nil {
+		a.logger.Error("failed to close config bead", "id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to close config bead")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetAdviceBead returns a single advice bead by ID.
+func (a *RolesAPI) handleGetAdviceBead(w http.ResponseWriter, r *http.Request) {
+	bead, err := a.client.GetBead(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.logger.Error("failed to get advice bead", "id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get advice bead")
+		return
+	}
+	writeJSON(w, toAdviceBead(bead))
+}
+
+// handleCreateAdviceBead creates a new advice bead.
+func (a *RolesAPI) handleCreateAdviceBead(w http.ResponseWriter, r *http.Request) {
+	var req createBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+
+	id, err := a.client.CreateBead(r.Context(), beadsapi.CreateBeadRequest{
+		Title:       req.Title,
+		Type:        "advice",
+		Kind:        "data",
+		Description: req.Description,
+		Labels:      req.Labels,
+	})
+	if err != nil {
+		a.logger.Error("failed to create advice bead", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create advice bead")
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]string{"id": id})
+}
+
+// handleUpdateAdviceBead updates an existing advice bead.
+func (a *RolesAPI) handleUpdateAdviceBead(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	beadID := r.PathValue("id")
+
+	var req updateBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Update title and/or description.
+	update := beadsapi.UpdateBeadRequest{}
+	if req.Title != nil {
+		update.Title = req.Title
+	}
+	if req.Description != nil {
+		update.Description = req.Description
+	}
+	if req.Title != nil || req.Description != nil {
+		if err := a.client.UpdateBead(ctx, beadID, update); err != nil {
+			a.logger.Error("failed to update advice bead", "id", beadID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update advice bead")
+			return
+		}
+	}
+
+	// Reconcile labels if provided.
+	if req.Labels != nil {
+		if err := a.reconcileLabels(ctx, beadID, req.Labels); err != nil {
+			a.logger.Error("failed to update advice bead labels", "id", beadID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update labels")
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteAdviceBead closes an advice bead.
+func (a *RolesAPI) handleDeleteAdviceBead(w http.ResponseWriter, r *http.Request) {
+	if err := a.client.CloseBead(r.Context(), r.PathValue("id"), nil); err != nil {
+		a.logger.Error("failed to close advice bead", "id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to close advice bead")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reconcileLabels diffs current labels against desired and applies add/remove operations.
+func (a *RolesAPI) reconcileLabels(ctx context.Context, beadID string, desired []string) error {
+	bead, err := a.client.GetBead(ctx, beadID)
+	if err != nil {
+		return fmt.Errorf("get bead for label reconciliation: %w", err)
+	}
+
+	current := make(map[string]bool, len(bead.Labels))
+	for _, l := range bead.Labels {
+		current[l] = true
+	}
+	want := make(map[string]bool, len(desired))
+	for _, l := range desired {
+		want[l] = true
+	}
+
+	for l := range want {
+		if !current[l] {
+			if err := a.client.AddLabel(ctx, beadID, l); err != nil {
+				return fmt.Errorf("add label %q: %w", l, err)
+			}
+		}
+	}
+	for l := range current {
+		if !want[l] {
+			if err := a.client.RemoveLabel(ctx, beadID, l); err != nil {
+				return fmt.Errorf("remove label %q: %w", l, err)
+			}
+		}
+	}
+	return nil
 }
 
 // toConfigBead converts a BeadDetail to a configBead response.
