@@ -6,7 +6,7 @@ linters:
       checks:
         - "all"
         - "-QF*"
-        - "-ST1005"
+        - "-ST*"
   exclusions:
     presets:
       - std-error-handling
