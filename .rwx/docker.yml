@@ -841,6 +841,11 @@ tasks:
         curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="$OUT/usr/local/bin" sh
       ) &
       (
+        # Poetry — install to output dir
+        curl -sSL https://install.python-poetry.org | POETRY_HOME="$OUT/usr/local" python3 -
+        chmod +x $OUT/usr/local/bin/poetry
+      ) &
+      (
         # Bun — install to output dir, use final-image symlink targets
         curl -fsSL https://bun.sh/install | BUN_INSTALL=$OUT/usr/local/bun bash
         ln -sf /usr/local/bun/bin/bun $OUT/usr/local/bin/bun

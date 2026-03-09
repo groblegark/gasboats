@@ -179,6 +179,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 
     mv /root/.local/bin/uv /usr/local/bin/uv && \
     mv /root/.local/bin/uvx /usr/local/bin/uvx
 
+# ── Poetry (Python dependency manager) ───────────────────────
+RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
+    chmod +x /usr/local/bin/poetry
+
 # ── Bun ────────────────────────────────────────────────────────
 ENV BUN_INSTALL=/usr/local/bun
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=${BUN_INSTALL} bash && \
