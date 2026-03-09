@@ -134,6 +134,25 @@ Examples:
 			return fmt.Errorf("encoding fields: %w", err)
 		}
 
+		// Warn if a formula with the same title already exists.
+		dupCheck, dupErr := beadsClient.ListBeads(context.Background(), &client.ListBeadsRequest{
+			Type:   []string{"formula"},
+			Status: []string{"open", "in_progress"},
+			Search: name,
+			Labels: labels,
+			Limit:  100,
+		})
+		if dupErr == nil {
+			for _, eb := range dupCheck.Beads {
+				if eb.Title == name {
+					fmt.Fprintf(os.Stderr, "Warning: formula %q already exists (%s, created %s)\n",
+						name, eb.ID, eb.CreatedAt.Format("2006-01-02"))
+					fmt.Fprintf(os.Stderr, "Consider updating it with: kd formula update %s --file <file>\n", eb.ID)
+					fmt.Fprintln(os.Stderr, "Or close the old one first: kd close "+eb.ID)
+				}
+			}
+		}
+
 		req := &client.CreateBeadRequest{
 			Title:       name,
 			Description: description,
