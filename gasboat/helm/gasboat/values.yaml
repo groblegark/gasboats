@@ -890,7 +890,7 @@ wlBridge:
   enabled: false
 
   image:
-    repository: ghcr.io/groblegark/gasboat/wl-bridge
+    repository: ghcr.io/groblegark/gasboats/wl-bridge
     tag: ""
     pullPolicy: Always
 
