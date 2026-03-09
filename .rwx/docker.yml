@@ -837,16 +837,14 @@ tasks:
         chmod +x $OUT/usr/local/bin/terragrunt
       ) &
       (
-        # uv
-        curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh
-        mv /root/.local/bin/uv $OUT/usr/local/bin/uv 2>/dev/null || true
-        mv /root/.local/bin/uvx $OUT/usr/local/bin/uvx 2>/dev/null || true
+        # uv — install directly to output dir (UV_UNMANAGED_INSTALL for CI)
+        curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="$OUT/usr/local/bin" sh
       ) &
       (
-        # Bun
+        # Bun — install to output dir, use final-image symlink targets
         curl -fsSL https://bun.sh/install | BUN_INSTALL=$OUT/usr/local/bun bash
-        ln -sf $OUT/usr/local/bun/bin/bun $OUT/usr/local/bin/bun
-        ln -sf $OUT/usr/local/bun/bin/bunx $OUT/usr/local/bin/bunx
+        ln -sf /usr/local/bun/bin/bun $OUT/usr/local/bin/bun
+        ln -sf /usr/local/bun/bin/bunx $OUT/usr/local/bin/bunx
       ) &
       (
         # yq
