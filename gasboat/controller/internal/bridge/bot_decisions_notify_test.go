@@ -469,6 +469,189 @@ func TestNotifyDecision_ContextTruncation(t *testing.T) {
 	}
 }
 
+// --- @mention tests ---
+
+func TestNotifyDecision_MentionsSlackUser(t *testing.T) {
+	daemon := newMockDaemon()
+	// Seed agent bead with slack_user_id (set by spawn).
+	daemon.beads["mention-agent"] = &beadsapi.BeadDetail{
+		ID:    "bd-mention-agent",
+		Type:  "agent",
+		Title: "mention-agent",
+		Fields: map[string]string{
+			"agent":         "mention-agent",
+			"slack_user_id": "U12345HUMAN",
+		},
+	}
+
+	var mu sync.Mutex
+	var postedText, postedBlocks string
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat.postMessage" {
+			_ = r.ParseForm()
+			mu.Lock()
+			postedText = r.FormValue("text")
+			postedBlocks = r.FormValue("blocks")
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C123", "ts": "1111.2222"})
+	}))
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C123"
+
+	opts, _ := json.Marshal([]string{"approve", "reject"})
+	err := bot.NotifyDecision(context.Background(), BeadEvent{
+		ID:       "dec-mention",
+		Type:     "decision",
+		Title:    "Deploy approval",
+		Priority: 1,
+		Assignee: "mention-agent",
+		Fields: map[string]string{
+			"prompt":  "Should we deploy to prod?",
+			"options": string(opts),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NotifyDecision: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Fallback text should contain the @mention.
+	if !strings.Contains(postedText, "<@U12345HUMAN>") {
+		t.Errorf("expected fallback text to contain <@U12345HUMAN>, got %q", postedText)
+	}
+	// Block Kit blocks should contain the @mention in the header.
+	// Slack API JSON-escapes angle brackets as \u003c/\u003e.
+	if !strings.Contains(postedBlocks, "@U12345HUMAN") {
+		t.Errorf("expected blocks to contain @U12345HUMAN mention, got %q", postedBlocks)
+	}
+}
+
+func TestNotifyDecision_NoMentionWhenNoSlackUser(t *testing.T) {
+	daemon := newMockDaemon()
+	// Agent bead exists but has no slack_user_id.
+	daemon.beads["no-user-agent"] = &beadsapi.BeadDetail{
+		ID:    "bd-no-user-agent",
+		Type:  "agent",
+		Title: "no-user-agent",
+		Fields: map[string]string{
+			"agent": "no-user-agent",
+		},
+	}
+
+	var mu sync.Mutex
+	var postedText string
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat.postMessage" {
+			_ = r.ParseForm()
+			mu.Lock()
+			postedText = r.FormValue("text")
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C123", "ts": "1111.2222"})
+	}))
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C123"
+
+	opts, _ := json.Marshal([]string{"yes", "no"})
+	err := bot.NotifyDecision(context.Background(), BeadEvent{
+		ID:       "dec-no-mention",
+		Type:     "decision",
+		Priority: 2,
+		Assignee: "no-user-agent",
+		Fields: map[string]string{
+			"prompt":  "Proceed?",
+			"options": string(opts),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NotifyDecision: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Should not contain any @mention.
+	if strings.Contains(postedText, "<@") {
+		t.Errorf("expected no @mention in text, got %q", postedText)
+	}
+}
+
+func TestNotifyEscalation_MentionsSlackUser(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.beads["esc-mention-agent"] = &beadsapi.BeadDetail{
+		ID:    "bd-esc-mention",
+		Type:  "agent",
+		Title: "esc-mention-agent",
+		Fields: map[string]string{
+			"agent":         "esc-mention-agent",
+			"slack_user_id": "U99HUMAN",
+		},
+	}
+
+	var mu sync.Mutex
+	var postedText string
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat.postMessage" {
+			_ = r.ParseForm()
+			mu.Lock()
+			postedText = r.FormValue("text")
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C123", "ts": "1111.3333"})
+	}))
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C123"
+
+	err := bot.NotifyEscalation(context.Background(), BeadEvent{
+		ID:       "dec-esc-mention",
+		Type:     "decision",
+		Title:    "Urgent item",
+		Priority: 0,
+		Assignee: "esc-mention-agent",
+		Labels:   []string{"escalated"},
+		Fields:   map[string]string{"prompt": "Handle now?"},
+	})
+	if err != nil {
+		t.Fatalf("NotifyEscalation: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(postedText, "<@U99HUMAN>") {
+		t.Errorf("expected escalation text to contain <@U99HUMAN>, got %q", postedText)
+	}
+}
+
+func TestResolveDecisionMentionUser_ReturnsEmptyForUnknownAgent(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// No agent bead exists.
+	userID := bot.resolveDecisionMentionUser(context.Background(), "unknown-agent")
+	if userID != "" {
+		t.Errorf("expected empty user ID for unknown agent, got %q", userID)
+	}
+
+	// Empty agent name.
+	userID = bot.resolveDecisionMentionUser(context.Background(), "")
+	if userID != "" {
+		t.Errorf("expected empty user ID for empty agent, got %q", userID)
+	}
+}
+
 // --- NotifyEscalation tests ---
 
 func TestNotifyEscalation_PostsMessage(t *testing.T) {

@@ -433,6 +433,14 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 			"bead", beadID, "agent", assignedAgent,
 			"channel", channel, "thread_ts", threadTS, "listen", listen)
 
+		// Best-effort: store the Slack user ID of the spawner on the agent bead
+		// so decision notifications can @mention the right person.
+		if ev.User != "" {
+			_ = b.daemon.UpdateBeadFields(ctx, beadID, map[string]string{
+				"slack_user_id": ev.User,
+			})
+		}
+
 		if b.state != nil {
 			_ = b.state.SetThreadAgent(channel, threadTS, assignedAgent)
 			if listen {
@@ -476,6 +484,7 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		"slack_thread_channel": channel,
 		"slack_thread_ts":      threadTS,
 		"spawn_source":         "slack-thread",
+		"slack_user_id":        ev.User,
 	}
 	fieldsJSON, err := json.Marshal(fields)
 	if err != nil {

@@ -33,6 +33,21 @@ func decisionQuestion(fields map[string]string) string {
 	return fields["question"]
 }
 
+// resolveDecisionMentionUser looks up the Slack user ID to @mention in a
+// decision notification. It checks the agent bead's slack_user_id field,
+// which is set when agents are spawned via Slack.
+func (b *Bot) resolveDecisionMentionUser(ctx context.Context, agent string) string {
+	if agent == "" {
+		return ""
+	}
+	agentName := extractAgentName(agent)
+	detail, err := b.daemon.FindAgentBead(ctx, agentName)
+	if err != nil {
+		return ""
+	}
+	return detail.Fields["slack_user_id"]
+}
+
 // NotifyDecision posts a Block Kit message to Slack for a new decision.
 // Layout matches the beads implementation: each option is a Section block
 // with numbered label, description, and right-aligned accessory button.
@@ -59,11 +74,18 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 		}
 	}
 
+	// Resolve who to @mention in the decision notification.
+	mentionUserID := b.resolveDecisionMentionUser(ctx, bead.Assignee)
+
 	// Build Block Kit blocks — header section with priority-colored indicator.
+	headerText := fmt.Sprintf("%s *Decision Needed*", decisionPriorityEmoji(bead.Priority))
+	if mentionUserID != "" {
+		headerText += fmt.Sprintf(" <@%s>", mentionUserID)
+	}
+	headerText += "\n" + question
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
-			slack.NewTextBlockObject("mrkdwn",
-				fmt.Sprintf("%s *Decision Needed*\n%s", decisionPriorityEmoji(bead.Priority), question), false, false),
+			slack.NewTextBlockObject("mrkdwn", headerText, false, false),
 			nil, nil,
 		),
 	}
@@ -206,8 +228,12 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 		slack.NewActionBlock("", dismissBtn))
 
 	// Build message options.
+	fallbackText := fmt.Sprintf("Decision needed: %s", question)
+	if mentionUserID != "" {
+		fallbackText = fmt.Sprintf("Decision needed (<@%s>): %s", mentionUserID, question)
+	}
 	msgOpts := []slack.MsgOption{
-		slack.MsgOptionText(fmt.Sprintf("Decision needed: %s", question), false),
+		slack.MsgOptionText(fallbackText, false),
 		slack.MsgOptionBlocks(blocks...),
 	}
 
@@ -334,7 +360,14 @@ func (b *Bot) NotifyEscalation(ctx context.Context, bead BeadEvent) error {
 	agent := extractAgentName(bead.Assignee)
 	agentDisplay := b.agentDisplayName(agent)
 
-	text := fmt.Sprintf(":rotating_light: *ESCALATED: %s*\n%s", beadTitle(bead.ID, bead.Title), question)
+	// Resolve who to @mention.
+	mentionUserID := b.resolveDecisionMentionUser(ctx, bead.Assignee)
+
+	text := fmt.Sprintf(":rotating_light: *ESCALATED: %s*", beadTitle(bead.ID, bead.Title))
+	if mentionUserID != "" {
+		text += fmt.Sprintf(" <@%s>", mentionUserID)
+	}
+	text += "\n" + question
 
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
@@ -355,8 +388,12 @@ func (b *Bot) NotifyEscalation(ctx context.Context, bead BeadEvent) error {
 
 	targetChannel := b.resolveChannel(agent)
 
+	escalationFallback := fmt.Sprintf("ESCALATED: %s — %s", beadTitle(bead.ID, bead.Title), question)
+	if mentionUserID != "" {
+		escalationFallback = fmt.Sprintf("ESCALATED (<@%s>): %s — %s", mentionUserID, beadTitle(bead.ID, bead.Title), question)
+	}
 	msgOpts := []slack.MsgOption{
-		slack.MsgOptionText(fmt.Sprintf("ESCALATED: %s — %s", beadTitle(bead.ID, bead.Title), question), false),
+		slack.MsgOptionText(escalationFallback, false),
 		slack.MsgOptionBlocks(blocks...),
 	}
 

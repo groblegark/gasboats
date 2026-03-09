@@ -76,6 +76,9 @@ func TestHandleStartCommand_SpawnsAgentWithProject(t *testing.T) {
 		if b.Fields["role"] != "crew" {
 			t.Errorf("expected default role=crew, got %s", b.Fields["role"])
 		}
+		if b.Fields["slack_user_id"] != "U456" {
+			t.Errorf("expected slack_user_id=U456, got %s", b.Fields["slack_user_id"])
+		}
 	}
 }
 
