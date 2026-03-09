@@ -71,6 +71,7 @@ type Bot struct {
 	agentImageTag map[string]string   // agent identity → deployed image tag
 	agentRole     map[string]string   // agent identity → role (e.g., "crew", "lead", "ops")
 	threadSpawnMsgs  map[string]MessageRef // agent identity → spawn confirmation message ref (for in-place update)
+	beadMsgs         map[string]MessageRef // "agent:beadID" → Slack message ref for inline bead status updates
 
 	// Nudge throttling for thread reply forwarding.
 	// Key: "agent:thread_ts", value: last nudge time.
@@ -142,6 +143,7 @@ func NewBot(cfg BotConfig) *Bot {
 		agentImageTag:    make(map[string]string),
 		agentRole:        make(map[string]string),
 		threadSpawnMsgs:  make(map[string]MessageRef),
+		beadMsgs:         make(map[string]MessageRef),
 		lastThreadNudge: make(map[string]time.Time),
 		github:           gh,
 		repos:            cfg.Repos,
@@ -320,12 +322,20 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 			return
 		}
 
-		// Forward to bound agent only if this is a thread-spawned agent thread.
-		// Agent card threads (status/notification threads) require an @mention.
+		// Forward to bound agent only if this is a thread-spawned agent thread
+		// with --listen mode enabled. Without --listen, thread agents require
+		// an @mention (same as agent card threads).
 		// Skip messages containing @mention — those are handled by app_mention event.
 		if !isMention {
 			if agent := b.getThreadSpawnedAgent(ev.Channel, ev.ThreadTimeStamp); agent != "" {
-				b.handleThreadForward(ctx, ev, agent)
+				// Only auto-forward if --listen was set on the original spawn mention.
+				if b.state != nil && b.state.IsListenThread(ev.Channel, ev.ThreadTimeStamp) {
+					b.handleThreadForward(ctx, ev, agent)
+				} else {
+					b.hintMentionRequired(ctx, ev.Channel, ev.ThreadTimeStamp, agent)
+				}
+			} else if agent := b.getAgentByThread(ev.Channel, ev.ThreadTimeStamp); agent != "" {
+				b.hintMentionRequired(ctx, ev.Channel, ev.ThreadTimeStamp, agent)
 			}
 		}
 		return
@@ -346,6 +356,30 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 
 	// Non-mention messages in non-thread contexts are ignored.
 	// Users must @mention the bot to interact with agents.
+}
+
+// hintMentionRequired posts a one-time hint in an agent card thread when a
+// user posts without @mentioning the bot. Throttled to at most once per thread
+// per 10 minutes to avoid spam.
+func (b *Bot) hintMentionRequired(ctx context.Context, channel, threadTS, agent string) {
+	key := "hint:" + channel + ":" + threadTS
+	now := time.Now()
+
+	b.mu.Lock()
+	if last, ok := b.lastThreadNudge[key]; ok && now.Sub(last) < 10*time.Minute {
+		b.mu.Unlock()
+		return
+	}
+	b.lastThreadNudge[key] = now
+	b.mu.Unlock()
+
+	hint := fmt.Sprintf(":bulb: _Tip: @mention me so *%s* sees your message._", agent)
+	if b.api != nil {
+		_, _, _ = b.api.PostMessageContext(ctx, channel,
+			slack.MsgOptionText(hint, false),
+			slack.MsgOptionTS(threadTS),
+		)
+	}
 }
 
 // extractAgentName returns the last segment of an agent identity.

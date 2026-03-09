@@ -118,16 +118,23 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 
 		if len(optObjs) > 0 {
 			for i, opt := range optObjs {
-				// Build display: Short is the concise title, Label is the description.
-				// Show both when available so the option title is visible.
+				// Build display: prefer Short, fall back to Label, then ID.
 				title := opt.Short
+				if title == "" {
+					title = opt.Label
+				}
 				if title == "" {
 					title = opt.ID
 				}
+
+				// Show Label as description if it differs from the title.
 				desc := opt.Label
+				if desc == title {
+					desc = ""
+				}
 
 				var optText string
-				if desc != "" && desc != title {
+				if desc != "" {
 					optText = fmt.Sprintf("*%d. %s*\n%s", i+1, title, desc)
 				} else {
 					optText = fmt.Sprintf("*%d. %s*", i+1, title)
@@ -220,6 +227,28 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 		}
 	}
 
+	// Fallback: if Assignee didn't resolve to a thread-bound agent, try the
+	// requesting_agent_bead_id field which gb decision create always sets.
+	if threadSource == "" {
+		if reqAgentBeadID := bead.Fields["requesting_agent_bead_id"]; reqAgentBeadID != "" {
+			if agentBead, err := b.daemon.GetBead(ctx, reqAgentBeadID); err == nil {
+				// Always update agent identity from requesting bead so that
+				// agent-card threading (below) can find the correct card.
+				if agentBead.Fields["agent"] != "" {
+					agent = extractAgentName(agentBead.Fields["agent"])
+					agentDisplay = b.agentDisplayName(agent)
+				}
+				ch := agentBead.Fields["slack_thread_channel"]
+				ts := agentBead.Fields["slack_thread_ts"]
+				if isValidThreadBinding(ch, ts) {
+					targetChannel = ch
+					threadTS = ts
+					threadSource = "slack_thread"
+				}
+			}
+		}
+	}
+
 	if threadSource == "" && b.agentThreadingEnabled() && agent != "" {
 		// Agent threading mode: thread under the agent's status card.
 		cardTS, err := b.ensureAgentCard(ctx, agent, targetChannel)
@@ -230,6 +259,12 @@ func (b *Bot) NotifyDecision(ctx context.Context, bead BeadEvent) error {
 			threadTS = cardTS
 			threadSource = "agent_card"
 		}
+	}
+
+	if threadSource == "" && agent != "" {
+		b.logger.Warn("decision falling through to flat channel post",
+			"bead", bead.ID, "agent", agent, "channel", targetChannel,
+			"threading_enabled", b.agentThreadingEnabled())
 	}
 
 	// Predecessor threading (within the agent thread or top-level).
@@ -327,15 +362,32 @@ func (b *Bot) NotifyEscalation(ctx context.Context, bead BeadEvent) error {
 	}
 
 	// Thread-bound agents: post in the originating Slack thread.
+	threadResolved := false
 	if agent != "" {
 		if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
 			targetChannel = slackChannel
 			msgOpts = append(msgOpts, slack.MsgOptionTS(slackTS))
-		} else if b.agentThreadingEnabled() {
-			// Agent threading mode: thread escalation under the agent's card.
-			if cardTS, err := b.ensureAgentCard(ctx, agent, targetChannel); err == nil {
-				msgOpts = append(msgOpts, slack.MsgOptionTS(cardTS))
+			threadResolved = true
+		}
+	}
+	// Fallback: try requesting_agent_bead_id if Assignee didn't resolve.
+	if !threadResolved {
+		if reqAgentBeadID := bead.Fields["requesting_agent_bead_id"]; reqAgentBeadID != "" {
+			if agentBead, err := b.daemon.GetBead(ctx, reqAgentBeadID); err == nil {
+				ch := agentBead.Fields["slack_thread_channel"]
+				ts := agentBead.Fields["slack_thread_ts"]
+				if isValidThreadBinding(ch, ts) {
+					targetChannel = ch
+					msgOpts = append(msgOpts, slack.MsgOptionTS(ts))
+					threadResolved = true
+				}
 			}
+		}
+	}
+	if !threadResolved && b.agentThreadingEnabled() && agent != "" {
+		// Agent threading mode: thread escalation under the agent's card.
+		if cardTS, err := b.ensureAgentCard(ctx, agent, targetChannel); err == nil {
+			msgOpts = append(msgOpts, slack.MsgOptionTS(cardTS))
 		}
 	}
 

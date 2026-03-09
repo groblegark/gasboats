@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,12 +55,16 @@ type Config struct {
 	// CoopImage is the default container image for agent pods (env: COOP_IMAGE).
 	CoopImage string
 
+	// ImagePullSecrets is a comma-separated list of K8s Secret names for pulling
+	// private container images in agent pods (env: IMAGE_PULL_SECRETS).
+	ImagePullSecrets []string
+
 	// CoopServiceAccount is the K8s ServiceAccount to use for agent pods (env: COOP_SERVICE_ACCOUNT).
 	// When set, all agent pods use this SA unless overridden by bead metadata.
 	CoopServiceAccount string
 
 	// CoopMaxPods is the maximum number of agent pods that can exist
-	// simultaneously (env: COOP_MAX_PODS). 0 means unlimited. Default: 30.
+	// simultaneously (env: COOP_MAX_PODS). 0 means unlimited. Default: 4.
 	// When the limit is reached, new pods are queued until existing ones finish.
 	CoopMaxPods int
 
@@ -277,8 +282,9 @@ func Parse() *Config {
 
 		// Agent Pods
 		CoopImage:          os.Getenv("COOP_IMAGE"),
+		ImagePullSecrets:   parseCommaSeparated(os.Getenv("IMAGE_PULL_SECRETS")),
 		CoopServiceAccount: os.Getenv("COOP_SERVICE_ACCOUNT"),
-		CoopMaxPods:         envIntOr("COOP_MAX_PODS", 30),
+		CoopMaxPods:         envIntOr("COOP_MAX_PODS", 4),
 		CoopBurstLimit:      envIntOr("COOP_BURST_LIMIT", 3),
 		CoopRateLimitWindow: envDurationOr("COOP_RATE_LIMIT_WINDOW", 5*time.Minute),
 		CoopRateLimitMax:    envIntOr("COOP_RATE_LIMIT_MAX", 20),
@@ -362,6 +368,20 @@ func envDurationOr(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	for _, v := range strings.Split(s, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func hostname() string {

@@ -177,8 +177,27 @@ func DefaultGasboatImageConfigs(repo RepoRef, controllerTag, agentTag, bridgeTag
 	return configs
 }
 
+// MonorepoImageConfigs returns ImageTrackConfigs for the gasboats monorepo.
+// All images are built from a single repo, so paths are prefixed with their
+// subtree directory (e.g., "gasboat/images/agent/").
+func MonorepoImageConfigs(repo RepoRef, tag string) []ImageTrackConfig {
+	if tag == "" {
+		return nil
+	}
+	return []ImageTrackConfig{
+		{Name: "agent", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/agent/", "gasboat/.rwx/docker.yml", "gasboat/.rwx/agent-"}},
+		{Name: "controller", Repo: repo, Tag: tag, Paths: []string{"gasboat/controller/"}},
+		{Name: "slack-bridge", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/slack-bridge/", "gasboat/controller/"}},
+		{Name: "jira-bridge", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/jira-bridge/", "gasboat/controller/"}},
+		{Name: "wl-bridge", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/wl-bridge/", "gasboat/controller/"}},
+		{Name: "kbeads", Repo: repo, Tag: tag, Paths: []string{"kbeads/"}},
+		{Name: "coopmux", Repo: repo, Tag: tag, Paths: []string{"coop/"}},
+		{Name: "beads3d", Repo: repo, Tag: tag, Paths: []string{"beads3d/"}},
+	}
+}
+
 // ExtractImageTag extracts the tag from an image reference like
-// "ghcr.io/groblegark/gasboat/agent:2026.63.1" → "2026.63.1".
+// "ghcr.io/groblegark/gasboats/agent:2026.63.1" → "2026.63.1".
 // Returns empty string if no tag is present.
 func ExtractImageTag(imageRef string) string {
 	if imageRef == "" {
