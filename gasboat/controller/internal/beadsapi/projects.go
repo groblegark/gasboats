@@ -40,6 +40,7 @@ type ProjectInfo struct {
 	StorageClass   string // Per-project PVC storage class override
 	ServiceAccount string // Per-project K8s ServiceAccount override
 	RTKEnabled     bool   // Enable RTK token optimization for this project
+	DockerEnabled  bool   // Enable Docker-in-Docker sidecar for this project
 
 	// Tier 1 enhancements: per-project pod resource overrides.
 	CPURequest    string // Kubernetes quantity string, e.g. "500m"
@@ -95,6 +96,7 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			StorageClass:   fields["storage_class"],
 			ServiceAccount: fields["service_account"],
 			RTKEnabled:     fields["rtk_enabled"] == "true",
+			DockerEnabled:  fields["docker"] == "true",
 			CPURequest:     fields["cpu_request"],
 			CPULimit:       fields["cpu_limit"],
 			MemoryRequest:  fields["memory_request"],

@@ -68,6 +68,15 @@ func BuildSpecFromBeadInfo(cfg *config.Config, project, mode, role, agentName st
 	applyCommonConfig(cfg, &spec)
 	cfg.ProjectCacheMu.RUnlock()
 
+	// Docker-in-Docker sidecar: agent-level override via metadata.
+	// When "docker" metadata is "true", inject the DinD sidecar.
+	// When "false", explicitly disable even if project defaults enable it.
+	if metadata["docker"] == "true" {
+		spec.Docker = true
+	} else if metadata["docker"] == "false" {
+		spec.Docker = false
+	}
+
 	// Agent-level RTK override.
 	if metadata["rtk_enabled"] == "false" {
 		delete(spec.Env, "RTK_ENABLED")
@@ -152,6 +161,13 @@ func buildAgentPodSpec(cfg *config.Config, event subscriber.Event) podmanager.Ag
 		spec.ConfigMapName = cm
 	}
 
+	// Docker-in-Docker sidecar: enable via agent bead metadata.
+	if event.Metadata["docker"] == "true" {
+		spec.Docker = true
+	} else if event.Metadata["docker"] == "false" {
+		spec.Docker = false
+	}
+
 	// Agent-level RTK override: force-disable RTK for this agent even if the
 	// project has it enabled. Set rtk_enabled=false on the agent bead to opt out.
 	if event.Metadata["rtk_enabled"] == "false" {
@@ -222,6 +238,11 @@ func applyProjectDefaults(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 		applyResourceOverride(spec.Resources.Limits, corev1.ResourceCPU, entry.CPULimit)
 		applyResourceOverride(spec.Resources.Requests, corev1.ResourceMemory, entry.MemoryRequest)
 		applyResourceOverride(spec.Resources.Limits, corev1.ResourceMemory, entry.MemoryLimit)
+	}
+
+	// Docker: enable DinD sidecar if project has docker enabled.
+	if entry.DockerEnabled {
+		spec.Docker = true
 	}
 
 	// RTK: set env var if project has RTK enabled

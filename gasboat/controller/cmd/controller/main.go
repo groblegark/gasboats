@@ -489,6 +489,7 @@ func refreshProjectCache(ctx context.Context, logger *slog.Logger, daemon *beads
 			StorageClass:   info.StorageClass,
 			ServiceAccount: info.ServiceAccount,
 			RTKEnabled:     info.RTKEnabled,
+			DockerEnabled:  info.DockerEnabled,
 			CPURequest:     info.CPURequest,
 			CPULimit:       info.CPULimit,
 			MemoryRequest:  info.MemoryRequest,
