@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get install -y protobuf-compiler
-      - run: cd coop && RUSTC_WRAPPER="" cargo test --workspace
+      - run: cd coop && RUSTC_WRAPPER="" cargo test --workspace --lib
 
   # JS build (beads3d)
   test-beads3d:
