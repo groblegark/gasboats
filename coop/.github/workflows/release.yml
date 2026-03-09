@@ -127,7 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_PAT }}
         run: |
-          gh api repos/groblegark/gasboat/dispatches \
+          gh api repos/groblegark/gasboats/dispatches \
             -f event_type=coop-release \
             -f client_payload[tag]=${{ github.ref_name }} || true
 

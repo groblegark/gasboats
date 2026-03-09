@@ -133,7 +133,7 @@ jobs:
       - name: Trigger gasboat agent rebuild
         run: |
           gh workflow run bump-kd.yml \
-            -R groblegark/gasboat \
+            -R groblegark/gasboats \
             -f version=${{ steps.tag.outputs.name }}
         env:
           GH_TOKEN: ${{ secrets.GASBOAT_DISPATCH_TOKEN }}
