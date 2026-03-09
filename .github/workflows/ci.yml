@@ -79,9 +79,11 @@ jobs:
           go-version-file: gasboat/controller/go.mod
       - uses: golangci/golangci-lint-action@v6
         with:
+          version: v2.1
           working-directory: gasboat/controller
       - uses: golangci/golangci-lint-action@v6
         with:
+          version: v2.1
           working-directory: kbeads
 
   # Rust tests (coop)
@@ -92,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cd coop && cargo test --workspace
+      - run: cd coop && RUSTC_WRAPPER="" cargo test --workspace
 
   # JS build (beads3d)
   test-beads3d:
