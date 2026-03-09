@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,10 @@ type Config struct {
 
 	// CoopImage is the default container image for agent pods (env: COOP_IMAGE).
 	CoopImage string
+
+	// ImagePullSecrets is a comma-separated list of K8s Secret names for pulling
+	// private container images in agent pods (env: IMAGE_PULL_SECRETS).
+	ImagePullSecrets []string
 
 	// CoopServiceAccount is the K8s ServiceAccount to use for agent pods (env: COOP_SERVICE_ACCOUNT).
 	// When set, all agent pods use this SA unless overridden by bead metadata.
@@ -277,6 +282,7 @@ func Parse() *Config {
 
 		// Agent Pods
 		CoopImage:          os.Getenv("COOP_IMAGE"),
+		ImagePullSecrets:   parseCommaSeparated(os.Getenv("IMAGE_PULL_SECRETS")),
 		CoopServiceAccount: os.Getenv("COOP_SERVICE_ACCOUNT"),
 		CoopMaxPods:         envIntOr("COOP_MAX_PODS", 30),
 		CoopBurstLimit:      envIntOr("COOP_BURST_LIMIT", 3),
@@ -362,6 +368,20 @@ func envDurationOr(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	for _, v := range strings.Split(s, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func hostname() string {

@@ -161,6 +161,9 @@ type AgentPodSpec struct {
 	// ReferenceRepos lists additional repos to clone alongside the primary.
 	ReferenceRepos []RepoRef
 
+	// ImagePullSecrets lists K8s Secret names for pulling private container images.
+	ImagePullSecrets []string
+
 	// Prewarmed marks this pod as a prewarmed agent. The status reporter
 	// will not overwrite agent_state=prewarmed with "working".
 	Prewarmed bool
@@ -398,6 +401,12 @@ func (m *K8sManager) buildPod(spec AgentPodSpec) *corev1.Pod {
 	}
 	if spec.Affinity != nil {
 		podSpec.Affinity = spec.Affinity
+	}
+	if len(spec.ImagePullSecrets) > 0 {
+		for _, name := range spec.ImagePullSecrets {
+			podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets,
+				corev1.LocalObjectReference{Name: name})
+		}
 	}
 
 	// Use a 45s termination grace period so the preStop hook and entrypoint

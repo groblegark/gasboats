@@ -274,6 +274,9 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 	if cfg.BeadsTokenSecret != "" {
 		spec.DaemonTokenSecret = cfg.BeadsTokenSecret
 	}
+	if len(cfg.ImagePullSecrets) > 0 && len(spec.ImagePullSecrets) == 0 {
+		spec.ImagePullSecrets = cfg.ImagePullSecrets
+	}
 
 	// Wire git info from project cache (multi-repo aware).
 	if entry, ok := cfg.ProjectCache[spec.Project]; ok {
