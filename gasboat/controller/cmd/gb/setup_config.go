@@ -38,7 +38,10 @@ func defaultUserSettings() map[string]any {
 			},
 			"deny": []any{},
 		},
-		"alwaysThinkingEnabled":          true,
+		"env": map[string]any{
+			"CLAUDE_CODE_EFFORT_LEVEL": "high",
+		},
+		"alwaysThinkingEnabled":             true,
 		"skipDangerousModePermissionPrompt": true,
 	}
 }
