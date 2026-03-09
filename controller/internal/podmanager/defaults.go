@@ -19,6 +19,7 @@ type PodDefaults struct {
 	SecretEnv          []SecretEnvSource
 	ConfigMapName      string
 	WorkspaceStorage   *WorkspaceStorageSpec
+	ImagePullSecrets   []string
 }
 
 // ApplyDefaults applies PodDefaults to an AgentPodSpec, filling in
@@ -51,6 +52,9 @@ func ApplyDefaults(spec *AgentPodSpec, defaults *PodDefaults) {
 	}
 	if spec.WorkspaceStorage == nil && defaults.WorkspaceStorage != nil {
 		spec.WorkspaceStorage = defaults.WorkspaceStorage
+	}
+	if len(spec.ImagePullSecrets) == 0 && len(defaults.ImagePullSecrets) > 0 {
+		spec.ImagePullSecrets = defaults.ImagePullSecrets
 	}
 	// Merge env maps (spec values take precedence over defaults).
 	if len(defaults.Env) > 0 {
