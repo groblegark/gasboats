@@ -1,0 +1,24 @@
+{{define "title"}}Roles{{end}}
+{{define "content"}}
+<h1>Agent Roles</h1>
+<p class="meta">Roles are derived from config beads, advice beads, and active agents.</p>
+
+<div class="grid">
+{{range .Roles}}
+<div class="card">
+  <h2>
+    <a href="/roles/{{.Name}}">{{.Name}}</a>
+    {{if eq .Name "global"}}<span class="badge badge-global">global</span>{{else}}<span class="badge badge-role">role</span>{{end}}
+  </h2>
+  <table>
+    <tr><td>Config beads</td><td><span class="count">{{len .ConfigBeads}}</span></td></tr>
+    <tr><td>Advice beads</td><td><span class="count">{{len .AdviceBeads}}</span></td></tr>
+    <tr><td>Active agents</td><td><span class="count">{{.AgentCount}}</span></td></tr>
+  </table>
+  {{if .ActiveAgents}}
+  <div class="meta">Agents: {{range $i, $a := .ActiveAgents}}{{if $i}}, {{end}}{{$a}}{{end}}</div>
+  {{end}}
+</div>
+{{end}}
+</div>
+{{end}}

@@ -1,0 +1,61 @@
+{{define "title"}}Role: {{.Role.Name}}{{end}}
+{{define "content"}}
+<h1>
+  Role: {{.Role.Name}}
+  {{if eq .Role.Name "global"}}<span class="badge badge-global">global</span>{{else}}<span class="badge badge-role">role</span>{{end}}
+</h1>
+
+<h2>Config Beads <span class="count">{{len .Role.ConfigBeads}}</span></h2>
+{{if .Role.ConfigBeads}}
+<table>
+  <thead><tr><th>ID</th><th>Title</th><th>Labels</th></tr></thead>
+  <tbody>
+  {{range .Role.ConfigBeads}}
+  <tr>
+    <td class="meta">{{.ID}}</td>
+    <td>{{.Title}}</td>
+    <td>
+      <div class="label-list">
+      {{range .Labels}}<span class="label-tag">{{.}}</span>{{end}}
+      </div>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No config beads for this role.</p>
+{{end}}
+
+<h2>Advice Beads <span class="count">{{len .Role.AdviceBeads}}</span></h2>
+{{if .Role.AdviceBeads}}
+<table>
+  <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Labels</th></tr></thead>
+  <tbody>
+  {{range .Role.AdviceBeads}}
+  <tr>
+    <td class="meta">{{.ID}}</td>
+    <td>{{.Title}}</td>
+    <td>{{.Status}}</td>
+    <td>
+      <div class="label-list">
+      {{range .Labels}}<span class="label-tag">{{.}}</span>{{end}}
+      </div>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No advice beads for this role.</p>
+{{end}}
+
+<h2>Active Agents <span class="count">{{.Role.AgentCount}}</span></h2>
+{{if .Role.ActiveAgents}}
+<ul>
+{{range .Role.ActiveAgents}}<li>{{.}}</li>{{end}}
+</ul>
+{{else}}
+<p class="empty">No active agents with this role.</p>
+{{end}}
+{{end}}

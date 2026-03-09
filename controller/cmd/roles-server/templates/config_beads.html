@@ -1,0 +1,25 @@
+{{define "title"}}Config Beads{{end}}
+{{define "content"}}
+<h1>Config Beads <span class="count">{{.Total}}</span></h1>
+
+{{if .ConfigBeads}}
+<table>
+  <thead><tr><th>ID</th><th>Title</th><th>Labels</th></tr></thead>
+  <tbody>
+  {{range .ConfigBeads}}
+  <tr>
+    <td class="meta">{{.ID}}</td>
+    <td>{{.Title}}</td>
+    <td>
+      <div class="label-list">
+      {{range .Labels}}<span class="label-tag">{{.}}</span>{{end}}
+      </div>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No config beads found.</p>
+{{end}}
+{{end}}

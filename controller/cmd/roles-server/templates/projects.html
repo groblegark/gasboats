@@ -1,0 +1,22 @@
+{{define "title"}}Projects{{end}}
+{{define "content"}}
+<h1>Projects</h1>
+
+{{if .Projects}}
+<div class="grid">
+{{range $name, $info := .Projects}}
+<div class="card">
+  <h2>{{$name}}</h2>
+  <table>
+    {{if $info.GitURL}}<tr><td>Git URL</td><td class="meta">{{$info.GitURL}}</td></tr>{{end}}
+    {{if $info.DefaultBranch}}<tr><td>Branch</td><td>{{$info.DefaultBranch}}</td></tr>{{end}}
+    {{if $info.Image}}<tr><td>Image</td><td class="meta">{{$info.Image}}</td></tr>{{end}}
+    {{if $info.Prefix}}<tr><td>Prefix</td><td>{{$info.Prefix}}</td></tr>{{end}}
+  </table>
+</div>
+{{end}}
+</div>
+{{else}}
+<p class="empty">No projects found.</p>
+{{end}}
+{{end}}

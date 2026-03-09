@@ -1,0 +1,26 @@
+{{define "title"}}Advice Beads{{end}}
+{{define "content"}}
+<h1>Advice Beads <span class="count">{{.Total}}</span></h1>
+
+{{if .AdviceBeads}}
+<table>
+  <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Labels</th></tr></thead>
+  <tbody>
+  {{range .AdviceBeads}}
+  <tr>
+    <td class="meta">{{.ID}}</td>
+    <td>{{.Title}}</td>
+    <td>{{.Status}}</td>
+    <td>
+      <div class="label-list">
+      {{range .Labels}}<span class="label-tag">{{.}}</span>{{end}}
+      </div>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No advice beads found.</p>
+{{end}}
+{{end}}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -57,12 +59,10 @@ type adviceBead struct {
 	Status      string   `json:"status"`
 }
 
-// handleListRoles lists all known roles derived from config beads, advice beads,
+// fetchRoles fetches all roles derived from config beads, advice beads,
 // and active agent beads. A role is any unique "role:X" label found across
 // config and advice beads.
-func (a *RolesAPI) handleListRoles(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
+func (a *RolesAPI) fetchRoles(ctx context.Context) ([]roleInfo, error) {
 	// Fetch config beads, advice beads, and agents in parallel.
 	var (
 		configResult *beadsapi.ListBeadsResult
@@ -95,19 +95,13 @@ func (a *RolesAPI) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	if configErr != nil {
-		a.logger.Error("failed to list config beads", "error", configErr)
-		writeError(w, http.StatusInternalServerError, "failed to list config beads")
-		return
+		return nil, fmt.Errorf("list config beads: %w", configErr)
 	}
 	if adviceErr != nil {
-		a.logger.Error("failed to list advice beads", "error", adviceErr)
-		writeError(w, http.StatusInternalServerError, "failed to list advice beads")
-		return
+		return nil, fmt.Errorf("list advice beads: %w", adviceErr)
 	}
 	if agentsErr != nil {
-		a.logger.Error("failed to list agent beads", "error", agentsErr)
-		writeError(w, http.StatusInternalServerError, "failed to list agent beads")
-		return
+		return nil, fmt.Errorf("list agent beads: %w", agentsErr)
 	}
 
 	// Extract unique roles from all label sources.
@@ -175,15 +169,23 @@ func (a *RolesAPI) handleListRoles(w http.ResponseWriter, r *http.Request) {
 		return result[i].Name < result[j].Name
 	})
 
-	writeJSON(w, map[string]any{"roles": result})
+	return result, nil
 }
 
-// handleGetRole returns the detailed configuration for a specific role,
-// including its resolved config beads, advice beads, and active agents.
-func (a *RolesAPI) handleGetRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	roleName := r.PathValue("role")
+// handleListRoles lists all known roles.
+func (a *RolesAPI) handleListRoles(w http.ResponseWriter, r *http.Request) {
+	roles, err := a.fetchRoles(r.Context())
+	if err != nil {
+		a.logger.Error("failed to fetch roles", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch roles")
+		return
+	}
+	writeJSON(w, map[string]any{"roles": roles})
+}
 
+// fetchRole returns the detailed configuration for a specific role,
+// including its resolved config beads, advice beads, and active agents.
+func (a *RolesAPI) fetchRole(ctx context.Context, roleName string) (*roleInfo, error) {
 	var labelFilter []string
 	if roleName == "global" {
 		labelFilter = []string{"global"}
@@ -225,19 +227,13 @@ func (a *RolesAPI) handleGetRole(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	if configErr != nil {
-		a.logger.Error("failed to list config beads for role", "role", roleName, "error", configErr)
-		writeError(w, http.StatusInternalServerError, "failed to list config beads")
-		return
+		return nil, fmt.Errorf("list config beads: %w", configErr)
 	}
 	if adviceErr != nil {
-		a.logger.Error("failed to list advice beads for role", "role", roleName, "error", adviceErr)
-		writeError(w, http.StatusInternalServerError, "failed to list advice beads")
-		return
+		return nil, fmt.Errorf("list advice beads: %w", adviceErr)
 	}
 	if agentsErr != nil {
-		a.logger.Error("failed to list agent beads", "error", agentsErr)
-		writeError(w, http.StatusInternalServerError, "failed to list agent beads")
-		return
+		return nil, fmt.Errorf("list agent beads: %w", agentsErr)
 	}
 
 	configs := make([]configBead, 0, len(configResult.Beads))
@@ -257,43 +253,40 @@ func (a *RolesAPI) handleGetRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ri := roleInfo{
+	return &roleInfo{
 		Name:         roleName,
 		ConfigBeads:  configs,
 		AdviceBeads:  advices,
 		AgentCount:   len(activeAgents),
 		ActiveAgents: activeAgents,
-	}
-
-	writeJSON(w, ri)
+	}, nil
 }
 
-// handleListConfigBeads lists all config beads, optionally filtered by label.
-func (a *RolesAPI) handleListConfigBeads(w http.ResponseWriter, r *http.Request) {
+// handleGetRole returns the detailed configuration for a specific role.
+func (a *RolesAPI) handleGetRole(w http.ResponseWriter, r *http.Request) {
+	roleName := r.PathValue("role")
+	role, err := a.fetchRole(r.Context(), roleName)
+	if err != nil {
+		a.logger.Error("failed to fetch role", "role", roleName, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch role")
+		return
+	}
+	writeJSON(w, role)
+}
+
+// listConfigQuery builds a ListBeadsQuery for config beads from HTTP request params.
+func listConfigQuery(r *http.Request) beadsapi.ListBeadsQuery {
 	q := beadsapi.ListBeadsQuery{
 		Types: []string{"config"},
 	}
 	if labels := r.URL.Query().Get("labels"); labels != "" {
 		q.Labels = strings.Split(labels, ",")
 	}
-
-	result, err := a.client.ListBeadsFiltered(r.Context(), q)
-	if err != nil {
-		a.logger.Error("failed to list config beads", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list config beads")
-		return
-	}
-
-	beads := make([]configBead, 0, len(result.Beads))
-	for _, b := range result.Beads {
-		beads = append(beads, toConfigBead(b))
-	}
-
-	writeJSON(w, map[string]any{"config_beads": beads, "total": result.Total})
+	return q
 }
 
-// handleListAdvice lists advice beads, optionally filtered by label.
-func (a *RolesAPI) handleListAdvice(w http.ResponseWriter, r *http.Request) {
+// listAdviceQuery builds a ListBeadsQuery for advice beads from HTTP request params.
+func listAdviceQuery(r *http.Request) beadsapi.ListBeadsQuery {
 	q := beadsapi.ListBeadsQuery{
 		Types:    []string{"advice"},
 		Statuses: []string{"open", "in_progress"},
@@ -301,31 +294,70 @@ func (a *RolesAPI) handleListAdvice(w http.ResponseWriter, r *http.Request) {
 	if labels := r.URL.Query().Get("labels"); labels != "" {
 		q.Labels = strings.Split(labels, ",")
 	}
+	return q
+}
 
-	result, err := a.client.ListBeadsFiltered(r.Context(), q)
+// fetchConfigBeads fetches config beads using query params from the request.
+func (a *RolesAPI) fetchConfigBeads(r *http.Request) ([]configBead, int, error) {
+	result, err := a.client.ListBeadsFiltered(r.Context(), listConfigQuery(r))
+	if err != nil {
+		return nil, 0, err
+	}
+	beads := make([]configBead, 0, len(result.Beads))
+	for _, b := range result.Beads {
+		beads = append(beads, toConfigBead(b))
+	}
+	return beads, result.Total, nil
+}
+
+// fetchAdviceBeads fetches advice beads using query params from the request.
+func (a *RolesAPI) fetchAdviceBeads(r *http.Request) ([]adviceBead, int, error) {
+	result, err := a.client.ListBeadsFiltered(r.Context(), listAdviceQuery(r))
+	if err != nil {
+		return nil, 0, err
+	}
+	beads := make([]adviceBead, 0, len(result.Beads))
+	for _, b := range result.Beads {
+		beads = append(beads, toAdviceBead(b))
+	}
+	return beads, result.Total, nil
+}
+
+// fetchProjects fetches all registered projects.
+func (a *RolesAPI) fetchProjects(ctx context.Context) (map[string]beadsapi.ProjectInfo, error) {
+	return a.client.ListProjectBeads(ctx)
+}
+
+// handleListConfigBeads lists all config beads, optionally filtered by label.
+func (a *RolesAPI) handleListConfigBeads(w http.ResponseWriter, r *http.Request) {
+	beads, total, err := a.fetchConfigBeads(r)
+	if err != nil {
+		a.logger.Error("failed to list config beads", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list config beads")
+		return
+	}
+	writeJSON(w, map[string]any{"config_beads": beads, "total": total})
+}
+
+// handleListAdvice lists advice beads, optionally filtered by label.
+func (a *RolesAPI) handleListAdvice(w http.ResponseWriter, r *http.Request) {
+	beads, total, err := a.fetchAdviceBeads(r)
 	if err != nil {
 		a.logger.Error("failed to list advice beads", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list advice beads")
 		return
 	}
-
-	beads := make([]adviceBead, 0, len(result.Beads))
-	for _, b := range result.Beads {
-		beads = append(beads, toAdviceBead(b))
-	}
-
-	writeJSON(w, map[string]any{"advice_beads": beads, "total": result.Total})
+	writeJSON(w, map[string]any{"advice_beads": beads, "total": total})
 }
 
 // handleListProjects lists all registered projects.
 func (a *RolesAPI) handleListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := a.client.ListProjectBeads(r.Context())
+	projects, err := a.fetchProjects(r.Context())
 	if err != nil {
 		a.logger.Error("failed to list projects", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
-
 	writeJSON(w, map[string]any{"projects": projects})
 }
 

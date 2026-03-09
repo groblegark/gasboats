@@ -56,6 +56,9 @@ func main() {
 
 	api.RegisterRoutes(mux)
 
+	webUI := NewWebUI(api)
+	webUI.RegisterRoutes(mux)
+
 	httpSrv := &http.Server{
 		Addr:              cfg.listenAddr,
 		Handler:           mux,
