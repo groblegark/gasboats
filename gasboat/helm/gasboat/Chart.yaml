@@ -1,8 +1,8 @@
 apiVersion: v2
 name: gasboat
 description: Gasboat — K8s agent controller, coopmux, pgbeads and nats events
-version: 2026.68.14
-appVersion: 2026.68.14
+version: 2026.68.15
+appVersion: 2026.68.15
 type: application
 keywords:
   - gasboat
