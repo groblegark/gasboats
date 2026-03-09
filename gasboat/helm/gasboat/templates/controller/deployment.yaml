@@ -100,6 +100,10 @@ spec:
               value: http://{{ include "gasboat.beads.host" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ include "gasboat.beads.httpPort" . }}
             - name: COOP_IMAGE
               value: "{{ .Values.agents.agentImage.repository }}:{{ include "gasboat.imageTag" (dict "tag" .Values.agents.agentImage.tag "global" .Values.global "Chart" .Chart) }}"
+            {{- if .Values.imagePullSecrets }}
+            - name: IMAGE_PULL_SECRETS
+              value: {{ range $i, $s := .Values.imagePullSecrets }}{{ if $i }},{{ end }}{{ $s.name }}{{ end }}
+            {{- end }}
             {{- if .Values.agents.claudeOAuthSecret }}
             - name: CLAUDE_OAUTH_SECRET
               value: {{ .Values.agents.claudeOAuthSecret }}
