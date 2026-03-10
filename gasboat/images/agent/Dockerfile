@@ -68,9 +68,13 @@ RUN set -e && \
 COPY --from=gb-builder /gb /usr/local/bin/gb
 
 # ── Agent user ───────────────────────────────────────────────────
+# Rename the default ubuntu user (UID 1000) to agent across passwd,
+# shadow, and group so that sudo/PAM account checks work correctly
+# in containers that lack CAP_AUDIT_WRITE.
 RUN sed -i 's/^ubuntu:/agent:/' /etc/passwd && \
     sed -i 's|/home/ubuntu|/home/agent|' /etc/passwd && \
     sed -i 's|/bin/sh|/bin/bash|' /etc/passwd && \
+    sed -i 's/^ubuntu:/agent:/' /etc/shadow && \
     sed -i 's/^ubuntu:/agent:/' /etc/group && \
     mkdir -p /home/agent/workspace && \
     chown -R 1000:1000 /home/agent && \
@@ -266,10 +270,14 @@ RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHI
 # browser system library dependencies (libglib, libnss3, etc.).
 # Both chromium and chrome are installed because @playwright/mcp
 # defaults to --browser=chrome (Chrome for Testing).
-ARG PLAYWRIGHT_VERSION=1.58.2
+#
+# Only @playwright/mcp is installed explicitly — it pulls in the
+# correct playwright version as a dependency. Do NOT also install a
+# separate playwright@<version> or the two may expect different
+# browser revisions, leaving Chrome for Testing empty.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
-    npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
+    npm install -g @playwright/mcp && \
     npx playwright install --with-deps chromium chrome && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
