@@ -57,6 +57,11 @@ type ProjectInfo struct {
 	// Keys absent or empty in the JSON are silently skipped.
 	EnvOverrides map[string]string
 
+	// ChannelRoles maps Slack channel IDs to agent role overrides.
+	// When /spawn is invoked from a channel listed here, the agent
+	// is assigned the specified role instead of the default.
+	ChannelRoles map[string]string
+
 	Secrets        []SecretEntry       // Per-project secret overrides
 	EnvVars        []EnvEntry          // Per-project plain env vars
 	Repos          []RepoEntry         // Multi-repo definitions
@@ -102,6 +107,13 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			MemoryRequest:  fields["memory_request"],
 			MemoryLimit:    fields["memory_limit"],
 			SlackChannels:  parseSlackChannels(fields["slack_channel"]),
+		}
+		// Parse per-channel role overrides from JSON field.
+		if raw := fields["channel_roles"]; raw != "" {
+			var roles map[string]string
+			if json.Unmarshal([]byte(raw), &roles) == nil {
+				info.ChannelRoles = roles
+			}
 		}
 		// Parse per-project secrets from JSON field.
 		if raw := fields["secrets"]; raw != "" {
@@ -190,4 +202,9 @@ func (p ProjectInfo) HasChannel(channelID string) bool {
 		}
 	}
 	return false
+}
+
+// ChannelRole returns the role override for the given Slack channel, or empty string if none.
+func (p ProjectInfo) ChannelRole(channelID string) string {
+	return p.ChannelRoles[channelID]
 }

@@ -101,6 +101,33 @@ var builtinConfigs = map[string]*model.Config{
 		]
 	}`)},
 
+	"type:project": {Key: "type:project", Value: json.RawMessage(`{
+		"kind": "config",
+		"fields": [
+			{"name": "prefix",          "type": "string"},
+			{"name": "git_url",         "type": "string"},
+			{"name": "default_branch",  "type": "string"},
+			{"name": "image",           "type": "string"},
+			{"name": "storage_class",   "type": "string"},
+			{"name": "service_account", "type": "string"},
+			{"name": "rtk_enabled",     "type": "boolean"},
+			{"name": "docker",          "type": "boolean"},
+			{"name": "cpu_request",     "type": "string"},
+			{"name": "cpu_limit",       "type": "string"},
+			{"name": "memory_request",  "type": "string"},
+			{"name": "memory_limit",    "type": "string"},
+			{"name": "secrets",         "type": "json"},
+			{"name": "env",             "type": "json"},
+			{"name": "env_json",        "type": "json"},
+			{"name": "repos",           "type": "json"},
+			{"name": "slack_channel",   "type": "string"},
+			{"name": "channel_roles",   "type": "json"},
+			{"name": "auto_assign",     "type": "string"},
+			{"name": "prewarmed_pool",  "type": "json"},
+			{"name": "nudge_prompts",   "type": "json"}
+		]
+	}`)},
+
 	// Infrastructure types — config kind.
 	"type:role":    {Key: "type:role", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
 	"type:rig":     {Key: "type:rig", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
