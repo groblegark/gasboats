@@ -686,6 +686,52 @@ adviceViewer:
   affinity: {}
 
 # =============================================================================
+# Roles Server — web UI for managing agent roles and configuration
+# =============================================================================
+rolesServer:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboats/roles-server
+    tag: ""
+    pullPolicy: Always
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  ingress:
+    enabled: false
+    host: ""
+    # Path prefix for the roles server (e.g. "/roles"). Traefik strips
+    # the prefix before forwarding; BASE_PATH env var is set so templates
+    # generate correct links.
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
 # Beads3D — 3D visualization frontend for beads issues
 # Static SPA served by nginx, reverse-proxies /api/ to beads daemon.
 # =============================================================================
