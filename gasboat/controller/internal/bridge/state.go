@@ -207,13 +207,15 @@ func (sm *StateManager) RemoveThreadAgent(channel, threadTS string) error {
 	return sm.saveLocked()
 }
 
-// RemoveThreadAgentByAgent removes all thread associations for a given agent and persists.
+// RemoveThreadAgentByAgent removes all thread associations for a given agent
+// and their corresponding listen-thread flags, then persists.
 func (sm *StateManager) RemoveThreadAgentByAgent(agent string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for k, v := range sm.data.ThreadAgents {
 		if v == agent {
 			delete(sm.data.ThreadAgents, k)
+			delete(sm.data.ListenThreads, k)
 		}
 	}
 	return sm.saveLocked()

@@ -73,6 +73,34 @@ func TestRemoveThreadAgentByAgent(t *testing.T) {
 	}
 }
 
+func TestRemoveThreadAgentByAgent_CleansListenFlags(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up threads with listen mode.
+	_ = state.SetThreadAgent("C-a", "1.1", "agent-a")
+	_ = state.SetListenThread("C-a", "1.1")
+	_ = state.SetThreadAgent("C-b", "2.2", "agent-b")
+	_ = state.SetListenThread("C-b", "2.2")
+
+	// Remove agent-a — should also clean up its listen flag.
+	if err := state.RemoveThreadAgentByAgent("agent-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	// agent-a's listen flag should be gone.
+	if state.IsListenThread("C-a", "1.1") {
+		t.Error("expected listen flag for C-a:1.1 to be removed")
+	}
+	// agent-b's listen flag should remain.
+	if !state.IsListenThread("C-b", "2.2") {
+		t.Error("expected listen flag for C-b:2.2 to remain")
+	}
+}
+
 func TestHandleThreadSpawn_CreatesBeadAndState(t *testing.T) {
 	daemon := newMockDaemon()
 
