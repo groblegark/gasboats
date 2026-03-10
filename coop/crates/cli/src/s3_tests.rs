@@ -131,6 +131,39 @@ impl S3Storage for MockS3 {
         let key = Self::mock_key(session_id, s3_path);
         self.objects.lock().contains_key(&key)
     }
+
+    async fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+        let objects = self.objects.lock();
+        let mut session_ids = std::collections::BTreeSet::new();
+        for key in objects.keys() {
+            // Keys are "session_id/path" — extract session_id.
+            if let Some(sid) = key.split('/').next() {
+                session_ids.insert(sid.to_owned());
+            }
+        }
+        Ok(session_ids.into_iter().collect())
+    }
+
+    async fn list_recording_chunks(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        let objects = self.objects.lock();
+        let prefix = format!("{session_id}/recording/");
+        let mut chunks = Vec::new();
+        for key in objects.keys() {
+            if let Some(rest) = key.strip_prefix(&prefix) {
+                if rest.ends_with(".jsonl") {
+                    chunks.push(rest.to_owned());
+                }
+            }
+        }
+        chunks.sort();
+        Ok(chunks)
+    }
+
+    async fn download_bytes(&self, session_id: &str, s3_path: &str) -> anyhow::Result<Vec<u8>> {
+        let key = Self::mock_key(session_id, s3_path);
+        let objects = self.objects.lock();
+        objects.get(&key).cloned().ok_or_else(|| anyhow::anyhow!("object not found: {key}"))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +193,15 @@ impl S3Storage for FailingS3 {
     }
     async fn exists(&self, _: &str, _: &str) -> bool {
         false
+    }
+    async fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+        anyhow::bail!("mock failure: list_sessions")
+    }
+    async fn list_recording_chunks(&self, _: &str) -> anyhow::Result<Vec<String>> {
+        anyhow::bail!("mock failure: list_recording_chunks")
+    }
+    async fn download_bytes(&self, _: &str, _: &str) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!("mock failure: download_bytes")
     }
 }
 
@@ -990,5 +1032,102 @@ async fn subscriber_multiple_transcript_events() -> anyhow::Result<()> {
     assert_eq!(mock.get("sess-multi", "transcripts/1.jsonl"), Some(b"t1\n".to_vec()));
     assert_eq!(mock.get("sess-multi", "transcripts/2.jsonl"), Some(b"t2\n".to_vec()));
     assert_eq!(mock.get("sess-multi", "transcripts/3.jsonl"), Some(b"t3\n".to_vec()));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — list_sessions, list_recording_chunks, download_bytes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mock_list_sessions_empty() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    let sessions = mock.list_sessions().await?;
+    assert!(sessions.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn mock_list_sessions_multiple() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    mock.put("alpha", "meta.json", b"{}".to_vec());
+    mock.put("beta", "transcripts/1.jsonl", b"t1".to_vec());
+    mock.put("gamma", "recording/chunk-0000.jsonl", b"r1".to_vec());
+    // Same session appears in multiple keys — should deduplicate.
+    mock.put("alpha", "transcripts/1.jsonl", b"t1".to_vec());
+
+    let mut sessions = mock.list_sessions().await?;
+    sessions.sort();
+    assert_eq!(sessions, vec!["alpha", "beta", "gamma"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn mock_list_recording_chunks_empty() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    // Session exists but has no recording/ objects.
+    mock.put("sess-1", "meta.json", b"{}".to_vec());
+    let chunks = mock.list_recording_chunks("sess-1").await?;
+    assert!(chunks.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn mock_list_recording_chunks_sorted() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    mock.put("sess-1", "recording/chunk-0002.jsonl", b"r2".to_vec());
+    mock.put("sess-1", "recording/chunk-0000.jsonl", b"r0".to_vec());
+    mock.put("sess-1", "recording/chunk-0001.jsonl", b"r1".to_vec());
+    // Non-jsonl file under recording/ should be excluded.
+    mock.put("sess-1", "recording/index.txt", b"idx".to_vec());
+    // Object under a different session should not appear.
+    mock.put("sess-2", "recording/chunk-0000.jsonl", b"other".to_vec());
+
+    let chunks = mock.list_recording_chunks("sess-1").await?;
+    assert_eq!(chunks, vec!["chunk-0000.jsonl", "chunk-0001.jsonl", "chunk-0002.jsonl"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn mock_download_bytes_roundtrip() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    let payload = b"hello world".to_vec();
+    mock.put("sess-1", "artifact.bin", payload.clone());
+
+    let downloaded = mock.download_bytes("sess-1", "artifact.bin").await?;
+    assert_eq!(downloaded, payload);
+    Ok(())
+}
+
+#[tokio::test]
+async fn mock_download_bytes_missing_errors() -> anyhow::Result<()> {
+    let mock = MockS3::new();
+    let result = mock.download_bytes("no-such-session", "missing.bin").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("object not found"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn failing_s3_list_sessions_errors() -> anyhow::Result<()> {
+    let fail = FailingS3;
+    let result = fail.list_sessions().await;
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn failing_s3_list_recording_chunks_errors() -> anyhow::Result<()> {
+    let fail = FailingS3;
+    let result = fail.list_recording_chunks("any").await;
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn failing_s3_download_bytes_errors() -> anyhow::Result<()> {
+    let fail = FailingS3;
+    let result = fail.download_bytes("any", "any.bin").await;
+    assert!(result.is_err());
     Ok(())
 }

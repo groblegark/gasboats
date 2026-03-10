@@ -65,6 +65,22 @@ pub trait S3Storage: Send + Sync + 'static {
     ) -> impl Future<Output = anyhow::Result<Option<SessionMeta>>> + Send;
 
     fn exists(&self, session_id: &str, s3_path: &str) -> impl Future<Output = bool> + Send;
+
+    /// List all session IDs that have a meta.json in S3.
+    fn list_sessions(&self) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
+
+    /// List recording chunk names for a session (e.g. "1-50.jsonl").
+    fn list_recording_chunks(
+        &self,
+        session_id: &str,
+    ) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
+
+    /// Download bytes from S3 (used by peek to fetch transcript/recording content).
+    fn download_bytes(
+        &self,
+        session_id: &str,
+        s3_path: &str,
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
 
 /// S3 client wrapper for session persistence.
@@ -222,6 +238,89 @@ impl S3Storage for S3Client {
     async fn exists(&self, session_id: &str, s3_path: &str) -> bool {
         let key = self.key(session_id, s3_path);
         self.client.head_object().bucket(&self.bucket).key(&key).send().await.is_ok()
+    }
+
+    async fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+        let prefix = format!("{}/", self.prefix);
+        let mut session_ids = Vec::new();
+        let mut continuation = None;
+
+        loop {
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix);
+            // Use delimiter "/" to get only top-level "directories" under prefix.
+            req = req.delimiter("/");
+            if let Some(token) = continuation {
+                req = req.continuation_token(token);
+            }
+            let output = req.send().await?;
+
+            // Common prefixes represent session ID "directories".
+            if let Some(prefixes) = output.common_prefixes() {
+                for cp in prefixes {
+                    if let Some(p) = cp.prefix() {
+                        // Strip the base prefix and trailing slash to get session ID.
+                        // e.g. "coop/sessions/abc-123/" → "abc-123"
+                        if let Some(rest) = p.strip_prefix(&prefix) {
+                            let sid = rest.trim_end_matches('/');
+                            if !sid.is_empty() {
+                                session_ids.push(sid.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if output.is_truncated() == Some(true) {
+                continuation = output.next_continuation_token().map(|s| s.to_owned());
+            } else {
+                break;
+            }
+        }
+
+        session_ids.sort();
+        Ok(session_ids)
+    }
+
+    async fn list_recording_chunks(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        let prefix = self.key(session_id, "recording/");
+        let mut chunks = Vec::new();
+        let mut continuation = None;
+
+        loop {
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix);
+            if let Some(token) = continuation {
+                req = req.continuation_token(token);
+            }
+            let output = req.send().await?;
+
+            if let Some(contents) = output.contents() {
+                for obj in contents {
+                    if let Some(key) = obj.key() {
+                        if let Some(filename) = key.rsplit('/').next() {
+                            if filename.ends_with(".jsonl") {
+                                chunks.push(filename.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if output.is_truncated() == Some(true) {
+                continuation = output.next_continuation_token().map(|s| s.to_owned());
+            } else {
+                break;
+            }
+        }
+
+        chunks.sort();
+        Ok(chunks)
+    }
+
+    async fn download_bytes(&self, session_id: &str, s3_path: &str) -> anyhow::Result<Vec<u8>> {
+        let key = self.key(session_id, s3_path);
+        let output = self.client.get_object().bucket(&self.bucket).key(&key).send().await?;
+        let bytes = output.body.collect().await?.into_bytes();
+        Ok(bytes.to_vec())
     }
 }
 
