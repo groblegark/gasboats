@@ -122,6 +122,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client shellcheck \
     ffmpeg cmake libsdl2-dev && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
+    ln -sf gcc /usr/bin/cc && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Go + gopls ───────────────────────────────────────────────────
