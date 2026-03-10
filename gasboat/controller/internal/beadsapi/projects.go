@@ -61,6 +61,13 @@ type ProjectInfo struct {
 	EnvVars        []EnvEntry          // Per-project plain env vars
 	Repos          []RepoEntry         // Multi-repo definitions
 	PrewarmedPool  *PrewarmedPoolConfig // Per-project prewarmed agent pool config (nil = disabled)
+
+	// ClaudeConfig holds per-category Claude config overrides stored inline
+	// on the project bead (field: "claude_config"). Each key is a config
+	// category name (e.g. "claude-settings", "claude-hooks") and the value
+	// is the raw JSON config for that category. Used by gb setup claude to
+	// inject project-level overrides between role and agent specificity.
+	ClaudeConfig map[string]json.RawMessage
 }
 
 // PrewarmedPoolConfig holds per-project prewarmed agent pool settings.
@@ -141,6 +148,13 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 					poolCfg.Mode = "crew"
 				}
 				info.PrewarmedPool = &poolCfg
+			}
+		}
+		// Parse inline Claude config overrides from JSON field.
+		if raw := fields["claude_config"]; raw != "" {
+			var cfg map[string]json.RawMessage
+			if json.Unmarshal([]byte(raw), &cfg) == nil {
+				info.ClaudeConfig = cfg
 			}
 		}
 		// Parse env_json field.
