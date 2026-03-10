@@ -897,6 +897,12 @@ tasks:
         chmod +x $OUT/usr/local/bin/claudeless
       ) &
       (
+        # RWX CLI
+        curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v3.7.1/rwx-linux-x86_64" \
+          -o $OUT/usr/local/bin/rwx
+        chmod +x $OUT/usr/local/bin/rwx
+      ) &
+      (
         # whisper-cli
         sudo apt-get update && sudo apt-get install -y cmake libsdl2-dev gcc g++ make
         curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz" \
