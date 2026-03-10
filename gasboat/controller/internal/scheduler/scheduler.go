@@ -45,9 +45,10 @@ type Schedule struct {
 }
 
 // Reconcile performs a single evaluation pass. For each enabled schedule bead:
-//  1. Parse the cron expression
-//  2. Calculate the most recent fire time before now
-//  3. If that fire time is after last_run, spawn an agent and update last_run
+//  1. Check and record completion of the last spawned agent
+//  2. Parse the cron expression
+//  3. Calculate the most recent fire time before now
+//  4. If that fire time is after last_run, spawn an agent and update last_run
 func (s *Scheduler) Reconcile(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,6 +65,9 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	now := time.Now()
 
 	for _, sched := range schedules {
+		// Check if last agent completed and record run history.
+		s.recordRunCompletion(ctx, sched)
+
 		if !sched.Enabled {
 			continue
 		}
@@ -109,6 +113,9 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		if err != nil {
 			s.logger.Error("failed to spawn scheduled agent",
 				"schedule", sched.ID, "error", err)
+			// Record spawn failure in run history.
+			_ = s.daemon.AddComment(ctx, sched.ID, "scheduler",
+				fmt.Sprintf("Run failed to start: %v", err))
 			continue
 		}
 
@@ -120,9 +127,97 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 			s.logger.Warn("failed to update schedule last_run",
 				"schedule", sched.ID, "error", err)
 		}
+
+		// Record spawn in run history.
+		_ = s.daemon.AddComment(ctx, sched.ID, "scheduler",
+			fmt.Sprintf("Run started → %s", agentID))
 	}
 
 	return nil
+}
+
+// recordRunCompletion checks if the last spawned agent has completed and records
+// the result as a comment on the schedule bead. Uses the last_checked_agent field
+// to avoid re-processing the same agent on every reconcile cycle.
+func (s *Scheduler) recordRunCompletion(ctx context.Context, sched Schedule) {
+	if sched.LastAgentID == "" {
+		return
+	}
+
+	// Fetch the agent bead to check its status.
+	agent, err := s.daemon.GetBead(ctx, sched.LastAgentID)
+	if err != nil {
+		return
+	}
+
+	// Only process closed agents (terminal state).
+	if agent.Status != "closed" {
+		return
+	}
+
+	// Skip if we already recorded this agent's result.
+	schedBead, err := s.daemon.GetBead(ctx, sched.ID)
+	if err != nil {
+		return
+	}
+	if schedBead.Fields["last_checked_agent"] == sched.LastAgentID {
+		return
+	}
+
+	// Calculate duration from last_run to now.
+	var durationStr string
+	if !sched.LastRun.IsZero() {
+		duration := time.Since(sched.LastRun)
+		durationStr = formatRunDuration(duration)
+	}
+
+	agentState := agent.Fields["agent_state"]
+	var comment string
+	switch agentState {
+	case "done":
+		comment = fmt.Sprintf("Run completed → %s done", sched.LastAgentID)
+	case "failed":
+		reason := agent.Fields["close_reason"]
+		if reason != "" {
+			comment = fmt.Sprintf("Run failed → %s failed (%s)", sched.LastAgentID, reason)
+		} else {
+			comment = fmt.Sprintf("Run failed → %s failed", sched.LastAgentID)
+		}
+	default:
+		comment = fmt.Sprintf("Run ended → %s closed (state: %s)", sched.LastAgentID, agentState)
+	}
+	if durationStr != "" {
+		comment += " [" + durationStr + "]"
+	}
+
+	_ = s.daemon.AddComment(ctx, sched.ID, "scheduler", comment)
+
+	// Mark this agent as checked to avoid re-processing.
+	_ = s.daemon.UpdateBeadFields(ctx, sched.ID, map[string]string{
+		"last_checked_agent": sched.LastAgentID,
+	})
+}
+
+// formatRunDuration formats a duration for run history display.
+func formatRunDuration(d time.Duration) string {
+	d = d.Truncate(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
 }
 
 // RunLoop runs the scheduler periodically until the context is cancelled.
