@@ -371,7 +371,7 @@ func (c *GitHubClient) CompareSHAs(ctx context.Context, repo RepoRef, base, head
 }
 
 // ImageToRepo maps a GHCR image reference to a GitHub RepoRef.
-// e.g., "ghcr.io/groblegark/gasboats/agent:latest" → RepoRef{Owner: "groblegark", Repo: "gasboat"}
+// e.g., "ghcr.io/groblegark/gasboats/agent:latest" → RepoRef{Owner: "groblegark", Repo: "gasboats"}
 // For images with sub-paths (gasboat/agent), uses the first path component as the repo.
 func ImageToRepo(image string) (RepoRef, bool) {
 	org, pkg, err := parseGHCRImageRef(image)
