@@ -881,6 +881,137 @@ func TestHandleMentionKill_NoAgentInThread(t *testing.T) {
 	}
 }
 
+// --- parseMentionCommand clear tests ---
+
+func TestParseMentionCommand_Clear(t *testing.T) {
+	cmd, remaining := parseMentionCommand("clear")
+	if cmd != "clear" {
+		t.Errorf("expected cmd=clear, got %q", cmd)
+	}
+	if remaining != "" {
+		t.Errorf("expected empty remaining, got %q", remaining)
+	}
+}
+
+func TestParseMentionCommand_ClearCaseInsensitive(t *testing.T) {
+	cmd, _ := parseMentionCommand("CLEAR")
+	if cmd != "clear" {
+		t.Errorf("expected cmd=clear, got %q", cmd)
+	}
+}
+
+// --- handleMentionClear tests ---
+
+func TestHandleMentionClear_ClearsThreadMapping(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	// Bind agent to thread with listen mode.
+	_ = sm.SetThreadAgent("C123", "1111.2222", "thread-1111-2222")
+	_ = sm.SetListenThread("C123", "1111.2222")
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	bot.handleMentionClear(context.Background(), ev)
+
+	// Thread mapping should be cleared.
+	if _, ok := sm.GetThreadAgent("C123", "1111.2222"); ok {
+		t.Error("expected thread agent mapping to be removed after clear")
+	}
+
+	// Listen mode should also be cleared.
+	if sm.IsListenThread("C123", "1111.2222") {
+		t.Error("expected listen thread to be removed after clear")
+	}
+}
+
+func TestHandleMentionClear_NoAgentInThread(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	// Should not panic when no agent is bound.
+	bot.handleMentionClear(context.Background(), ev)
+}
+
+func TestHandleMentionClear_AgentNotKilled(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	// Bind agent to thread.
+	_ = sm.SetThreadAgent("C123", "1111.2222", "thread-1111-2222")
+
+	// Seed agent bead.
+	daemon.mu.Lock()
+	daemon.beads["thread-1111-2222"] = &beadsapi.BeadDetail{
+		ID:     "bd-thread-agent",
+		Title:  "thread-1111-2222",
+		Type:   "agent",
+		Fields: map[string]string{"agent": "thread-1111-2222"},
+	}
+	daemon.mu.Unlock()
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	bot.handleMentionClear(context.Background(), ev)
+
+	// Thread mapping should be cleared.
+	if _, ok := sm.GetThreadAgent("C123", "1111.2222"); ok {
+		t.Error("expected thread agent mapping to be removed after clear")
+	}
+
+	// Agent bead should NOT be closed — clear only unbinds, doesn't kill.
+	daemon.mu.Lock()
+	closedCount := len(daemon.closed)
+	daemon.mu.Unlock()
+	if closedCount != 0 {
+		t.Errorf("expected 0 close calls (clear should not kill), got %d", closedCount)
+	}
+}
+
 func TestSanitizeTS(t *testing.T) {
 	tests := []struct {
 		input string

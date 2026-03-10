@@ -49,6 +49,9 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		case "kill":
 			b.handleMentionKill(ctx, ev, strings.Contains(cmdArgs, "--force"))
 			return
+		case "clear":
+			b.handleMentionClear(ctx, ev)
+			return
 		}
 	}
 
@@ -721,7 +724,7 @@ func parseMentionCommand(text string) (string, string) {
 	}
 	keyword := strings.ToLower(words[0])
 	switch keyword {
-	case "kill":
+	case "kill", "clear":
 		remaining := strings.TrimSpace(strings.Join(words[1:], " "))
 		return keyword, remaining
 	}
@@ -770,6 +773,44 @@ func (b *Bot) handleMentionKill(ctx context.Context, ev *slackevents.AppMentionE
 				slack.MsgOptionTS(threadTS))
 		}
 	}()
+}
+
+// handleMentionClear resets the thread→agent mapping when "@gasboat clear" is
+// posted in a thread. The agent is NOT killed — it continues running but is
+// unbound from the thread. A subsequent @mention in the same thread will spawn
+// a new agent. This is useful when a thread agent is stuck or the user wants
+// a fresh agent in the same thread.
+func (b *Bot) handleMentionClear(ctx context.Context, ev *slackevents.AppMentionEvent) {
+	channel := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+	userID := ev.User
+
+	agent := b.getAgentByThread(channel, threadTS)
+	if agent == "" {
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channel, userID,
+				slack.MsgOptionText(":x: No agent is bound to this thread.", false))
+		}
+		return
+	}
+	agent = extractAgentName(agent)
+
+	// Remove thread→agent mapping.
+	if b.state != nil {
+		_ = b.state.RemoveThreadAgent(channel, threadTS)
+		_ = b.state.RemoveListenThread(channel, threadTS)
+	}
+
+	b.logger.Info("cleared thread agent mapping via mention",
+		"agent", agent, "channel", channel, "thread_ts", threadTS, "user", userID)
+
+	if b.api != nil {
+		_, _, _ = b.api.PostMessage(channel,
+			slack.MsgOptionText(
+				fmt.Sprintf(":broom: Cleared thread binding for *%s*. Mention me again to spawn a new agent here.", agent),
+				false),
+			slack.MsgOptionTS(threadTS))
+	}
 }
 
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
