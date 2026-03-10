@@ -369,6 +369,25 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		}
 	}
 
+	// Atomic check-and-set: prevent concurrent spawn attempts for the same thread.
+	// The state guard above catches already-completed spawns; this catches
+	// in-flight spawns where state hasn't been persisted yet.
+	spawnKey := channel + ":" + threadTS
+	b.mu.Lock()
+	if b.spawnInFlight[spawnKey] {
+		b.mu.Unlock()
+		b.logger.Info("thread-spawn: spawn already in flight, skipping",
+			"channel", channel, "thread_ts", threadTS)
+		return
+	}
+	b.spawnInFlight[spawnKey] = true
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.spawnInFlight, spawnKey)
+		b.mu.Unlock()
+	}()
+
 	// Check for --listen flag (auto-forward all thread replies without @mention).
 	listen, text := parseListenFlag(text)
 

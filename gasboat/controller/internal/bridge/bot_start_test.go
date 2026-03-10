@@ -33,6 +33,7 @@ func newTestBot(daemon BeadClient, slackSrv *httptest.Server) *Bot {
 		agentRole:       make(map[string]string),
 		agentProject:    make(map[string]string),
 		threadSpawnMsgs: make(map[string]MessageRef),
+		spawnInFlight:   make(map[string]bool),
 	}
 }
 
