@@ -36,6 +36,22 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		return
 	}
 
+	// Check for in-thread command keywords (kill, clear) before normal routing.
+	if cmd, cmdArgs := parseMentionCommand(text); cmd != "" {
+		if ev.ThreadTimeStamp == "" {
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(ev.Channel, ev.User,
+					slack.MsgOptionText(":x: `"+cmd+"` only works in threads with a bound agent.", false))
+			}
+			return
+		}
+		switch cmd {
+		case "kill":
+			b.handleMentionKill(ctx, ev, strings.Contains(cmdArgs, "--force"))
+			return
+		}
+	}
+
 	var agent string
 	replyTS := ev.ThreadTimeStamp // timestamp to thread the confirmation reply under
 	agentSpawning := false // true if agent is still in spawning state
@@ -695,6 +711,66 @@ func isValidThreadBinding(channel, threadTS string) bool {
 	return true
 }
 
+
+// parseMentionCommand checks if mention text starts with a known command
+// keyword (kill, clear, restart). Returns (keyword, remaining) or ("", text).
+func parseMentionCommand(text string) (string, string) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return "", text
+	}
+	keyword := strings.ToLower(words[0])
+	switch keyword {
+	case "kill":
+		remaining := strings.TrimSpace(strings.Join(words[1:], " "))
+		return keyword, remaining
+	}
+	return "", text
+}
+
+// handleMentionKill kills the thread-bound agent when "@gasboat kill" is posted
+// in a thread. This provides a name-free way to shut down the current thread's
+// agent without needing to know or type its name.
+func (b *Bot) handleMentionKill(ctx context.Context, ev *slackevents.AppMentionEvent, force bool) {
+	channel := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+	userID := ev.User
+
+	agent := b.getAgentByThread(channel, threadTS)
+	if agent == "" {
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channel, userID,
+				slack.MsgOptionText(":x: No agent is bound to this thread.", false))
+		}
+		return
+	}
+	agent = extractAgentName(agent)
+
+	// Acknowledge immediately — graceful shutdown can take 30s+.
+	if b.api != nil {
+		_, _, _ = b.api.PostMessage(channel,
+			slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agent), false),
+			slack.MsgOptionTS(threadTS))
+	}
+
+	go func() {
+		if err := b.killAgent(context.Background(), agent, force); err != nil {
+			b.logger.Error("mention-kill: failed", "agent", agent, "error", err)
+			if b.api != nil {
+				_, _, _ = b.api.PostMessage(channel,
+					slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent *%s*: %s", agent, err.Error()), false),
+					slack.MsgOptionTS(threadTS))
+			}
+			return
+		}
+		b.logger.Info("killed thread agent via mention", "agent", agent, "user", userID)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agent), false),
+				slack.MsgOptionTS(threadTS))
+		}
+	}()
+}
 
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
 func stripBotMention(text, botUserID string) string {
