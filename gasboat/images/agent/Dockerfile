@@ -68,9 +68,13 @@ RUN set -e && \
 COPY --from=gb-builder /gb /usr/local/bin/gb
 
 # ── Agent user ───────────────────────────────────────────────────
+# Rename the default ubuntu user (UID 1000) to agent across passwd,
+# shadow, and group so that sudo/PAM account checks work correctly
+# in containers that lack CAP_AUDIT_WRITE.
 RUN sed -i 's/^ubuntu:/agent:/' /etc/passwd && \
     sed -i 's|/home/ubuntu|/home/agent|' /etc/passwd && \
     sed -i 's|/bin/sh|/bin/bash|' /etc/passwd && \
+    sed -i 's/^ubuntu:/agent:/' /etc/shadow && \
     sed -i 's/^ubuntu:/agent:/' /etc/group && \
     mkdir -p /home/agent/workspace && \
     chown -R 1000:1000 /home/agent && \
