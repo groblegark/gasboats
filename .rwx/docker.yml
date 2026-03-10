@@ -956,6 +956,8 @@ tasks:
       sed -i "s/^ubuntu:/agent:/" $LAYER/etc/passwd
       sed -i "s|/home/ubuntu|/home/agent|" $LAYER/etc/passwd
       sed -i "s|/bin/sh|/bin/bash|" $LAYER/etc/passwd
+      cp /etc/shadow $LAYER/etc/shadow
+      sed -i "s/^ubuntu:/agent:/" $LAYER/etc/shadow
       cp /etc/group $LAYER/etc/group
       sed -i "s/^ubuntu:/agent:/" $LAYER/etc/group
       mkdir -p $LAYER/home/agent/workspace

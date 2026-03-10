@@ -68,9 +68,13 @@ RUN set -e && \
 COPY --from=gb-builder /gb /usr/local/bin/gb
 
 # ── Agent user ───────────────────────────────────────────────────
+# Rename the default ubuntu user (UID 1000) to agent across passwd,
+# shadow, and group so that sudo/PAM account checks work correctly
+# in containers that lack CAP_AUDIT_WRITE.
 RUN sed -i 's/^ubuntu:/agent:/' /etc/passwd && \
     sed -i 's|/home/ubuntu|/home/agent|' /etc/passwd && \
     sed -i 's|/bin/sh|/bin/bash|' /etc/passwd && \
+    sed -i 's/^ubuntu:/agent:/' /etc/shadow && \
     sed -i 's/^ubuntu:/agent:/' /etc/group && \
     mkdir -p /home/agent/workspace && \
     chown -R 1000:1000 /home/agent && \
@@ -264,13 +268,18 @@ RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHI
 # NOTE: apt lists were cleaned after the system packages step above,
 # so we must re-run apt-get update before --with-deps can install
 # browser system library dependencies (libglib, libnss3, etc.).
-# Both chromium and chrome are installed because @playwright/mcp
-# defaults to --browser=chrome (Chrome for Testing).
+# Chromium is Playwright-managed (downloaded to $PLAYWRIGHT_BROWSERS_PATH).
+# Chrome is system-installed via Google's apt repo (/opt/google/chrome/chrome).
 ARG PLAYWRIGHT_VERSION=1.58.2
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
-    npx playwright install --with-deps chromium chrome && \
+    npx playwright install --with-deps chromium && \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+      | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
     chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}
