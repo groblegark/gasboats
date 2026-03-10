@@ -69,8 +69,10 @@ type Bot struct {
 	agentSeen    map[string]time.Time  // agent identity → last activity timestamp
 	agentPodName  map[string]string    // agent identity → pod hostname (coopmux session ID)
 	agentImageTag map[string]string   // agent identity → deployed image tag
-	agentRole     map[string]string   // agent identity → role (e.g., "crew", "lead", "ops")
-	agentProject  map[string]string   // agent identity → project name (for channel routing)
+	agentRole          map[string]string    // agent identity → role (e.g., "crew", "lead", "ops")
+	agentProject       map[string]string    // agent identity → project name (for channel routing)
+	agentScheduleTitle map[string]string    // agent identity → schedule bead title (for scheduled agents)
+	agentSpawnedAt     map[string]time.Time // agent identity → spawn timestamp (for duration)
 
 	// TTL-cached project→primary channel mapping (refreshed every projectChannelCacheTTL).
 	projectChannelCache   map[string]string // project name → primary Slack channel ID
@@ -147,8 +149,10 @@ func NewBot(cfg BotConfig) *Bot {
 		agentSeen:        make(map[string]time.Time),
 		agentPodName:     make(map[string]string),
 		agentImageTag:    make(map[string]string),
-		agentRole:        make(map[string]string),
-		agentProject:     make(map[string]string),
+		agentRole:          make(map[string]string),
+		agentProject:       make(map[string]string),
+		agentScheduleTitle: make(map[string]string),
+		agentSpawnedAt:     make(map[string]time.Time),
 		threadSpawnMsgs:  make(map[string]MessageRef),
 		beadMsgs:         make(map[string]MessageRef),
 		lastThreadNudge: make(map[string]time.Time),
