@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 var (
 	peekPlain bool
+	peekANSI  bool
 )
 
 var peekCmd = &cobra.Command{
@@ -34,6 +36,8 @@ Requires COOP_MUX_URL to be set (and optionally COOP_MUX_TOKEN for auth).`,
 
 func init() {
 	peekCmd.Flags().BoolVar(&peekPlain, "plain", false, "plain text output (no ANSI escape codes)")
+	peekCmd.Flags().BoolVar(&peekANSI, "ansi", false, "force ANSI-colored output")
+	peekCmd.MarkFlagsMutuallyExclusive("plain", "ansi")
 }
 
 func runPeek(cmd *cobra.Command, args []string) error {
@@ -160,8 +164,9 @@ func peekShowScreen(client *http.Client, muxURL, token, target string) error {
 	}
 
 	// Choose ANSI or plain output.
+	useANSI := peekANSI || (!peekPlain && isTerminal())
 	lines := screen.Lines
-	if !peekPlain && isTerminal() && len(screen.ANSI) > 0 {
+	if useANSI && len(screen.ANSI) > 0 {
 		lines = screen.ANSI
 	}
 
@@ -213,6 +218,18 @@ func resolveSessionTarget(client *http.Client, muxURL, token, target string) (st
 		}
 	}
 
+	// If no direct match, try agent name resolution via beads daemon.
+	if len(matches) == 0 && daemon != nil {
+		if podName := resolveAgentPodName(target); podName != "" {
+			podLower := strings.ToLower(podName)
+			for _, s := range sessions {
+				if strings.Contains(strings.ToLower(s.Pod()), podLower) {
+					matches = append(matches, s)
+				}
+			}
+		}
+	}
+
 	switch len(matches) {
 	case 0:
 		return "", fmt.Errorf("no session matching '%s'", target)
@@ -235,6 +252,28 @@ func isTerminal() bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// resolveAgentPodName looks up an agent bead by name and returns its pod name.
+// Returns empty string if the agent is not found or has no pod.
+func resolveAgentPodName(agentName string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	agents, err := daemon.ListAgentBeads(ctx)
+	if err != nil {
+		return ""
+	}
+
+	nameLower := strings.ToLower(agentName)
+	for _, a := range agents {
+		if strings.ToLower(a.AgentName) == nameLower || strings.ToLower(a.Title) == nameLower {
+			if pod := a.Metadata["pod_name"]; pod != "" {
+				return pod
+			}
+		}
+	}
+	return ""
 }
 
 // ── types ───────────────────────────────────────────────────────────
