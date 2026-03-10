@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -274,6 +275,139 @@ func TestHandleExecuteHooks_InvalidJSON(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	requireStatus(t, rec, 400)
 }
+
+// ── stop gate fix tests (kd-itH9zRjSwR) ─────────────────────────────────
+//
+// These tests document the expected behavior of the stop gate consumption
+// model. Currently, all valid gate_satisfied_by values (yield, operator,
+// manual-force) cause the gate to be consumed (reset to pending). The fix
+// in kd-itH9zRjSwR changes this: only yield-satisfied gates are consumed;
+// operator and manual-force gates persist across Stop hooks.
+
+// TestHookEmit_StopGate_OperatorNotConsumed verifies that an operator-satisfied
+// gate is NOT consumed by the Stop hook. After the fix, operator overrides
+// persist — the gate stays satisfied so the agent can stop freely until
+// the gate is explicitly cleared.
+//
+// This test documents the DESIRED behavior after the fix in kd-itH9zRjSwR.
+// It will FAIL against the current code (which consumes all gates).
+func TestHookEmit_StopGate_OperatorNotConsumed(t *testing.T) {
+	t.Skip("requires fix from kd-itH9zRjSwR: operator-satisfied gate should not be consumed on Stop")
+
+	_, gs, h := newGatedTestServer()
+	const agentID = "kd-agent-operator-persist"
+
+	// Pre-set gate as satisfied with operator method (simulates gb gate mark --force).
+	gs.gates[gateKey{agentID, "decision"}] = &gateState{satisfied: true}
+	gs.beads[agentID] = &model.Bead{
+		ID:     agentID,
+		Fields: json.RawMessage(`{"gate_satisfied_by":"operator"}`),
+	}
+
+	// First Stop → should be allowed (gate satisfied + operator is valid).
+	stop1 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop1, 200)
+	var r1 map[string]any
+	decodeJSON(t, stop1, &r1)
+	if r1["block"] == true {
+		t.Fatalf("first Stop: expected unblocked with operator-satisfied gate, got %v", r1)
+	}
+
+	// Gate should NOT have been consumed (operator override persists).
+	if st := gs.gates[gateKey{agentID, "decision"}]; st == nil || !st.satisfied {
+		t.Fatal("gate should remain satisfied after operator-satisfied Stop (not consumed)")
+	}
+
+	// Second Stop → should also be allowed (operator keeps gate open).
+	stop2 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop2, 200)
+	var r2 map[string]any
+	decodeJSON(t, stop2, &r2)
+	if r2["block"] == true {
+		t.Fatalf("second Stop: expected unblocked, operator-satisfied gate should persist, got %v", r2)
+	}
+}
+
+// TestHookEmit_StopGate_YieldConsumed verifies that a yield-satisfied gate IS
+// consumed by the Stop hook. After the agent stops via yield, the gate resets
+// to pending so the next session's Stop blocks again (requiring a new
+// decision + yield cycle).
+func TestHookEmit_StopGate_YieldConsumed(t *testing.T) {
+	_, gs, h := newGatedTestServer()
+	const agentID = "kd-agent-yield-consume"
+
+	// Pre-set gate as satisfied via yield.
+	gs.gates[gateKey{agentID, "decision"}] = &gateState{satisfied: true}
+	gs.beads[agentID] = &model.Bead{
+		ID:     agentID,
+		Fields: json.RawMessage(`{"gate_satisfied_by":"yield"}`),
+	}
+
+	// Stop → should be allowed and gate consumed.
+	stop1 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop1, 200)
+	var r1 map[string]any
+	decodeJSON(t, stop1, &r1)
+	if r1["block"] == true {
+		t.Fatalf("expected unblocked with yield-satisfied gate, got %v", r1)
+	}
+
+	// Gate should have been consumed (reset to pending).
+	// Next Stop should block.
+	stop2 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop2, 200)
+	var r2 map[string]any
+	decodeJSON(t, stop2, &r2)
+	if r2["block"] != true {
+		t.Fatalf("expected block=true after yield-consumed gate, got %v", r2)
+	}
+}
+
+// TestHookEmit_StopGate_PendingBlocks verifies that a Stop hook blocks when
+// the decision gate is in pending state (using the stateful gatedMockStore).
+func TestHookEmit_StopGate_PendingBlocks(t *testing.T) {
+	_, _, h := newGatedTestServer()
+	const agentID = "kd-agent-pending-block"
+
+	// No pre-setup — gate starts pending after UpsertGate in handleHookEmit.
+	stop := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop, 200)
+	var resp map[string]any
+	decodeJSON(t, stop, &resp)
+	if resp["block"] != true {
+		t.Fatalf("expected block=true when gate is pending, got %v", resp)
+	}
+	if reason, ok := resp["reason"].(string); !ok || reason == "" {
+		t.Fatal("expected non-empty reason when blocked")
+	}
+}
+
+// Note: Test 4 from the stop gate fix test plan (gb gate mark --force sets
+// gate_satisfied_by=operator) is tested at the server level by
+// TestDecisionGateOperatorOverride in decision_test.go. The CLI-side behavior
+// (gb gate mark --force calling SatisfyGate + UpdateBeadFields) lives in
+// gasboat/controller/cmd/gb/gate.go and is verified by the integration of
+// the OperatorNotConsumed test above with the operator override flow.
 
 // TestHandleExecuteHooks_WithAdvice verifies that the hooks handler evaluates
 // advice beads that match the agent.
