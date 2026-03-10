@@ -282,19 +282,25 @@ func (b *Bot) handleKillThreadAgent(ctx context.Context, agentName string, callb
 	userID := callback.User.ID
 
 	// Acknowledge immediately — kill can take 30s+.
-	_, _ = b.api.PostEphemeral(channelID, userID,
-		slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agentName), false))
+	if b.api != nil {
+		_, _ = b.api.PostEphemeral(channelID, userID,
+			slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agentName), false))
+	}
 
 	go func() {
 		if err := b.killAgent(context.Background(), agentName, false); err != nil {
 			b.logger.Error("kill-thread-agent button: failed", "agent", agentName, "error", err)
-			_, _ = b.api.PostEphemeral(channelID, userID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill thread agent %q: %s", agentName, err.Error()), false))
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(channelID, userID,
+					slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill thread agent %q: %s", agentName, err.Error()), false))
+			}
 			return
 		}
 		b.logger.Info("killed thread agent via button", "agent", agentName, "user", userID)
-		_, _ = b.api.PostEphemeral(channelID, userID,
-			slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agentName), false))
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channelID, userID,
+				slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agentName), false))
+		}
 	}()
 }
 
@@ -308,13 +314,17 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 	userID := callback.User.ID
 
 	if threadTS == "" {
-		_, _ = b.api.PostEphemeral(channelID, userID,
-			slack.MsgOptionText(":x: Restart is only available in threads.", false))
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channelID, userID,
+				slack.MsgOptionText(":x: Restart is only available in threads.", false))
+		}
 		return
 	}
 
-	_, _ = b.api.PostEphemeral(channelID, userID,
-		slack.MsgOptionText(fmt.Sprintf(":arrows_counterclockwise: Restarting thread agent *%s*…", agentName), false))
+	if b.api != nil {
+		_, _ = b.api.PostEphemeral(channelID, userID,
+			slack.MsgOptionText(fmt.Sprintf(":arrows_counterclockwise: Restarting thread agent *%s*…", agentName), false))
+	}
 
 	go func() {
 		bgCtx := context.Background()
@@ -323,8 +333,10 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 		bead, err := b.daemon.FindAgentBead(bgCtx, agentName)
 		if err != nil {
 			b.logger.Error("restart-thread-agent: agent bead not found", "agent", agentName, "error", err)
-			_, _ = b.api.PostEphemeral(channelID, userID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Agent %q not found: %s", agentName, err), false))
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(channelID, userID,
+					slack.MsgOptionText(fmt.Sprintf(":x: Agent %q not found: %s", agentName, err), false))
+			}
 			return
 		}
 		project := bead.Fields["project"]
@@ -332,8 +344,10 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 		// Kill the agent (graceful shutdown + close bead + clean up state).
 		if err := b.killAgent(bgCtx, agentName, false); err != nil {
 			b.logger.Error("restart-thread-agent: kill failed", "agent", agentName, "error", err)
-			_, _ = b.api.PostEphemeral(channelID, userID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent %q: %s", agentName, err), false))
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(channelID, userID,
+					slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent %q: %s", agentName, err), false))
+			}
 			return
 		}
 
@@ -368,8 +382,10 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 		})
 		if err != nil {
 			b.logger.Error("restart-thread-agent: failed to create new bead", "agent", agentName, "error", err)
-			_, _ = b.api.PostEphemeral(channelID, userID,
-				slack.MsgOptionText(fmt.Sprintf(":x: Killed agent but failed to re-spawn: %s", err), false))
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(channelID, userID,
+					slack.MsgOptionText(fmt.Sprintf(":x: Killed agent but failed to re-spawn: %s", err), false))
+			}
 			return
 		}
 
