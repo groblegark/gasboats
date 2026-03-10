@@ -108,12 +108,17 @@ if [ $_rc -eq 2 ]; then
     _log "EXIT 2: gate blocked (block_count now $block_count)"
 
     # Gate blocked — inject checkpoint instructions into the conversation via stdout.
+    # Also echo to stderr so the operator can see what text the agent receives.
     # Prefer config-bead-materialized file; fall back to minimal inline text.
     STOP_GATE_TEXT="/home/agent/.claude/stop-gate-text.md"
     if [ -f "$STOP_GATE_TEXT" ]; then
-        cat "$STOP_GATE_TEXT"
+        _text=$(cat "$STOP_GATE_TEXT")
+        echo "$_text"           # stdout → agent context
+        echo "$_text" >&2       # stderr → operator visibility
     else
-        echo "<system-reminder>STOP BLOCKED — decision gate unsatisfied. Create a decision checkpoint (gb decision create + gb yield) or call gb done if work is complete.</system-reminder>"
+        _fallback="<system-reminder>STOP BLOCKED — decision gate unsatisfied. Create a decision checkpoint (gb decision create + gb yield) or call gb done if work is complete.</system-reminder>"
+        echo "$_fallback"
+        echo "$_fallback" >&2
     fi
 
     # After repeated blocks, add escalating guidance.
