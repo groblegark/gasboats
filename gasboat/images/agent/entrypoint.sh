@@ -513,12 +513,12 @@ standby_wait_for_assignment() {
 
     echo "[entrypoint] Standby mode: Claude is idle, waiting for assignment (bead: ${BOAT_AGENT_BEAD_ID})"
     local poll_interval="${BOAT_STANDBY_POLL:-5}"
-    local max_wait="${BOAT_STANDBY_TTL:-1800}"
+    local max_wait="${BOAT_STANDBY_MAX_TTL:-86400}"
     local elapsed=0
 
     while true; do
         if [ "${elapsed}" -ge "${max_wait}" ]; then
-            echo "[entrypoint] Standby TTL (${max_wait}s) exceeded, shutting down"
+            echo "[entrypoint] Standby safety-net TTL (${max_wait}s) exceeded, shutting down"
             rm -f /tmp/standby_active
             touch /tmp/standby_expired
             curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
