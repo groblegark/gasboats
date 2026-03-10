@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -508,5 +509,56 @@ func TestHandleAppMention_InactiveThreadAgent_Respawns(t *testing.T) {
 	// Mapping should be preserved.
 	if _, ok := state.GetThreadAgent("C-test", "1111.2222"); !ok {
 		t.Error("expected thread→agent mapping to be preserved after respawn")
+	}
+}
+
+func TestHandleThreadSpawn_ConcurrentMentionsSpawnOnce(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot.state = state
+	bot.botUserID = "U-BOT"
+	bot.lastThreadNudge = make(map[string]time.Time)
+
+	channel := "C-race-test"
+	threadTS := "9999.1111"
+
+	// Fire 5 concurrent mentions to the same thread.
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bot.handleThreadSpawn(context.Background(), &slackevents.AppMentionEvent{
+				User:            "U-USER",
+				Text:            "<@U-BOT> help me",
+				TimeStamp:       "2222.3333",
+				ThreadTimeStamp: threadTS,
+				Channel:         channel,
+			}, "help me")
+		}()
+	}
+	wg.Wait()
+
+	// Count how many agent beads were created for this thread.
+	daemon.mu.Lock()
+	var agentCount int
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			agentCount++
+		}
+	}
+	daemon.mu.Unlock()
+
+	if agentCount != 1 {
+		t.Errorf("expected exactly 1 agent bead from concurrent spawns, got %d", agentCount)
 	}
 }

@@ -78,6 +78,7 @@ type Bot struct {
 
 	threadSpawnMsgs  map[string]MessageRef // agent identity → spawn confirmation message ref (for in-place update)
 	beadMsgs         map[string]MessageRef // "agent:beadID" → Slack message ref for inline bead status updates
+	spawnInFlight    map[string]bool       // "{channel}:{thread_ts}" → true while spawn is in progress (race guard)
 
 	// Nudge throttling for thread reply forwarding.
 	// Key: "agent:thread_ts", value: last nudge time.
@@ -151,6 +152,7 @@ func NewBot(cfg BotConfig) *Bot {
 		agentProject:     make(map[string]string),
 		threadSpawnMsgs:  make(map[string]MessageRef),
 		beadMsgs:         make(map[string]MessageRef),
+		spawnInFlight:    make(map[string]bool),
 		lastThreadNudge: make(map[string]time.Time),
 		github:           gh,
 		repos:            cfg.Repos,
