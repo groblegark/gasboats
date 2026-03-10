@@ -517,7 +517,7 @@ tasks:
           python3-pip python3-venv python3.12-venv \
           libpython3.12-stdlib libpython3.12-minimal \
           make gcc g++ unzip binutils shellcheck \
-          gcc-14 g++-14 cpp-14 libgcc-14-dev \
+          gcc-13 g++-13 cpp-13 gcc-14 g++-14 cpp-14 libgcc-14-dev \
           libc6-dev linux-libc-dev binutils-x86-64-linux-gnu \
           pkg-config libssl-dev \
           libcurl4t64 libcurl3t64-gnutls \
@@ -593,6 +593,7 @@ tasks:
       done || true
       mkdir -p $OUT/usr/libexec/sudo && cp /usr/libexec/sudo/*.so* $OUT/usr/libexec/sudo/ 2>/dev/null || true
       ln -sf python3 $OUT/usr/bin/python
+      ln -sf gcc $OUT/usr/bin/cc
 
       sudo tar -cf syspackages.tar -C $OUT .
     outputs:
