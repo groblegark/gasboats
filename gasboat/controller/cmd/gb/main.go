@@ -123,6 +123,7 @@ func init() {
 	rootCmd.AddCommand(slackCmd)
 	rootCmd.AddCommand(squawkCmd)
 	rootCmd.AddCommand(poolCmd)
+	rootCmd.AddCommand(peekCmd)
 
 	// Session Control
 	rootCmd.AddCommand(configCmd)
