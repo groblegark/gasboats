@@ -82,7 +82,7 @@ tasks:
       - Cargo.lock
       - "deploy/k8s-launch.sh"
     run: |
-      cargo build --release -p coop -p coopmux
+      cargo build --release -p coop --features s3 -p coopmux
       cp target/release/coop coop-bin
       cp target/release/coopmux coopmux-bin
       cp deploy/k8s-launch.sh k8s-launch.sh
