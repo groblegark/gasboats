@@ -285,7 +285,7 @@ func TestWriteMCPConfig_DoesNotOverrideExistingServer(t *testing.T) {
 		"mcpServers": map[string]any{
 			"playwright": map[string]any{
 				"command": "playwright-mcp",
-				"args":    []any{"--headless", "--no-sandbox"},
+				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox"},
 			},
 		},
 	}

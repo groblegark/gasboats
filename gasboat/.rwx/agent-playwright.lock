@@ -1,4 +1,5 @@
 # Cache key for agent-install-playwright task.
-# Touch this file to force a rebuild of Playwright + Chromium only.
-cache-epoch=2
+# Touch this file to force a rebuild of Playwright + Chromium + Chrome only.
+cache-epoch=3
 playwright=1.58.2
+# epoch 3: add Chrome for Testing browser, fix system deps, ldd sweep

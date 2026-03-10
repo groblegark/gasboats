@@ -627,7 +627,7 @@ tasks:
         - key: node-tar
           path: node-layer.tar
 
-  # ── Playwright + Chromium + system deps (cached separately) ────────
+  # ── Playwright + Chromium + Chrome + system deps (cached separately) ──
   - key: agent-install-playwright
     use: [agent-install-node]
     timeout: 10m
@@ -693,9 +693,19 @@ tasks:
           mkdir -p "$OUT$(dirname "$lib")" && cp -a "$lib" "$OUT${lib}" 2>/dev/null || true
         done || true
       done
-      # Install Chromium browser
-      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx playwright install chromium
+      # Install Chromium + Chrome for Testing browsers.
+      # @playwright/mcp defaults to --browser=chrome, so Chrome must be present.
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx playwright install chromium chrome
       chmod -R 777 $OUT/ms-playwright
+      # Final ldd sweep: resolve ALL shared libs needed by installed browser binaries.
+      # This catches transitive deps that the dpkg/glob copies above may have missed.
+      find $OUT/ms-playwright -name chrome -type f -executable 2>/dev/null | while read -r bin; do
+        ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
+          [ -e "$lib" ] || continue
+          [ -e "$OUT$lib" ] && continue  # already copied
+          mkdir -p "$OUT$(dirname "$lib")" && cp -a "$lib" "$OUT${lib}" 2>/dev/null || true
+        done || true
+      done
 
       tar -cf playwright-layer.tar -C $OUT .
     outputs:
@@ -881,15 +891,17 @@ tasks:
       LAYER=/tmp/layer
       mkdir -p $LAYER
 
-      # Unpack all cached install layers in parallel.
-      # NOTE: all extractions use sudo because layers share directories
-      # (e.g. /usr/lib/x86_64-linux-gnu/) — if syspackages creates a
-      # root-owned dir first, non-sudo extractions silently fail to write
-      # into it, dropping files like libnspr4.so and libnss3.so.
-      echo "=== Unpacking cached layers (parallel) ==="
-      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER &
+      # Unpack cached install layers.
+      # IMPORTANT: syspackages and playwright both write to /usr/lib/x86_64-linux-gnu/.
+      # Parallel tar extraction to the same directory tree causes a race condition where
+      # one tar's directory entries can interfere with the other, silently dropping shared
+      # library files (libnspr4.so, libnss3.so, etc.). Extract these two sequentially,
+      # then the rest (which write to disjoint paths) in parallel.
+      echo "=== Unpacking layers with shared lib dirs (sequential) ==="
+      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER
+      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER
+      echo "=== Unpacking remaining layers (parallel) ==="
       sudo tar -xf ${{ tasks.agent-install-node.artifacts.node-tar }} -C $LAYER &
-      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-go.artifacts.go-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-rust.artifacts.rust-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-clis.artifacts.clis-tar }} -C $LAYER &
