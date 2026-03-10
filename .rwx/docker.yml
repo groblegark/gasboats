@@ -698,11 +698,28 @@ tasks:
         | tar -xJ --strip-components=1 -C $OUT/usr/local
 
       PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
+      # Snapshot installed packages before playwright deps
+      dpkg-query -W -f='${Package}\n' | sort > /tmp/pkgs-before.txt
+
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
 
-      # Capture browser system deps
+      # Capture ALL system deps installed by playwright --with-deps
+      # ldd only finds direct .so links; Chromium dlopen's X11/GTK libs at runtime
       DEPS_OUT=/tmp/pw-deps
       mkdir -p $DEPS_OUT
+
+      # 1. Diff packages to find everything --with-deps installed
+      dpkg-query -W -f='${Package}\n' | sort > /tmp/pkgs-after.txt
+      NEW_PKGS=$(comm -13 /tmp/pkgs-before.txt /tmp/pkgs-after.txt)
+      for pkg in $NEW_PKGS; do
+        dpkg -L "$pkg" 2>/dev/null | while read -r f; do
+          [ -e "$f" ] || continue
+          [ -d "$f" ] && { mkdir -p "$DEPS_OUT$f"; continue; }
+          mkdir -p "$DEPS_OUT$(dirname "$f")" && cp -a "$f" "$DEPS_OUT${f}" 2>/dev/null || true
+        done || true
+      done
+
+      # 2. Also capture direct .so deps via ldd as fallback
       for lib in $(find $OUT/ms-playwright -name '*.so*' -type f 2>/dev/null); do
         ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
           [ -f "$dep" ] || continue
@@ -710,7 +727,7 @@ tasks:
           cp -n "$dep" "$DEPS_OUT${dep}" 2>/dev/null || true
         done || true
       done
-      tar -cf /tmp/pwdeps.tar -C $DEPS_OUT . 2>/dev/null || true
+
       tar -cf playwright.tar -C $OUT .
       # Append system deps
       tar -rf playwright.tar -C $DEPS_OUT . 2>/dev/null || true
