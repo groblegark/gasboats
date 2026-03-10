@@ -500,6 +500,83 @@ auto_bypass_startup() {
 }
 
 # ── Inject initial work prompt ────────────────────────────────────────
+
+# ── Standby: wait for pool assignment (prewarmed agents) ─────────────
+# When BOAT_STANDBY=true, Claude is already running and idle. This
+# function polls agent_state until the pool manager changes it from
+# "prewarmed" to "assigning", then hydrates thread/task env vars so
+# the subsequent inject_initial_prompt sends the correct work prompt.
+standby_wait_for_assignment() {
+    # Signal monitor_agent_idle to skip state updates so the pool manager
+    # controls the prewarmed→assigning transition.
+    touch /tmp/standby_active
+
+    echo "[entrypoint] Standby mode: Claude is idle, waiting for assignment (bead: ${BOAT_AGENT_BEAD_ID})"
+    local poll_interval="${BOAT_STANDBY_POLL:-5}"
+    local max_wait="${BOAT_STANDBY_TTL:-1800}"
+    local elapsed=0
+
+    while true; do
+        if [ "${elapsed}" -ge "${max_wait}" ]; then
+            echo "[entrypoint] Standby TTL (${max_wait}s) exceeded, shutting down"
+            rm -f /tmp/standby_active
+            touch /tmp/standby_expired
+            curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
+            return 1
+        fi
+
+        # Check agent_state via kd (faster than raw curl + jq).
+        local current_state
+        if command -v kd &>/dev/null; then
+            current_state=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null \
+                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
+        else
+            current_state=$(curl -sf "${BEADS_HTTP_ADDR:-http://localhost:8080}/v1/beads/${BOAT_AGENT_BEAD_ID}" 2>/dev/null \
+                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
+        fi
+
+        if [ "${current_state}" != "prewarmed" ]; then
+            echo "[entrypoint] Assignment received (state: ${current_state}), exiting standby"
+
+            # Hydrate env vars from the assigned bead's fields so the nudge
+            # includes thread context (channel, thread_ts, description).
+            if command -v kd &>/dev/null; then
+                local bead_json
+                bead_json=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null) || true
+                if [ -n "${bead_json}" ]; then
+                    local assigned_channel assigned_thread_ts assigned_project assigned_task_id
+                    assigned_channel=$(echo "${bead_json}" | jq -r '.fields.slack_thread_channel // empty' 2>/dev/null)
+                    assigned_thread_ts=$(echo "${bead_json}" | jq -r '.fields.slack_thread_ts // empty' 2>/dev/null)
+                    assigned_project=$(echo "${bead_json}" | jq -r '.fields.project // empty' 2>/dev/null)
+                    if [ -n "${assigned_channel}" ]; then
+                        export SLACK_THREAD_CHANNEL="${assigned_channel}"
+                        echo "[entrypoint] Hydrated SLACK_THREAD_CHANNEL=${assigned_channel}"
+                    fi
+                    if [ -n "${assigned_thread_ts}" ]; then
+                        export SLACK_THREAD_TS="${assigned_thread_ts}"
+                        echo "[entrypoint] Hydrated SLACK_THREAD_TS=${assigned_thread_ts}"
+                    fi
+                    if [ -n "${assigned_project}" ] && [ -z "${PROJECT:-}" ]; then
+                        export PROJECT="${assigned_project}"
+                        echo "[entrypoint] Hydrated PROJECT=${assigned_project}"
+                    fi
+                    assigned_task_id=$(echo "${bead_json}" | jq -r '.fields.task_id // empty' 2>/dev/null)
+                    if [ -n "${assigned_task_id}" ]; then
+                        export BOAT_TASK_ID="${assigned_task_id}"
+                        echo "[entrypoint] Hydrated BOAT_TASK_ID=${assigned_task_id}"
+                    fi
+                fi
+            fi
+
+            rm -f /tmp/standby_active
+            return 0
+        fi
+
+        sleep "${poll_interval}"
+        elapsed=$((elapsed + poll_interval))
+    done
+}
+
 inject_initial_prompt() {
     # Wait for agent to be past setup and idle
     for i in $(seq 1 60); do
@@ -659,11 +736,16 @@ monitor_agent_idle() {
         state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null) || break
         agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
         if [ "${agent_state}" != "${prev_state}" ] && [ -n "${agent_state}" ]; then
-            case "${agent_state}" in
-                idle|working)
-                    kd update "${KD_AGENT_ID}" -f agent_state="${agent_state}" 2>/dev/null || true
-                    ;;
-            esac
+            # Skip state updates while in standby — the pool manager controls
+            # the prewarmed→assigning transition. Writing "idle" here would
+            # remove the agent from the prewarmed pool prematurely.
+            if [ ! -f /tmp/standby_active ]; then
+                case "${agent_state}" in
+                    idle|working)
+                        kd update "${KD_AGENT_ID}" -f agent_state="${agent_state}" 2>/dev/null || true
+                        ;;
+                esac
+            fi
             prev_state="${agent_state}"
         fi
         # Stop polling once the agent exits.
@@ -738,71 +820,8 @@ if [ "${MOCK_MODE}" != "1" ]; then
     refresh_credentials &
 fi
 
-# ── Standby mode (prewarmed agents) ──────────────────────────────────────
-# When BOAT_STANDBY=true, the agent is prewarmed: workspace is ready but
-# Claude should not start until the pool manager assigns work. We poll the
-# bead's agent_state via the daemon and wait until it changes from "prewarmed".
-if [ "${BOAT_STANDBY:-}" = "true" ] && [ -n "${BOAT_AGENT_BEAD_ID:-}" ]; then
-    echo "[entrypoint] Standby mode: waiting for assignment (bead: ${BOAT_AGENT_BEAD_ID})"
-    STANDBY_POLL_INTERVAL="${BOAT_STANDBY_POLL:-5}"
-    STANDBY_MAX_WAIT="${BOAT_STANDBY_TTL:-1800}"
-    standby_elapsed=0
-
-    while true; do
-        if [ "${standby_elapsed}" -ge "${STANDBY_MAX_WAIT}" ]; then
-            echo "[entrypoint] Standby TTL (${STANDBY_MAX_WAIT}s) exceeded, exiting"
-            exit 0
-        fi
-
-        # Check agent_state via kd (faster than raw curl + jq).
-        if command -v kd &>/dev/null; then
-            current_state=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null \
-                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
-        else
-            # Fallback: query daemon HTTP API directly.
-            current_state=$(curl -sf "${BEADS_HTTP_ADDR:-http://localhost:8080}/v1/beads/${BOAT_AGENT_BEAD_ID}" 2>/dev/null \
-                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
-        fi
-
-        if [ "${current_state}" != "prewarmed" ]; then
-            echo "[entrypoint] Assignment received (state: ${current_state}), exiting standby"
-
-            # Hydrate env vars from the assigned bead's fields so the nudge
-            # includes thread context (channel, thread_ts, description).
-            if command -v kd &>/dev/null; then
-                bead_json=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null) || true
-                if [ -n "${bead_json}" ]; then
-                    assigned_channel=$(echo "${bead_json}" | jq -r '.fields.slack_thread_channel // empty' 2>/dev/null)
-                    assigned_thread_ts=$(echo "${bead_json}" | jq -r '.fields.slack_thread_ts // empty' 2>/dev/null)
-                    assigned_project=$(echo "${bead_json}" | jq -r '.fields.project // empty' 2>/dev/null)
-                    if [ -n "${assigned_channel}" ]; then
-                        export SLACK_THREAD_CHANNEL="${assigned_channel}"
-                        echo "[entrypoint] Hydrated SLACK_THREAD_CHANNEL=${assigned_channel}"
-                    fi
-                    if [ -n "${assigned_thread_ts}" ]; then
-                        export SLACK_THREAD_TS="${assigned_thread_ts}"
-                        echo "[entrypoint] Hydrated SLACK_THREAD_TS=${assigned_thread_ts}"
-                    fi
-                    if [ -n "${assigned_project}" ] && [ -z "${PROJECT:-}" ]; then
-                        export PROJECT="${assigned_project}"
-                        echo "[entrypoint] Hydrated PROJECT=${assigned_project}"
-                    fi
-                    # Hydrate task_id so inject_initial_prompt includes pre-assigned task hint.
-                    assigned_task_id=$(echo "${bead_json}" | jq -r '.fields.task_id // empty' 2>/dev/null)
-                    if [ -n "${assigned_task_id}" ]; then
-                        export BOAT_TASK_ID="${assigned_task_id}"
-                        echo "[entrypoint] Hydrated BOAT_TASK_ID=${assigned_task_id}"
-                    fi
-                fi
-            fi
-
-            break
-        fi
-
-        sleep "${STANDBY_POLL_INTERVAL}"
-        standby_elapsed=$((standby_elapsed + STANDBY_POLL_INTERVAL))
-    done
-fi
+# Clean up stale standby flags from previous runs.
+rm -f /tmp/standby_active /tmp/standby_expired /tmp/standby_done
 
 # ── Restart loop ──────────────────────────────────────────────────────────
 MAX_RESTARTS="${COOP_MAX_RESTARTS:-10}"
@@ -848,11 +867,20 @@ while true; do
 
     start_time=$(date +%s)
 
+    # Build the injection chain: bypass prompts → [standby wait] → inject prompt.
+    # For prewarmed agents on first start, Claude idles in standby until the
+    # pool manager assigns work — then the work prompt is injected instantly.
+    if [ "${BOAT_STANDBY:-}" = "true" ] && [ -n "${BOAT_AGENT_BEAD_ID:-}" ] && [ ! -f /tmp/standby_done ]; then
+        INJECT_CHAIN="auto_bypass_startup && standby_wait_for_assignment && inject_initial_prompt; touch /tmp/standby_done"
+    else
+        INJECT_CHAIN="auto_bypass_startup && inject_initial_prompt"
+    fi
+
     if [ -n "${RESUME_FLAG}" ]; then
         echo "[entrypoint] Starting coop + ${AGENT_CMD%% *} (${ROLE}/${AGENT}) with resume"
         ${COOP_CMD} ${RESUME_FLAG} -- ${AGENT_CMD} &
         COOP_PID=$!
-        (auto_bypass_startup && inject_initial_prompt) &
+        (eval "${INJECT_CHAIN}") &
         monitor_agent_exit &
         monitor_agent_idle &
         wait "${COOP_PID}" 2>/dev/null && exit_code=0 || exit_code=$?
@@ -867,7 +895,7 @@ while true; do
         echo "[entrypoint] Starting coop + ${AGENT_CMD%% *} (${ROLE}/${AGENT})"
         ${COOP_CMD} -- ${AGENT_CMD} &
         COOP_PID=$!
-        (auto_bypass_startup && inject_initial_prompt) &
+        (eval "${INJECT_CHAIN}") &
         monitor_agent_exit &
         monitor_agent_idle &
         wait "${COOP_PID}" 2>/dev/null && exit_code=0 || exit_code=$?
@@ -876,6 +904,14 @@ while true; do
 
     elapsed=$(( $(date +%s) - start_time ))
     echo "[entrypoint] Coop exited with code ${exit_code} after ${elapsed}s"
+
+    # If standby TTL expired, exit cleanly — the pool manager will create
+    # a replacement prewarmed agent on its next reconciliation pass.
+    if [ -f /tmp/standby_expired ]; then
+        echo "[entrypoint] Standby TTL expired, exiting"
+        rm -f /tmp/standby_expired /tmp/standby_active /tmp/standby_done
+        exit 0
+    fi
 
     # Check if the agent requested a polite stop (gb stop sets stop_requested=true).
     # Close the bead so the reconciler stops tracking this pod, then exit cleanly.
