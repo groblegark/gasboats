@@ -11,7 +11,7 @@ use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use tracing_subscriber::EnvFilter;
 
@@ -310,6 +310,71 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
     let base_settings = agent_file_config.as_ref().and_then(|c| c.settings.clone());
     let mcp_config = agent_file_config.as_ref().and_then(|c| c.mcp.clone());
 
+    // 0b. S3 resume: download session data from S3 before local resume discovery.
+    #[cfg(feature = "s3")]
+    let s3_client: Option<std::sync::Arc<crate::s3::S3Client>> =
+        if config.s3_bucket.is_some() || config.s3_resume_session.is_some() {
+            let bucket = config.s3_bucket.clone().unwrap_or_default();
+            if bucket.is_empty() && config.s3_resume_session.is_some() {
+                anyhow::bail!("--s3-resume-session requires --s3-bucket");
+            }
+            if !bucket.is_empty() {
+                match crate::s3::S3Client::new(
+                    bucket,
+                    config.s3_prefix.clone(),
+                    config.s3_region.clone(),
+                )
+                .await
+                {
+                    Ok(client) => Some(std::sync::Arc::new(client)),
+                    Err(e) => {
+                        error!("s3: failed to create client: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    #[cfg(feature = "s3")]
+    if let (Some(ref s3), Some(ref source_session)) =
+        (&s3_client, &config.s3_resume_session)
+    {
+        info!(session = %source_session, "s3: restoring session data for resume");
+
+        // Determine a local directory for restored transcripts.
+        // Use the working directory to build a Claude-style session dir.
+        let restore_dir = {
+            let state_home = std::env::var("XDG_STATE_HOME")
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                    format!("{home}/.local/state")
+                });
+            PathBuf::from(format!("{state_home}/coop/sessions/{source_session}"))
+        };
+        let transcripts_dir = restore_dir.join("transcripts");
+
+        match crate::s3::restore_transcripts(s3, source_session, &transcripts_dir).await {
+            Ok(count) => info!(count, "s3: restored transcripts from S3"),
+            Err(e) => warn!("s3: failed to restore transcripts: {e}"),
+        }
+
+        // Download session log so --resume can discover it.
+        let session_log_dest = restore_dir.join("session.jsonl");
+        if let Err(e) =
+            crate::s3::restore_session_log(s3, source_session, &session_log_dest).await
+        {
+            warn!("s3: failed to restore session log: {e}");
+        } else if config.resume.is_none() {
+            // Auto-set --resume to the downloaded session log.
+            config.resume = Some(session_log_dest.display().to_string());
+            info!("s3: auto-set --resume to restored session log");
+        }
+    }
+
     // 1. Handle --resume: discover session log and build resume state.
     let (resume_state, resume_log_path) = if let Some(ref resume_hint) = config.resume {
         let log_path = resume::discover_session_log(resume_hint)?
@@ -601,6 +666,26 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
         &store.channels.hook_tx,
         shutdown.clone(),
     );
+
+    // Spawn S3 persistence subscriber if configured.
+    #[cfg(feature = "s3")]
+    if let Some(ref s3) = s3_client {
+        let session_log_path_s3 =
+            setup.as_ref().and_then(|s| s.session_log_path.clone());
+        crate::s3::spawn_subscriber(
+            Arc::clone(s3),
+            store.session_id.read().await.clone(),
+            store.session_dir.clone(),
+            &store.transcript.transcript_tx,
+            &store.record.record_tx,
+            session_log_path_s3,
+            config.s3_upload_interval(),
+            agent_enum.to_string(),
+            config.label.clone(),
+            shutdown.clone(),
+        );
+        info!("s3: persistence subscriber started");
+    }
 
     // Spawn NATS publisher if configured.
     if let Some(ref nats_url) = config.nats_url {

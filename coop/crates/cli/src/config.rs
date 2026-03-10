@@ -187,6 +187,22 @@ pub struct Config {
     #[arg(long, env = "COOP_PROFILE", default_value = "auto")]
     pub profile: String,
 
+    /// S3 bucket for session data persistence. Enables S3 uploads when set.
+    #[arg(long, env = "COOP_S3_BUCKET")]
+    pub s3_bucket: Option<String>,
+
+    /// S3 key prefix for session artifacts.
+    #[arg(long, env = "COOP_S3_PREFIX", default_value = "coop/sessions")]
+    pub s3_prefix: String,
+
+    /// S3 region override (uses default AWS region chain if unset).
+    #[arg(long, env = "COOP_S3_REGION")]
+    pub s3_region: Option<String>,
+
+    /// Session ID to restore from S3 on startup (downloads transcripts + session log).
+    #[arg(long, env = "COOP_S3_RESUME_SESSION")]
+    pub s3_resume_session: Option<String>,
+
     // -- Knobs (set via env var only, sane testing defaults in Config::test()) --------
     /// Mux registration URL (default http://127.0.0.1:9800)
     #[clap(skip)]
@@ -218,6 +234,8 @@ pub struct Config {
     pub idle_timeout_ms: Option<u64>,
     #[clap(skip)]
     pub groom_dismiss_delay_ms: Option<u64>,
+    #[clap(skip)]
+    pub s3_upload_interval_ms: Option<u64>,
 }
 
 fn env_duration_ms(var: &str, default: u64) -> Duration {
@@ -333,6 +351,12 @@ impl Config {
         "COOP_GROOM_DISMISS_DELAY_MS",
         500
     );
+    duration_field!(
+        s3_upload_interval,
+        s3_upload_interval_ms,
+        "COOP_S3_UPLOAD_INTERVAL_MS",
+        60_000
+    );
 
     /// Build a minimal `Config` for tests (port 0, `echo` command).
     #[doc(hidden)]
@@ -385,6 +409,11 @@ impl Config {
             nudge_timeout_ms: Some(100),
             idle_timeout_ms: Some(0),
             groom_dismiss_delay_ms: Some(50),
+            s3_bucket: None,
+            s3_prefix: "coop/sessions".into(),
+            s3_region: None,
+            s3_resume_session: None,
+            s3_upload_interval_ms: Some(1_000),
         }
     }
 

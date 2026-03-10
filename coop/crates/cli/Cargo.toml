@@ -46,6 +46,12 @@ reqwest = { workspace = true, features = ["blocking"] }
 ring.workspace = true
 rustls.workspace = true
 tokio-tungstenite.workspace = true
+aws-config = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+
+[features]
+default = []
+s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
 
 [build-dependencies]
 tonic-build.workspace = true

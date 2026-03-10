@@ -15,6 +15,8 @@ pub mod rendering_test_support;
 pub mod replay_gate;
 pub mod ring;
 pub mod run;
+#[cfg(feature = "s3")]
+pub mod s3;
 pub mod screen;
 pub mod session;
 pub mod start;
