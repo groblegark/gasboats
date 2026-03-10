@@ -5,7 +5,9 @@ on:
     push:
       branches: [main]
       tags: ['20*']
-    statuses:
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
   cli:
     init:
       commit-sha: ${{ event.git.sha }}
@@ -34,7 +36,7 @@ tasks:
     filter:
       - .rwx/ci.yml
     run: |
-      go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.2
 
   # ── Rust toolchain (for coop + quench) ───────────────────────────────
   - key: rust
