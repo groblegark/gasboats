@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,9 @@ var (
 	peekLimit      int64
 	peekTranscript string
 	peekRecording  bool
+	peekWatch      bool
+	peekFollow     bool
+	peekInterval   float64
 )
 
 var peekCmd = &cobra.Command{
@@ -53,6 +57,9 @@ func init() {
 	peekCmd.Flags().Int64Var(&peekLimit, "limit", 0, "limit output to N bytes")
 	peekCmd.Flags().StringVar(&peekTranscript, "transcripts", "", "list transcripts or fetch by number (list, latest, or N)")
 	peekCmd.Flags().BoolVar(&peekRecording, "recording", false, "show recording status and entries")
+	peekCmd.Flags().BoolVar(&peekWatch, "watch", false, "continuously refresh screen display")
+	peekCmd.Flags().BoolVar(&peekFollow, "follow", false, "follow raw output stream (like tail -f)")
+	peekCmd.Flags().Float64Var(&peekInterval, "interval", 0, "poll interval in seconds (default: 1 for --watch, 0.5 for --follow)")
 	peekCmd.MarkFlagsMutuallyExclusive("plain", "ansi")
 }
 
@@ -70,6 +77,10 @@ func runPeek(cmd *cobra.Command, args []string) error {
 
 	target := args[0]
 	switch {
+	case peekWatch:
+		return peekWatchScreen(client, muxURL, token, target)
+	case peekFollow:
+		return peekFollowOutput(client, muxURL, token, target)
 	case peekStatus:
 		return peekShowStatus(client, muxURL, token, target)
 	case peekOutput || peekTail > 0:
@@ -528,6 +539,121 @@ func peekShowRecording(client *http.Client, muxURL, token, target string) error 
 	fmt.Printf("Entries:    %d\n", status.Entries)
 
 	return nil
+}
+
+// peekWatchScreen continuously refreshes the terminal screen display.
+func peekWatchScreen(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	interval := time.Second
+	if peekInterval > 0 {
+		interval = time.Duration(peekInterval * float64(time.Second))
+	}
+
+	// Handle Ctrl+C gracefully.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
+	url := muxURL + "/api/v1/sessions/" + sessionID + "/screen"
+	for {
+		resp, err := muxGet(client, url, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				var screen peekScreenSnapshot
+				if err := json.Unmarshal(body, &screen); err == nil {
+					// Clear screen and move cursor to top-left.
+					fmt.Print("\033[2J\033[H")
+
+					useANSI := peekANSI || (!peekPlain && isTerminal())
+					lines := screen.Lines
+					if useANSI && len(screen.ANSI) > 0 {
+						lines = screen.ANSI
+					}
+					for _, line := range lines {
+						fmt.Println(line)
+					}
+					fmt.Fprintf(os.Stderr, "[%dx%d seq=%d %s]\n",
+						screen.Cols, screen.Rows, screen.Seq, time.Now().Format("15:04:05"))
+				}
+			}
+		}
+
+		select {
+		case <-sigCh:
+			return nil
+		case <-time.After(interval):
+		}
+	}
+}
+
+// peekFollowOutput follows raw output stream incrementally (like tail -f).
+func peekFollowOutput(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	interval := 500 * time.Millisecond
+	if peekInterval > 0 {
+		interval = time.Duration(peekInterval * float64(time.Second))
+	}
+
+	// Handle Ctrl+C gracefully.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
+	// Start from the end of current output.
+	baseURL := muxURL + "/api/v1/sessions/" + sessionID + "/output"
+	var offset uint64
+
+	// Get initial total_written to start from the end.
+	resp, err := muxGet(client, baseURL, token)
+	if err == nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var info peekOutputResponse
+		if json.Unmarshal(body, &info) == nil {
+			offset = info.TotalWritten
+		}
+	}
+
+	for {
+		url := baseURL + "?offset=" + strconv.FormatUint(offset, 10)
+		resp, err := muxGet(client, url, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				var output peekOutputResponse
+				if json.Unmarshal(body, &output) == nil && output.NextOffset > offset {
+					decoded, err := base64.StdEncoding.DecodeString(output.Data)
+					if err == nil && len(decoded) > 0 {
+						os.Stdout.Write(decoded)
+					}
+					offset = output.NextOffset
+				}
+			}
+		}
+
+		select {
+		case <-sigCh:
+			return nil
+		case <-time.After(interval):
+		}
+	}
 }
 
 // resolveAgentPodName looks up an agent bead by name and returns its pod name.
