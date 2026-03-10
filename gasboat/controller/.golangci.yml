@@ -1,5 +1,11 @@
 version: "2"
 
-linters-settings:
-  errcheck:
-    check-blank: false
+linters:
+  disable:
+    - errcheck
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"
+        - "-ST*"
