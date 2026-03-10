@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	peekPlain bool
-	peekANSI  bool
+	peekPlain  bool
+	peekANSI   bool
+	peekStatus bool
 )
 
 var peekCmd = &cobra.Command{
@@ -37,6 +38,7 @@ Requires COOP_MUX_URL to be set (and optionally COOP_MUX_TOKEN for auth).`,
 func init() {
 	peekCmd.Flags().BoolVar(&peekPlain, "plain", false, "plain text output (no ANSI escape codes)")
 	peekCmd.Flags().BoolVar(&peekANSI, "ansi", false, "force ANSI-colored output")
+	peekCmd.Flags().BoolVar(&peekStatus, "status", false, "show session status details")
 	peekCmd.MarkFlagsMutuallyExclusive("plain", "ansi")
 }
 
@@ -50,6 +52,10 @@ func runPeek(cmd *cobra.Command, args []string) error {
 
 	if len(args) == 0 {
 		return peekListSessions(client, muxURL, token)
+	}
+
+	if peekStatus {
+		return peekShowStatus(client, muxURL, token, args[0])
 	}
 	return peekShowScreen(client, muxURL, token, args[0])
 }
@@ -254,6 +260,81 @@ func isTerminal() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// peekShowStatus shows the status of a session.
+func peekShowStatus(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	resp, err := muxGet(client, muxURL+"/api/v1/sessions/"+sessionID+"/status", token)
+	if err != nil {
+		return fmt.Errorf("fetching status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coopmux returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var status peekSessionStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		fmt.Println(string(body))
+		return nil
+	}
+
+	if jsonOutput {
+		printJSON(status)
+		return nil
+	}
+
+	fmt.Printf("Session:       %s\n", status.SessionID)
+	fmt.Printf("State:         %s\n", status.State)
+	if status.PID != nil {
+		fmt.Printf("PID:           %d\n", *status.PID)
+	}
+	fmt.Printf("Uptime:        %s\n", peekFormatDuration(status.UptimeSecs))
+	if status.ExitCode != nil {
+		fmt.Printf("Exit Code:     %d\n", *status.ExitCode)
+	}
+	fmt.Printf("Screen Seq:    %d\n", status.ScreenSeq)
+	fmt.Printf("Bytes Read:    %s\n", formatBytes(status.BytesRead))
+	fmt.Printf("Bytes Written: %s\n", formatBytes(status.BytesWritten))
+	fmt.Printf("WS Clients:    %d\n", status.WSClients)
+
+	return nil
+}
+
+// peekFormatDuration formats seconds into a human-readable duration.
+func peekFormatDuration(secs int64) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	if secs < 3600 {
+		return fmt.Sprintf("%dm%ds", secs/60, secs%60)
+	}
+	return fmt.Sprintf("%dh%dm%ds", secs/3600, (secs%3600)/60, secs%60)
+}
+
+// formatBytes formats a byte count into a human-readable string.
+func formatBytes(b uint64) string {
+	switch {
+	case b < 1024:
+		return fmt.Sprintf("%d B", b)
+	case b < 1024*1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	case b < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1024*1024*1024))
+	}
+}
+
 // resolveAgentPodName looks up an agent bead by name and returns its pod name.
 // Returns empty string if the agent is not found or has no pod.
 func resolveAgentPodName(agentName string) string {
@@ -315,4 +396,17 @@ type peekScreenSnapshot struct {
 	Rows      int      `json:"rows"`
 	AltScreen bool     `json:"alt_screen"`
 	Seq       uint64   `json:"seq"`
+}
+
+type peekSessionStatus struct {
+	SessionID    string `json:"session_id"`
+	State        string `json:"state"`
+	PID          *int32 `json:"pid,omitempty"`
+	UptimeSecs   int64  `json:"uptime_secs"`
+	ExitCode     *int32 `json:"exit_code,omitempty"`
+	ScreenSeq    uint64 `json:"screen_seq"`
+	BytesRead    uint64 `json:"bytes_read"`
+	BytesWritten uint64 `json:"bytes_written"`
+	WSClients    int32  `json:"ws_clients"`
+	FetchedAt    uint64 `json:"fetched_at"`
 }
