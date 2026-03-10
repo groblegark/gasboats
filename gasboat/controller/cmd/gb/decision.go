@@ -93,6 +93,22 @@ var decisionCreateCmd = &cobra.Command{
 			return fmt.Errorf("creating decision: %w", err)
 		}
 
+		// Satisfy the decision gate immediately — creating a decision IS the
+		// checkpoint. The agent can stop cleanly; decision resolution will nudge
+		// it back via the Slack bridge.
+		if agentID != "" {
+			satisfyCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			if err := daemon.SatisfyGate(satisfyCtx, agentID, "decision"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to satisfy decision gate: %v\n", err)
+			}
+			if err := daemon.UpdateBeadFields(satisfyCtx, agentID, map[string]string{
+				"gate_satisfied_by": "yield",
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to set gate_satisfied_by: %v\n", err)
+			}
+		}
+
 		if jsonOutput {
 			printJSON(map[string]string{"id": id})
 		} else {
