@@ -260,15 +260,17 @@ RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHI
     cp /tmp/whisper-build/bin/whisper-cli /usr/local/bin/whisper-cli && \
     rm -rf /tmp/whisper.cpp-${WHISPER_CPP_VERSION} /tmp/whisper-build
 
-# ── Playwright + Chromium + MCP server (headless browser automation) ──
+# ── Playwright + Chromium + Chrome + MCP server (headless browser automation) ──
 # NOTE: apt lists were cleaned after the system packages step above,
 # so we must re-run apt-get update before --with-deps can install
-# Chromium's system library dependencies (libglib, libnss3, etc.).
+# browser system library dependencies (libglib, libnss3, etc.).
+# Both chromium and chrome are installed because @playwright/mcp
+# defaults to --browser=chrome (Chrome for Testing).
 ARG PLAYWRIGHT_VERSION=1.58.2
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
-    npx playwright install --with-deps chromium && \
+    npx playwright install --with-deps chromium chrome && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
     chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}

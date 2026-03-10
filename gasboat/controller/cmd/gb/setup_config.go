@@ -115,6 +115,9 @@ func expandEnvVars(s string) string {
 
 // defaultMCPConfig returns a fallback MCP config with Playwright if the
 // playwright-mcp binary is on PATH. Returns nil if not found.
+// Uses --browser=chromium to ensure the bundled Chromium browser is used,
+// which is always available in the agent image (unlike Chrome for Testing
+// which @playwright/mcp defaults to).
 func defaultMCPConfig() map[string]any {
 	if !pathExists("playwright-mcp") {
 		return nil
@@ -123,7 +126,7 @@ func defaultMCPConfig() map[string]any {
 		"mcpServers": map[string]any{
 			"playwright": map[string]any{
 				"command": "playwright-mcp",
-				"args":    []any{"--headless", "--no-sandbox"},
+				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox"},
 			},
 		},
 	}
