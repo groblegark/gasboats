@@ -73,14 +73,10 @@ When multiple agents are running, always follow this sequence to avoid duplicati
 One canonical path. Template: `kd formula apply kd-GwMFKXnPvR --var version=YYYY.DDD.N`
 
 ```bash
-# 1. Tag coop with the gasboat calver (coop CI builds + pushes the image)
-cd ~/coop && git tag <TAG> && git push origin <TAG>
-# 2. Build kbeads at the gasboat calver (builds from HEAD of main, includes all unreleased commits)
-gh workflow run ci.yml -R groblegark/kbeads -f version=<TAG>
-# 3. Release gasboat (after coop + kbeads CI complete)
-cd ~/gasboat && make release          # bump Chart.yaml, commit, tag
-git push origin main <TAG>            # triggers all CI automatically:
-#   - RWX docker.yml: builds + pushes all 6 images to GHCR
+# All components are in the monorepo — one tag releases everything
+./scripts/release.sh              # bump Chart.yaml, commit, tag
+git push origin main <TAG>        # triggers all CI automatically:
+#   - RWX docker.yml: builds + pushes all 10 images from source to GHCR
 #   - RWX helm.yml: packages + pushes Helm chart to oci://ghcr.io/groblegark/charts
 #   - GitHub release.yml: creates GitHub Release + triggers fics-helm-chart deploy
 #   - RWX E2E auto-dispatches; failures become bug beads
@@ -88,7 +84,7 @@ git push origin main <TAG>            # triggers all CI automatically:
 
 **Emergency manual fallback** (only if RWX CI is down):
 ```bash
-make push-all                         # build + push all 6 images locally
+make push-all                         # build + push all images locally
 helm package helm/gasboat/ --version <TAG> --app-version <TAG>
 helm push gasboat-<TAG>.tgz oci://ghcr.io/groblegark/charts
 gh release create <TAG> --generate-notes
@@ -168,17 +164,22 @@ Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`
 - **dpkg copy loop**: When adding apt packages to `agent-install-syspackages`, also add the package name to the `for pkg in ...` dpkg loop AND add the binary to the `for bin in ...` ldd loop. Missing these causes shared library errors at runtime.
 - **Go template `default` with empty strings**: Helm's `default` function does NOT treat empty string as falsy. Use `{{ if .Values.x }}{{ .Values.x }}{{ else }}{{ .Chart.AppVersion }}{{ end }}` instead of `{{ .Values.x | default .Chart.AppVersion }}`.
 
-### External Dependencies (coopmux, kbeads, beads3d)
+### All Images Built From Monorepo Source
 
-Sister-project images are tagged with the gasboat calver so all images share the same version:
+All images are built from source in the monorepo's `.rwx/docker.yml` — no cross-repo dispatch needed. The monorepo CI produces all 10 images under `ghcr.io/groblegark/gasboats/`:
 
-| Image | Source | How it gets the gasboat calver |
-|---|---|---|
-| `ghcr.io/groblegark/coop:<calver>` | groblegark/coop | Tag coop with gasboat calver → coop CI pushes image |
-| `ghcr.io/groblegark/kbeads:<calver>` | groblegark/kbeads | `build-kbeads` triggers kbeads CI via `workflow_dispatch` → builds from HEAD of main |
-| `ghcr.io/groblegark/beads3d:<calver>` | groblegark/beads3d | `retag-beads3d` copies `:latest` → `:<calver>` |
-
-**Coopmux** is tagged directly at the source (coop repo) with the gasboat calver before the gasboat release. This ensures a deterministic, pinned image — no rolling tags.
+| Image | Source directory |
+|---|---|
+| `controller` | `gasboat/controller/` |
+| `agent` | `gasboat/images/agent/` |
+| `slack-bridge` | `gasboat/images/slack-bridge/` |
+| `jira-bridge` | `gasboat/images/jira-bridge/` |
+| `gitlab-bridge` | `gasboat/images/gitlab-bridge/` |
+| `advice-viewer` | `gasboat/images/advice-viewer/` |
+| `kbeads` | `kbeads/` |
+| `coop` | `coop/` |
+| `coopmux` | `coop/` |
+| `beads3d` | `beads3d/` |
 
 ## Commits
 
