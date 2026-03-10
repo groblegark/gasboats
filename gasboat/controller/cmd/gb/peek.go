@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +16,15 @@ import (
 )
 
 var (
-	peekPlain  bool
-	peekANSI   bool
-	peekStatus bool
+	peekPlain      bool
+	peekANSI       bool
+	peekStatus     bool
+	peekOutput     bool
+	peekTail       int64
+	peekOffset     int64
+	peekLimit      int64
+	peekTranscript string
+	peekRecording  bool
 )
 
 var peekCmd = &cobra.Command{
@@ -39,6 +47,12 @@ func init() {
 	peekCmd.Flags().BoolVar(&peekPlain, "plain", false, "plain text output (no ANSI escape codes)")
 	peekCmd.Flags().BoolVar(&peekANSI, "ansi", false, "force ANSI-colored output")
 	peekCmd.Flags().BoolVar(&peekStatus, "status", false, "show session status details")
+	peekCmd.Flags().BoolVar(&peekOutput, "output", false, "show raw PTY output from ring buffer")
+	peekCmd.Flags().Int64Var(&peekTail, "tail", 0, "show last N bytes of raw output")
+	peekCmd.Flags().Int64Var(&peekOffset, "offset", -1, "start output from byte offset")
+	peekCmd.Flags().Int64Var(&peekLimit, "limit", 0, "limit output to N bytes")
+	peekCmd.Flags().StringVar(&peekTranscript, "transcripts", "", "list transcripts or fetch by number (list, latest, or N)")
+	peekCmd.Flags().BoolVar(&peekRecording, "recording", false, "show recording status and entries")
 	peekCmd.MarkFlagsMutuallyExclusive("plain", "ansi")
 }
 
@@ -54,10 +68,19 @@ func runPeek(cmd *cobra.Command, args []string) error {
 		return peekListSessions(client, muxURL, token)
 	}
 
-	if peekStatus {
-		return peekShowStatus(client, muxURL, token, args[0])
+	target := args[0]
+	switch {
+	case peekStatus:
+		return peekShowStatus(client, muxURL, token, target)
+	case peekOutput || peekTail > 0:
+		return peekShowOutput(client, muxURL, token, target)
+	case cmd.Flags().Changed("transcripts"):
+		return peekShowTranscripts(client, muxURL, token, target)
+	case peekRecording:
+		return peekShowRecording(client, muxURL, token, target)
+	default:
+		return peekShowScreen(client, muxURL, token, target)
 	}
-	return peekShowScreen(client, muxURL, token, args[0])
 }
 
 // resolveMuxEnv reads and validates the required coopmux env vars.
@@ -335,6 +358,178 @@ func formatBytes(b uint64) string {
 	}
 }
 
+// peekShowOutput dumps raw PTY output from the ring buffer.
+func peekShowOutput(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	// Build query params.
+	params := make([]string, 0, 3)
+	if peekTail > 0 {
+		// For --tail, first get total_written to calculate offset.
+		infoResp, err := muxGet(client, muxURL+"/api/v1/sessions/"+sessionID+"/output", token)
+		if err != nil {
+			return fmt.Errorf("fetching output info: %w", err)
+		}
+		defer infoResp.Body.Close()
+		infoBody, _ := io.ReadAll(infoResp.Body)
+		var info peekOutputResponse
+		if err := json.Unmarshal(infoBody, &info); err == nil && info.TotalWritten > uint64(peekTail) {
+			params = append(params, "offset="+strconv.FormatUint(info.TotalWritten-uint64(peekTail), 10))
+		}
+	} else if peekOffset >= 0 {
+		params = append(params, "offset="+strconv.FormatInt(peekOffset, 10))
+	}
+	if peekLimit > 0 {
+		params = append(params, "limit="+strconv.FormatInt(peekLimit, 10))
+	}
+
+	url := muxURL + "/api/v1/sessions/" + sessionID + "/output"
+	if len(params) > 0 {
+		url += "?" + strings.Join(params, "&")
+	}
+
+	resp, err := muxGet(client, url, token)
+	if err != nil {
+		return fmt.Errorf("fetching output: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coopmux returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var output peekOutputResponse
+	if err := json.Unmarshal(body, &output); err != nil {
+		fmt.Println(string(body))
+		return nil
+	}
+
+	if jsonOutput {
+		printJSON(output)
+		return nil
+	}
+
+	// Decode base64 data and write raw bytes to stdout.
+	decoded, err := base64.StdEncoding.DecodeString(output.Data)
+	if err != nil {
+		return fmt.Errorf("decoding output data: %w", err)
+	}
+	os.Stdout.Write(decoded)
+
+	// Show metadata on stderr.
+	fmt.Fprintf(os.Stderr, "[offset=%d next=%d total=%d (%s)]\n",
+		output.Offset, output.NextOffset, output.TotalWritten,
+		formatBytes(output.TotalWritten))
+
+	return nil
+}
+
+// peekShowTranscripts lists or fetches transcript snapshots.
+func peekShowTranscripts(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	baseURL := muxURL + "/api/v1/sessions/" + sessionID + "/transcripts"
+
+	switch peekTranscript {
+	case "", "list":
+		// List all transcripts.
+		resp, err := muxGet(client, baseURL, token)
+		if err != nil {
+			return fmt.Errorf("listing transcripts: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("coopmux returned HTTP %d: %s", resp.StatusCode, string(body))
+		}
+		if jsonOutput {
+			fmt.Println(string(body))
+			return nil
+		}
+		var transcripts []peekTranscriptMeta
+		if err := json.Unmarshal(body, &transcripts); err != nil {
+			fmt.Println(string(body))
+			return nil
+		}
+		if len(transcripts) == 0 {
+			fmt.Println("No transcripts available.")
+			return nil
+		}
+		fmt.Printf("%-8s %-24s %-10s %s\n", "NUMBER", "TIMESTAMP", "LINES", "SIZE")
+		fmt.Println(strings.Repeat("-", 60))
+		for _, t := range transcripts {
+			fmt.Printf("%-8d %-24s %-10d %s\n", t.Number, t.Timestamp, t.LineCount, formatBytes(t.ByteSize))
+		}
+		fmt.Printf("\n%d transcript(s)\n", len(transcripts))
+	default:
+		// Fetch specific transcript by number.
+		resp, err := muxGet(client, baseURL+"/"+peekTranscript, token)
+		if err != nil {
+			return fmt.Errorf("fetching transcript: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("coopmux returned HTTP %d: %s", resp.StatusCode, string(body))
+		}
+		fmt.Println(string(body))
+	}
+	return nil
+}
+
+// peekShowRecording shows recording status and entries.
+func peekShowRecording(client *http.Client, muxURL, token, target string) error {
+	sessionID, err := resolveSessionTarget(client, muxURL, token, target)
+	if err != nil {
+		return err
+	}
+
+	resp, err := muxGet(client, muxURL+"/api/v1/sessions/"+sessionID+"/recording", token)
+	if err != nil {
+		return fmt.Errorf("fetching recording: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coopmux returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	if jsonOutput {
+		fmt.Println(string(body))
+		return nil
+	}
+
+	var status peekRecordingStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		fmt.Println(string(body))
+		return nil
+	}
+
+	fmt.Printf("Recording:  %v\n", status.Enabled)
+	if status.Path != nil {
+		fmt.Printf("Path:       %s\n", *status.Path)
+	}
+	fmt.Printf("Entries:    %d\n", status.Entries)
+
+	return nil
+}
+
 // resolveAgentPodName looks up an agent bead by name and returns its pod name.
 // Returns empty string if the agent is not found or has no pod.
 func resolveAgentPodName(agentName string) string {
@@ -409,4 +604,24 @@ type peekSessionStatus struct {
 	BytesWritten uint64 `json:"bytes_written"`
 	WSClients    int32  `json:"ws_clients"`
 	FetchedAt    uint64 `json:"fetched_at"`
+}
+
+type peekOutputResponse struct {
+	Data         string `json:"data"`
+	Offset       uint64 `json:"offset"`
+	NextOffset   uint64 `json:"next_offset"`
+	TotalWritten uint64 `json:"total_written"`
+}
+
+type peekTranscriptMeta struct {
+	Number    uint32 `json:"number"`
+	Timestamp string `json:"timestamp"`
+	LineCount uint64 `json:"line_count"`
+	ByteSize  uint64 `json:"byte_size"`
+}
+
+type peekRecordingStatus struct {
+	Enabled bool    `json:"enabled"`
+	Path    *string `json:"path,omitempty"`
+	Entries uint64  `json:"entries"`
 }
