@@ -524,6 +524,54 @@ func TestGenerateSpawnName(t *testing.T) {
 	}
 }
 
+func TestExtractSpawnFlags(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantPos     []string
+		wantRole    string
+		wantProject string
+	}{
+		{"no flags", []string{"kd-abc"}, []string{"kd-abc"}, "", ""},
+		{"role flag", []string{"--role", "captain"}, nil, "captain", ""},
+		{"role=", []string{"--role=captain"}, nil, "captain", ""},
+		{"project flag", []string{"--project", "gasboat"}, nil, "", "gasboat"},
+		{"project=", []string{"--project=gasboat"}, nil, "", "gasboat"},
+		{"both flags", []string{"--project", "gasboat", "--role", "captain"}, nil, "captain", "gasboat"},
+		{"flags with positional", []string{"kd-abc", "--project", "gasboat", "--role", "ops"}, []string{"kd-abc"}, "ops", "gasboat"},
+		{"empty", nil, nil, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Make a copy of args since extractSpawnFlags reuses the backing array.
+			argsCopy := make([]string, len(tc.args))
+			copy(argsCopy, tc.args)
+			pos, role, project := extractSpawnFlags(argsCopy)
+			if len(pos) == 0 {
+				pos = nil
+			}
+			if len(tc.wantPos) == 0 {
+				tc.wantPos = nil
+			}
+			if len(pos) != len(tc.wantPos) {
+				t.Errorf("positional: got %v (len %d), want %v (len %d)", pos, len(pos), tc.wantPos, len(tc.wantPos))
+			} else {
+				for i := range pos {
+					if pos[i] != tc.wantPos[i] {
+						t.Errorf("positional[%d]: got %q, want %q", i, pos[i], tc.wantPos[i])
+					}
+				}
+			}
+			if role != tc.wantRole {
+				t.Errorf("role: got %q, want %q", role, tc.wantRole)
+			}
+			if project != tc.wantProject {
+				t.Errorf("project: got %q, want %q", project, tc.wantProject)
+			}
+		})
+	}
+}
+
 // --- Slash command routing test ---
 
 func TestHandleSlashCommand_RoutesStartAndSpawn(t *testing.T) {
@@ -634,4 +682,281 @@ func TestHandleSpawnCommand_SmartQuotes_PassesPrompt(t *testing.T) {
 		}
 	}
 	t.Errorf("expected agent bead to have prompt field 'fix the helm chart'")
+}
+
+// --- /spawn --project flag tests ---
+
+func TestHandleSpawnCommand_ProjectFlag_OverridesChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("monorepo", "C-MONO")
+	daemon.seedProject("gasboat")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// Channel maps to monorepo, but --project says gasboat.
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "--project gasboat",
+		ChannelID: "C-MONO",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["project"] != "gasboat" {
+			t.Errorf("expected project=gasboat (from --project flag), got %s", b.Fields["project"])
+		}
+		// Name should use gasboat prefix.
+		if !strings.HasPrefix(b.Title, "gasboat-") {
+			t.Errorf("expected name with prefix 'gasboat-', got %q", b.Title)
+		}
+	}
+}
+
+func TestHandleSpawnCommand_ProjectFlagEquals_OverridesChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("monorepo", "C-MONO")
+	daemon.seedProject("gasboat")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// --project=gasboat syntax
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "--project=gasboat",
+		ChannelID: "C-MONO",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["project"] != "gasboat" {
+			t.Errorf("expected project=gasboat (from --project=), got %s", b.Fields["project"])
+		}
+	}
+}
+
+func TestHandleSpawnCommand_ProjectFlag_WithTask(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProject("gasboat")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// /spawn --project gasboat "fix the auth flow"
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      `--project gasboat "fix the auth flow"`,
+		ChannelID: "C-RANDOM",
+		UserID:    "U456",
+	})
+
+	taskBeads := filterBeadsByType(daemon.beads, "task")
+	if len(taskBeads) != 1 {
+		t.Fatalf("expected 1 task bead created, got %d", len(taskBeads))
+	}
+	for _, b := range taskBeads {
+		if !containsLabel(b.Labels, "project:gasboat") {
+			t.Errorf("expected task to have label project:gasboat, got %v", b.Labels)
+		}
+	}
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["project"] != "gasboat" {
+			t.Errorf("expected project=gasboat, got %s", b.Fields["project"])
+		}
+	}
+}
+
+func TestHandleSpawnCommand_ProjectFlag_WithRole(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProject("gasboat")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// /spawn --project gasboat --role captain
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "--project gasboat --role captain",
+		ChannelID: "C-RANDOM",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["project"] != "gasboat" {
+			t.Errorf("expected project=gasboat, got %s", b.Fields["project"])
+		}
+		if b.Fields["role"] != "captain" {
+			t.Errorf("expected role=captain, got %s", b.Fields["role"])
+		}
+	}
+}
+
+func TestHandleSpawnCommand_ProjectFlag_NoChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProject("gasboat")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	// /spawn --project gasboat from an unmapped channel
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "--project gasboat",
+		ChannelID: "C-UNMAPPED",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["project"] != "gasboat" {
+			t.Errorf("expected project=gasboat (from --project in unmapped channel), got %s", b.Fields["project"])
+		}
+	}
+}
+
+// --- resolveChannel project-aware tests ---
+
+func TestResolveChannel_AgentProject_UsesProjectPrimaryChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+
+	// Cache the project for the agent.
+	bot.agentProject["my-agent"] = "gasboat"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-GASBOAT" {
+		t.Errorf("expected C-GASBOAT (project primary channel), got %q", result)
+	}
+}
+
+func TestResolveChannel_AgentProject_NoChannelConfig_FallsBack(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProject("gasboat") // No channel configured
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+
+	bot.agentProject["my-agent"] = "gasboat"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-DEFAULT" {
+		t.Errorf("expected C-DEFAULT (no project channel), got %q", result)
+	}
+}
+
+func TestResolveChannel_AgentProject_UnknownProject_FallsBack(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+
+	bot.agentProject["my-agent"] = "nonexistent"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-DEFAULT" {
+		t.Errorf("expected C-DEFAULT (unknown project), got %q", result)
+	}
+}
+
+func TestResolveChannel_RouterOverride_TakesPrecedenceOverProject(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+	bot.router = NewRouter(RouterConfig{
+		DefaultChannel: "C-ROUTER-DEFAULT",
+		Overrides: map[string]string{
+			"my-agent": "C-OVERRIDE",
+		},
+	})
+
+	bot.agentProject["my-agent"] = "gasboat"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-OVERRIDE" {
+		t.Errorf("expected C-OVERRIDE (router override > project), got %q", result)
+	}
+}
+
+func TestResolveChannel_RouterPatternMatch_TakesPrecedenceOverProject(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+	bot.router = NewRouter(RouterConfig{
+		DefaultChannel: "C-ROUTER-DEFAULT",
+		Channels: map[string]string{
+			"gasboat/crew/*": "C-CREW",
+		},
+	})
+
+	bot.agentProject["my-agent"] = "gasboat"
+
+	// Pattern match "gasboat/crew/*" should take precedence over project channel
+	result := bot.resolveChannel("gasboat/crew/my-agent")
+	if result != "C-CREW" {
+		t.Errorf("expected C-CREW (router pattern > project), got %q", result)
+	}
+}
+
+func TestResolveChannel_ProjectChannel_OverridesRouterDefault(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+	bot.router = NewRouter(RouterConfig{
+		DefaultChannel: "C-ROUTER-DEFAULT",
+	})
+
+	bot.agentProject["my-agent"] = "gasboat"
+
+	// No router pattern matches, project channel should override router default
+	result := bot.resolveChannel("my-agent")
+	if result != "C-GASBOAT" {
+		t.Errorf("expected C-GASBOAT (project channel > router default), got %q", result)
+	}
 }

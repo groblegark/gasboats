@@ -42,31 +42,20 @@ func (b *Bot) handleSlashCommand(ctx context.Context, cmd slack.SlashCommand) {
 }
 
 // handleSpawnCommand processes the /spawn slash command.
-// Usage: /spawn [task|ticket] [--role <role>]
+// Usage: /spawn [task|ticket] [--role <role>] [--project <project>]
 //
 // The new /spawn does NOT require an agent name — it auto-generates one.
 // Project is inferred from the channel's default project (via project beads'
-// slack_channel field). If no channel mapping exists, the user must use /start
-// which accepts an explicit agent name and project.
+// slack_channel field), unless --project is specified to override.
 func (b *Bot) handleSpawnCommand(ctx context.Context, cmd slack.SlashCommand) {
 	args := splitQuotedArgs(strings.TrimSpace(cmd.Text))
+	positional, role, projectFlag := extractSpawnFlags(args)
 
-	// Extract --role flag from args, leaving positional args intact.
-	role := ""
-	positional := args[:0]
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--role" && i+1 < len(args) {
-			role = args[i+1]
-			i++ // skip value
-		} else if v, ok := strings.CutPrefix(args[i], "--role="); ok {
-			role = v
-		} else {
-			positional = append(positional, args[i])
-		}
+	// Resolve project: explicit --project flag overrides channel inference.
+	project := projectFlag
+	if project == "" {
+		project = b.projectFromChannel(ctx, cmd.ChannelID)
 	}
-
-	// Resolve project from channel.
-	project := b.projectFromChannel(ctx, cmd.ChannelID)
 
 	taskID := ""
 
@@ -203,9 +192,9 @@ func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, 
 }
 
 // handleStartCommand processes the /start slash command.
-// Usage: /start <agent> [project|ticket|"PROMPT TEXT"] [task] [--role <role>]
+// Usage: /start <agent> [project|ticket|"PROMPT TEXT"] [task] [--role <role>] [--project <project>]
 //
-//	/start "task description" [project] [--role <role>]
+//	/start "task description" [project] [--role <role>] [--project <project>]
 //
 // This is the original /spawn behavior, preserved for power users who want to
 // specify an explicit agent name.
@@ -213,23 +202,11 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 	args := splitQuotedArgs(strings.TrimSpace(cmd.Text))
 	if len(args) == 0 {
 		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(":x: Usage: `/start <agent> [project|ticket|\"PROMPT TEXT\"] [task] [--role <role>]`\nor: `/start \"task description\" [project] [--role <role>]`", false))
+			slack.MsgOptionText(":x: Usage: `/start <agent> [project|ticket|\"PROMPT TEXT\"] [task] [--role <role>] [--project <project>]`\nor: `/start \"task description\" [project] [--role <role>]`", false))
 		return
 	}
 
-	// Extract --role flag from args, leaving positional args intact.
-	role := ""
-	positional := args[:0]
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--role" && i+1 < len(args) {
-			role = args[i+1]
-			i++ // skip value
-		} else if v, ok := strings.CutPrefix(args[i], "--role="); ok {
-			role = v
-		} else {
-			positional = append(positional, args[i])
-		}
-	}
+	positional, role, projectFlag := extractSpawnFlags(args)
 
 	// Task-first mode: if the first positional arg contains spaces, it was a
 	// quoted task description rather than an agent name.
@@ -278,6 +255,11 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 
 	if len(positional) >= 3 && taskID == "" {
 		taskID = positional[2]
+	}
+
+	// Explicit --project flag overrides any inferred project.
+	if projectFlag != "" {
+		project = projectFlag
 	}
 
 	// Validate project exists.
@@ -388,6 +370,29 @@ func randomSuffix(n int) string {
 		b[i] = chars[rand.IntN(len(chars))]
 	}
 	return string(b)
+}
+
+// extractSpawnFlags extracts --role and --project flags from a split arg list,
+// returning the remaining positional args and the extracted flag values.
+// Supports both "--flag value" and "--flag=value" syntax.
+func extractSpawnFlags(args []string) (positional []string, role, project string) {
+	positional = args[:0]
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--role" && i+1 < len(args) {
+			role = args[i+1]
+			i++ // skip value
+		} else if v, ok := strings.CutPrefix(args[i], "--role="); ok {
+			role = v
+		} else if args[i] == "--project" && i+1 < len(args) {
+			project = args[i+1]
+			i++ // skip value
+		} else if v, ok := strings.CutPrefix(args[i], "--project="); ok {
+			project = v
+		} else {
+			positional = append(positional, args[i])
+		}
+	}
+	return
 }
 
 // splitQuotedArgs splits a command string into arguments, respecting double-quoted

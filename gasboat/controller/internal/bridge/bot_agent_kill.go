@@ -59,6 +59,7 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 		delete(b.agentPodName, agentName)
 		delete(b.agentImageTag, agentName)
 		delete(b.agentRole, agentName)
+		delete(b.agentProject, agentName)
 	}
 	b.mu.Unlock()
 
@@ -174,6 +175,7 @@ func (b *Bot) handleClearAgent(ctx context.Context, agentIdentity string, callba
 		delete(b.agentPodName, agentIdentity)
 		delete(b.agentImageTag, agentIdentity)
 		delete(b.agentRole, agentIdentity)
+		delete(b.agentProject, agentIdentity)
 	}
 	b.mu.Unlock()
 
