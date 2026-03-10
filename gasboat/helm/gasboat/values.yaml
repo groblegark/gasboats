@@ -112,6 +112,9 @@ agents:
   # Optional cluster-admin ServiceAccount for agent pods that need full cluster access.
   # Creates a separate SA + ClusterRoleBinding to the built-in cluster-admin ClusterRole.
   # Assign to specific projects via the project bead's service_account field.
+  # NOTE: Enabling this also grants the controller and agent SAs permission to manage
+  # the cluster-scoped ClusterRoleBinding. A cluster admin must run the first deploy
+  # after enabling this (bootstrap), then subsequent deploys work with normal SAs.
   clusterAdmin:
     enabled: false
     name: ""          # defaults to "<release>-agent-cluster-admin"
