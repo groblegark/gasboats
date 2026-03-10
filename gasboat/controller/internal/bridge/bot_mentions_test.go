@@ -1046,3 +1046,113 @@ func TestProjectFromAgentIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestParseThreadCommand(t *testing.T) {
+	tests := []struct {
+		text      string
+		wantCmd   string
+		wantForce bool
+	}{
+		{"kill", "kill", false},
+		{"stop", "stop", false},
+		{"restart", "restart", false},
+		{"kill --force", "kill", true},
+		{"stop --force", "stop", true},
+		{"  Kill  ", "kill", false},
+		{"RESTART", "restart", false},
+		// Not commands — contain extra words.
+		{"kill the deployment", "", false},
+		{"restart the agent now", "", false},
+		{"check the logs", "", false},
+		{"", "", false},
+		{"--force", "", false},
+	}
+
+	for _, tt := range tests {
+		cmd, force := parseThreadCommand(tt.text)
+		if cmd != tt.wantCmd || force != tt.wantForce {
+			t.Errorf("parseThreadCommand(%q) = (%q, %v), want (%q, %v)",
+				tt.text, cmd, force, tt.wantCmd, tt.wantForce)
+		}
+	}
+}
+
+func TestGetThreadAgentsByChannel(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add thread agents in two different channels.
+	_ = state.SetThreadAgent("C-general", "1111.2222", "thread-1111-2222")
+	_ = state.SetThreadAgent("C-general", "3333.4444", "thread-3333-4444")
+	_ = state.SetThreadAgent("C-other", "5555.6666", "thread-5555-6666")
+
+	agents := state.GetThreadAgentsByChannel("C-general")
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents in C-general, got %d", len(agents))
+	}
+
+	agents = state.GetThreadAgentsByChannel("C-other")
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent in C-other, got %d", len(agents))
+	}
+	if agents[0] != "thread-5555-6666" {
+		t.Errorf("expected thread-5555-6666, got %s", agents[0])
+	}
+
+	agents = state.GetThreadAgentsByChannel("C-nonexistent")
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents in nonexistent channel, got %d", len(agents))
+	}
+}
+
+func TestHandleMentionThreadCommand_CommandDispatch(t *testing.T) {
+	daemon := newMockDaemon()
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		botUserID:  "U-BOT",
+		agentCards: map[string]MessageRef{},
+	}
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C-test",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U-USER",
+		TimeStamp:       "9999.0001",
+	}
+
+	tests := []struct {
+		text    string
+		handled bool
+	}{
+		{"kill", true},
+		{"stop", true},
+		{"restart", true},
+		{"kill --force", true},
+		{"stop --force", true},
+		{"check the logs", false},
+		{"kill the deployment", false},
+		{"restart the server now", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		handled := b.handleMentionThreadCommand(context.Background(), ev, "thread-agent-1", tt.text)
+		if handled != tt.handled {
+			t.Errorf("handleMentionThreadCommand(%q) = %v, want %v", tt.text, handled, tt.handled)
+		}
+		// Give goroutines time to finish to avoid panics (kill/restart goroutines
+		// will fail on the mock daemon but that's expected).
+		time.Sleep(10 * time.Millisecond)
+	}
+}

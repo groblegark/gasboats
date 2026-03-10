@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -239,6 +240,20 @@ func (sm *StateManager) ClearAllThreadAgents() (int, error) {
 	n := len(sm.data.ThreadAgents)
 	sm.data.ThreadAgents = make(map[string]string)
 	return n, sm.saveLocked()
+}
+
+// GetThreadAgentsByChannel returns agent names for all threads in a given channel.
+func (sm *StateManager) GetThreadAgentsByChannel(channel string) []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	prefix := channel + ":"
+	var agents []string
+	for k, v := range sm.data.ThreadAgents {
+		if strings.HasPrefix(k, prefix) {
+			agents = append(agents, v)
+		}
+	}
+	return agents
 }
 
 // --- Listen Threads ---
