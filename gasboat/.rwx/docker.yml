@@ -748,13 +748,30 @@ tasks:
           mkdir -p "$OUT$(dirname "$lib")" && cp -a "$lib" "$OUT${lib}" 2>/dev/null || true
         done || true
       done
-      # Install Chromium + Chrome for Testing browsers.
-      # @playwright/mcp defaults to --browser=chrome, so Chrome must be present.
-      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx playwright install chromium chrome
+      # Install Chromium browser (managed by Playwright).
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx playwright install chromium
       chmod -R 777 $OUT/ms-playwright
+
+      # Install Google Chrome Stable (system browser at /opt/google/chrome/chrome).
+      # This is required for playwright-mcp --browser chrome --headless.
+      curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | sudo gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
+      echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+        | sudo tee /etc/apt/sources.list.d/google-chrome.list > /dev/null
+      sudo apt-get -y update
+      sudo apt-get -y install --no-install-recommends google-chrome-stable
+      # Copy Chrome and its dpkg-installed files to the layer
+      dpkg -L google-chrome-stable 2>/dev/null | while read -r f; do
+        [ -e "$f" ] || continue
+        [ -d "$f" ] && { mkdir -p "$OUT$f"; continue; }
+        mkdir -p "$OUT$(dirname "$f")" && cp -a "$f" "$OUT${f}" 2>/dev/null || true
+      done || true
+
       # Final ldd sweep: resolve ALL shared libs needed by installed browser binaries.
       # This catches transitive deps that the dpkg/glob copies above may have missed.
-      find $OUT/ms-playwright -name chrome -type f -executable 2>/dev/null | while read -r bin; do
+      for bin in $(find $OUT/ms-playwright -name chrome -type f -executable 2>/dev/null) \
+                 /opt/google/chrome/chrome; do
+        [ -f "$bin" ] || continue
         ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
           [ -e "$lib" ] || continue
           [ -e "$OUT$lib" ] && continue  # already copied
@@ -962,6 +979,23 @@ tasks:
       sudo tar -xf ${{ tasks.agent-install-clis.artifacts.clis-tar }} -C $LAYER &
       wait
       echo "=== All layers unpacked ==="
+
+      # Restore usrmerge symlinks.
+      # ubuntu:24.04 base has /lib -> usr/lib, /bin -> usr/bin, /sbin -> usr/sbin.
+      # The layer tars create real /lib/, /bin/, /sbin/ directories (from ldd copy
+      # loops that follow the symlinks), which clobber the base image's symlinks
+      # when crane-appended as a flat layer. This breaks shared library resolution
+      # for any libs installed to /usr/lib/x86_64-linux-gnu/ (e.g., Playwright's
+      # browser deps: libnspr4, libnss3, libatk, etc.).
+      echo "=== Restoring usrmerge symlinks ==="
+      for dir in lib bin sbin; do
+        if [ -d "$LAYER/$dir" ] && ! [ -L "$LAYER/$dir" ]; then
+          sudo cp -a "$LAYER/$dir/"* "$LAYER/usr/$dir/" 2>/dev/null || true
+          sudo rm -rf "$LAYER/$dir"
+          ln -s "usr/$dir" "$LAYER/$dir"
+          echo "  $dir/ -> usr/$dir (merged $(find $LAYER/usr/$dir -type f 2>/dev/null | wc -l) files)"
+        fi
+      done
 
       # Project binaries (gb, coop, kd)
       echo "=== Adding project binaries ==="

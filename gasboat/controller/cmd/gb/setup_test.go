@@ -307,8 +307,11 @@ func TestWriteMCPConfig_DoesNotOverrideExistingServer(t *testing.T) {
 	servers := result["mcpServers"].(map[string]any)
 	pw := servers["playwright"].(map[string]any)
 	args := pw["args"].([]any)
-	if len(args) != 1 || args[0] != "--custom" {
-		t.Errorf("existing server should be preserved, got args=%v", args)
+	// Existing server is preserved (not overwritten by new config).
+	// fixPlaywrightBrowser adds --browser chromium since the existing
+	// config doesn't specify --browser.
+	if len(args) != 3 || args[0] != "--browser" || args[1] != "chromium" || args[2] != "--custom" {
+		t.Errorf("expected [--browser chromium --custom], got args=%v", args)
 	}
 }
 
@@ -639,6 +642,59 @@ func TestDefaultMCPConfig_PlaywrightNotFound(t *testing.T) {
 	config := defaultMCPConfig()
 	if config != nil {
 		t.Errorf("expected nil MCP config when playwright-mcp is not on PATH, got %v", config)
+	}
+}
+
+func TestFixPlaywrightBrowser_AddsBrowserWhenMissing(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"args":    []any{"--headless", "--no-sandbox"},
+		},
+	}
+
+	fixPlaywrightBrowser(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	args := cfg["args"].([]any)
+	if len(args) != 4 {
+		t.Fatalf("expected 4 args, got %d: %v", len(args), args)
+	}
+	if args[0] != "--browser" || args[1] != "chromium" {
+		t.Errorf("expected --browser chromium prepended, got %v %v", args[0], args[1])
+	}
+}
+
+func TestFixPlaywrightBrowser_SkipsWhenBrowserPresent(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"args":    []any{"--browser", "chrome", "--headless"},
+		},
+	}
+
+	fixPlaywrightBrowser(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	args := cfg["args"].([]any)
+	if len(args) != 3 {
+		t.Fatalf("expected 3 args (unchanged), got %d: %v", len(args), args)
+	}
+	if args[1] != "chrome" {
+		t.Errorf("expected browser=chrome to be preserved, got %v", args[1])
+	}
+}
+
+func TestFixPlaywrightBrowser_NoPlaywright(t *testing.T) {
+	servers := map[string]any{
+		"other-server": map[string]any{"command": "foo"},
+	}
+
+	// Should not panic or modify anything
+	fixPlaywrightBrowser(servers)
+
+	if _, ok := servers["playwright"]; ok {
+		t.Error("should not create playwright entry")
 	}
 }
 
