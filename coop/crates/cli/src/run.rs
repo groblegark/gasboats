@@ -357,7 +357,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
         };
         let transcripts_dir = restore_dir.join("transcripts");
 
-        match crate::s3::restore_transcripts(s3, source_session, &transcripts_dir).await {
+        match crate::s3::restore_transcripts(&**s3, source_session, &transcripts_dir).await {
             Ok(count) => info!(count, "s3: restored transcripts from S3"),
             Err(e) => warn!("s3: failed to restore transcripts: {e}"),
         }
@@ -365,7 +365,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
         // Download session log so --resume can discover it.
         let session_log_dest = restore_dir.join("session.jsonl");
         if let Err(e) =
-            crate::s3::restore_session_log(s3, source_session, &session_log_dest).await
+            crate::s3::restore_session_log(&**s3, source_session, &session_log_dest).await
         {
             warn!("s3: failed to restore session log: {e}");
         } else if config.resume.is_none() {

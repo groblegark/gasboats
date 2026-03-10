@@ -6,7 +6,11 @@
 //! When configured via `COOP_S3_BUCKET`, subscribes to broadcast channels
 //! and uploads session artifacts to S3 in real time. Supports downloading
 //! artifacts from S3 for session resume.
+//!
+//! The [`S3Storage`] trait abstracts storage operations so that tests can
+//! use an in-memory mock without requiring a real S3 endpoint.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +22,50 @@ use tracing::{info, warn};
 
 use crate::record::RecordingEntry;
 use crate::transcript::TranscriptEvent;
+
+/// Trait abstracting S3 storage operations for testability.
+///
+/// [`S3Client`] implements this for real AWS S3. Tests can supply a mock.
+pub trait S3Storage: Send + Sync + 'static {
+    fn upload_file(
+        &self,
+        session_id: &str,
+        s3_path: &str,
+        local_path: &Path,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn upload_bytes(
+        &self,
+        session_id: &str,
+        s3_path: &str,
+        data: Vec<u8>,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn download_file(
+        &self,
+        session_id: &str,
+        s3_path: &str,
+        local_path: &Path,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn list_transcripts(
+        &self,
+        session_id: &str,
+    ) -> impl Future<Output = anyhow::Result<Vec<u32>>> + Send;
+
+    fn upload_meta(
+        &self,
+        session_id: &str,
+        meta: &SessionMeta,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn download_meta(
+        &self,
+        session_id: &str,
+    ) -> impl Future<Output = anyhow::Result<Option<SessionMeta>>> + Send;
+
+    fn exists(&self, session_id: &str, s3_path: &str) -> impl Future<Output = bool> + Send;
+}
 
 /// S3 client wrapper for session persistence.
 pub struct S3Client {
@@ -41,19 +89,19 @@ pub struct SessionMeta {
 }
 
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 impl S3Client {
     /// Create a new S3 client from environment/IRSA credentials.
-    pub async fn new(bucket: String, prefix: String, region: Option<String>) -> anyhow::Result<Self> {
+    pub async fn new(
+        bucket: String,
+        prefix: String,
+        region: Option<String>,
+    ) -> anyhow::Result<Self> {
         let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
         if let Some(ref region) = region {
-            config_loader =
-                config_loader.region(aws_config::Region::new(region.clone()));
+            config_loader = config_loader.region(aws_config::Region::new(region.clone()));
         }
         let sdk_config = config_loader.load().await;
         let client = aws_sdk_s3::Client::new(&sdk_config);
@@ -73,9 +121,10 @@ impl S3Client {
     fn key(&self, session_id: &str, path: &str) -> String {
         format!("{}/{}/{}", self.prefix, session_id, path)
     }
+}
 
-    /// Upload a local file to S3.
-    pub async fn upload_file(
+impl S3Storage for S3Client {
+    async fn upload_file(
         &self,
         session_id: &str,
         s3_path: &str,
@@ -83,18 +132,11 @@ impl S3Client {
     ) -> anyhow::Result<()> {
         let key = self.key(session_id, s3_path);
         let body = aws_sdk_s3::primitives::ByteStream::from_path(local_path).await?;
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .body(body)
-            .send()
-            .await?;
+        self.client.put_object().bucket(&self.bucket).key(&key).body(body).send().await?;
         Ok(())
     }
 
-    /// Upload bytes to S3.
-    pub async fn upload_bytes(
+    async fn upload_bytes(
         &self,
         session_id: &str,
         s3_path: &str,
@@ -102,30 +144,18 @@ impl S3Client {
     ) -> anyhow::Result<()> {
         let key = self.key(session_id, s3_path);
         let body = aws_sdk_s3::primitives::ByteStream::from(data);
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .body(body)
-            .send()
-            .await?;
+        self.client.put_object().bucket(&self.bucket).key(&key).body(body).send().await?;
         Ok(())
     }
 
-    /// Download a file from S3 to a local path.
-    pub async fn download_file(
+    async fn download_file(
         &self,
         session_id: &str,
         s3_path: &str,
         local_path: &Path,
     ) -> anyhow::Result<()> {
         let key = self.key(session_id, s3_path);
-        let output = self.client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await?;
+        let output = self.client.get_object().bucket(&self.bucket).key(&key).send().await?;
         let bytes = output.body.collect().await?.into_bytes();
         if let Some(parent) = local_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -134,17 +164,13 @@ impl S3Client {
         Ok(())
     }
 
-    /// List transcript numbers available in S3 for a session.
-    pub async fn list_transcripts(&self, session_id: &str) -> anyhow::Result<Vec<u32>> {
+    async fn list_transcripts(&self, session_id: &str) -> anyhow::Result<Vec<u32>> {
         let prefix = self.key(session_id, "transcripts/");
         let mut numbers = Vec::new();
         let mut continuation = None;
 
         loop {
-            let mut req = self.client
-                .list_objects_v2()
-                .bucket(&self.bucket)
-                .prefix(&prefix);
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix);
             if let Some(token) = continuation {
                 req = req.continuation_token(token);
             }
@@ -176,18 +202,12 @@ impl S3Client {
         Ok(numbers)
     }
 
-    /// Upload session metadata to S3.
-    pub async fn upload_meta(
-        &self,
-        session_id: &str,
-        meta: &SessionMeta,
-    ) -> anyhow::Result<()> {
+    async fn upload_meta(&self, session_id: &str, meta: &SessionMeta) -> anyhow::Result<()> {
         let json = serde_json::to_vec_pretty(meta)?;
         self.upload_bytes(session_id, "meta.json", json).await
     }
 
-    /// Download session metadata from S3.
-    pub async fn download_meta(&self, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
+    async fn download_meta(&self, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
         let key = self.key(session_id, "meta.json");
         match self.client.get_object().bucket(&self.bucket).key(&key).send().await {
             Ok(output) => {
@@ -199,16 +219,9 @@ impl S3Client {
         }
     }
 
-    /// Check if an object exists in S3.
-    pub async fn exists(&self, session_id: &str, s3_path: &str) -> bool {
+    async fn exists(&self, session_id: &str, s3_path: &str) -> bool {
         let key = self.key(session_id, s3_path);
-        self.client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await
-            .is_ok()
+        self.client.head_object().bucket(&self.bucket).key(&key).send().await.is_ok()
     }
 }
 
@@ -217,8 +230,8 @@ impl S3Client {
 /// Listens to transcript and recording broadcast channels and uploads
 /// artifacts to S3 as they are created. Also periodically uploads the
 /// session log for crash resilience.
-pub fn spawn_subscriber(
-    s3: Arc<S3Client>,
+pub fn spawn_subscriber<S: S3Storage>(
+    s3: Arc<S>,
     session_id: String,
     session_dir: Option<PathBuf>,
     transcript_tx: &broadcast::Sender<TranscriptEvent>,
@@ -271,9 +284,9 @@ pub fn spawn_subscriber(
             tokio::select! {
                 _ = sd.cancelled() => {
                     // Final flush on shutdown.
-                    flush_recording_buffer(&s3_main, &sid_main, &mut recording_buffer).await;
-                    upload_session_log(&s3_main, &sid_main, session_log_path.as_deref()).await;
-                    upload_event_logs(&s3_main, &sid_main, session_dir.as_deref()).await;
+                    flush_recording_buffer(&*s3_main, &sid_main, &mut recording_buffer).await;
+                    upload_session_log(&*s3_main, &sid_main, session_log_path.as_deref()).await;
+                    upload_event_logs(&*s3_main, &sid_main, session_dir.as_deref()).await;
                     break;
                 }
 
@@ -294,7 +307,7 @@ pub fn spawn_subscriber(
 
                             // Also upload session log after each transcript save
                             // (the session log changes when context compacts).
-                            upload_session_log(&s3_main, &sid_main, session_log_path.as_deref()).await;
+                            upload_session_log(&*s3_main, &sid_main, session_log_path.as_deref()).await;
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             warn!("s3: transcript subscriber lagged by {n}");
@@ -308,7 +321,7 @@ pub fn spawn_subscriber(
                         Ok(entry) => {
                             recording_buffer.push(entry);
                             if recording_buffer.len() >= recording_batch_size {
-                                flush_recording_buffer(&s3_main, &sid_main, &mut recording_buffer).await;
+                                flush_recording_buffer(&*s3_main, &sid_main, &mut recording_buffer).await;
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -320,9 +333,9 @@ pub fn spawn_subscriber(
 
                 _ = &mut periodic_upload => {
                     // Periodic session log upload for crash resilience.
-                    upload_session_log(&s3_main, &sid_main, session_log_path.as_deref()).await;
-                    flush_recording_buffer(&s3_main, &sid_main, &mut recording_buffer).await;
-                    upload_event_logs(&s3_main, &sid_main, session_dir.as_deref()).await;
+                    upload_session_log(&*s3_main, &sid_main, session_log_path.as_deref()).await;
+                    flush_recording_buffer(&*s3_main, &sid_main, &mut recording_buffer).await;
+                    upload_event_logs(&*s3_main, &sid_main, session_dir.as_deref()).await;
                     periodic_upload.as_mut().reset(tokio::time::Instant::now() + upload_interval);
                 }
             }
@@ -331,7 +344,7 @@ pub fn spawn_subscriber(
 }
 
 /// Upload the session log file to S3.
-async fn upload_session_log(s3: &S3Client, session_id: &str, log_path: Option<&Path>) {
+async fn upload_session_log<S: S3Storage>(s3: &S, session_id: &str, log_path: Option<&Path>) {
     let Some(path) = log_path else { return };
     if !path.exists() {
         return;
@@ -342,7 +355,7 @@ async fn upload_session_log(s3: &S3Client, session_id: &str, log_path: Option<&P
 }
 
 /// Upload event log files (state_events.jsonl, hook_events.jsonl) to S3.
-async fn upload_event_logs(s3: &S3Client, session_id: &str, session_dir: Option<&Path>) {
+async fn upload_event_logs<S: S3Storage>(s3: &S, session_id: &str, session_dir: Option<&Path>) {
     let Some(dir) = session_dir else { return };
 
     for filename in &["state_events.jsonl", "hook_events.jsonl"] {
@@ -356,8 +369,8 @@ async fn upload_event_logs(s3: &S3Client, session_id: &str, session_dir: Option<
 }
 
 /// Flush buffered recording entries to S3 as a JSONL append.
-async fn flush_recording_buffer(
-    s3: &S3Client,
+async fn flush_recording_buffer<S: S3Storage>(
+    s3: &S,
     session_id: &str,
     buffer: &mut Vec<RecordingEntry>,
 ) {
@@ -390,8 +403,8 @@ async fn flush_recording_buffer(
 ///
 /// Used during session resume to restore transcripts before coop starts.
 /// Returns the number of transcripts downloaded.
-pub async fn restore_transcripts(
-    s3: &S3Client,
+pub async fn restore_transcripts<S: S3Storage>(
+    s3: &S,
     session_id: &str,
     transcripts_dir: &Path,
 ) -> anyhow::Result<u32> {
@@ -428,8 +441,8 @@ pub async fn restore_transcripts(
 ///
 /// Downloads to the standard Claude session log location so that
 /// `--resume` can discover it. Returns the local path if successful.
-pub async fn restore_session_log(
-    s3: &S3Client,
+pub async fn restore_session_log<S: S3Storage>(
+    s3: &S,
     source_session_id: &str,
     dest_path: &Path,
 ) -> anyhow::Result<()> {
