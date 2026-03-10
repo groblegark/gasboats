@@ -73,6 +73,17 @@ impl UpstreamClient {
         Ok(value)
     }
 
+    /// GET a JSON response from an upstream endpoint path (including query string).
+    pub async fn get_json(&self, path: &str) -> anyhow::Result<serde_json::Value> {
+        let req = self.client.get(self.url(path));
+        let resp = self.apply_auth(req).send().await?.error_for_status()?;
+        let bytes = resp.bytes().await?;
+        if bytes.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
     /// POST JSON to an upstream endpoint and return the response body.
     pub async fn post_json(
         &self,
