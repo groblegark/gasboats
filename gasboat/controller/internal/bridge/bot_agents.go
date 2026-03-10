@@ -76,6 +76,7 @@ func (b *Bot) pruneStaleAgentCards(ctx context.Context) {
 			delete(b.agentPodName, agent)
 			delete(b.agentImageTag, agent)
 			delete(b.agentRole, agent)
+			delete(b.agentProject, agent)
 		}
 		b.mu.Unlock()
 
@@ -212,6 +213,9 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	b.agentSeen[agent] = time.Now()
 	if role := bead.Fields["role"]; role != "" {
 		b.agentRole[agent] = role
+	}
+	if project := bead.Fields["project"]; project != "" {
+		b.agentProject[agent] = project
 	}
 	b.mu.Unlock()
 
@@ -624,6 +628,8 @@ func (b *Bot) fetchAndCachePodName(ctx context.Context, agent string) {
 	imageTag := extractImageTag(notes["image_tag"])
 	role := detail.Fields["role"]
 
+	project := detail.Fields["project"]
+
 	b.mu.Lock()
 	if podName != "" {
 		b.agentPodName[agent] = podName
@@ -633,6 +639,9 @@ func (b *Bot) fetchAndCachePodName(ctx context.Context, agent string) {
 	}
 	if role != "" {
 		b.agentRole[agent] = role
+	}
+	if project != "" {
+		b.agentProject[agent] = project
 	}
 	b.mu.Unlock()
 }
@@ -660,15 +669,73 @@ func extractAgentProject(identity string) string {
 }
 
 // resolveChannel returns the target Slack channel for an agent.
-// Uses the router if configured, otherwise falls back to the default channel.
+// Priority:
+//  1. Router override/pattern match (if router configured)
+//  2. Agent's project primary channel (first channel in project bead's slack_channel)
+//  3. Router default / bot default channel
 func (b *Bot) resolveChannel(agent string) string {
+	var routerResult RouteResult
 	if b.router != nil && agent != "" {
-		result := b.router.Resolve(agent)
-		if result.ChannelID != "" {
-			return result.ChannelID
+		routerResult = b.router.Resolve(agent)
+		if routerResult.ChannelID != "" && !routerResult.IsDefault {
+			return routerResult.ChannelID
 		}
 	}
+
+	// Look up agent's project and use the project's primary Slack channel.
+	if agent != "" {
+		b.mu.Lock()
+		project := b.agentProject[agent]
+		b.mu.Unlock()
+		if project != "" {
+			if ch := b.projectPrimaryChannel(project); ch != "" {
+				return ch
+			}
+		}
+	}
+
+	// Fall back to router default (if matched), otherwise bot default channel.
+	if routerResult.ChannelID != "" {
+		return routerResult.ChannelID
+	}
 	return b.channel
+}
+
+// projectChannelCacheTTL is the duration for which project→channel mappings
+// are cached to avoid repeated HTTP calls on the hot resolveChannel path.
+const projectChannelCacheTTL = 30 * time.Second
+
+// projectPrimaryChannel returns the first (primary) Slack channel for a project.
+// Uses a TTL-based cache to avoid calling ListProjectBeads on every notification.
+// Returns "" if the project is not found or has no channels configured.
+func (b *Bot) projectPrimaryChannel(project string) string {
+	b.mu.Lock()
+	if b.projectChannelCache != nil && time.Since(b.projectChannelCacheAt) < projectChannelCacheTTL {
+		ch := b.projectChannelCache[project]
+		b.mu.Unlock()
+		return ch
+	}
+	b.mu.Unlock()
+
+	projects, err := b.daemon.ListProjectBeads(context.Background())
+	if err != nil {
+		b.logger.Debug("resolveChannel: failed to list projects", "error", err)
+		return ""
+	}
+
+	cache := make(map[string]string, len(projects))
+	for name, info := range projects {
+		if len(info.SlackChannels) > 0 {
+			cache[name] = info.SlackChannels[0]
+		}
+	}
+
+	b.mu.Lock()
+	b.projectChannelCache = cache
+	b.projectChannelCacheAt = time.Now()
+	b.mu.Unlock()
+
+	return cache[project]
 }
 
 // Agent kill, clear, respawn, and coop shutdown functions are in bot_agent_kill.go.
