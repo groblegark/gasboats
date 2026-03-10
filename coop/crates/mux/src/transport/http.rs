@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -532,6 +532,60 @@ pub async fn session_upload(
     proxy_post(&s, &id, "/api/v1/upload", body).await
 }
 
+// -- Proxy GET endpoints (output, transcripts, recording) ---------------------
+
+/// `GET /api/v1/sessions/{id}/output` — proxy raw output from upstream.
+pub async fn session_output(
+    State(s): State<Arc<MuxState>>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    proxy_get(&s, &id, "/api/v1/output", &params).await
+}
+
+/// `GET /api/v1/sessions/{id}/transcripts` — proxy transcript list from upstream.
+pub async fn session_transcripts(
+    State(s): State<Arc<MuxState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    proxy_get(&s, &id, "/api/v1/transcripts", &HashMap::new()).await
+}
+
+/// `GET /api/v1/sessions/{id}/transcripts/catchup` — proxy transcript catchup.
+pub async fn session_transcripts_catchup(
+    State(s): State<Arc<MuxState>>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    proxy_get(&s, &id, "/api/v1/transcripts/catchup", &params).await
+}
+
+/// `GET /api/v1/sessions/{id}/transcripts/{number}` — proxy single transcript.
+pub async fn session_transcript_by_number(
+    State(s): State<Arc<MuxState>>,
+    Path((id, number)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let path = format!("/api/v1/transcripts/{number}");
+    proxy_get(&s, &id, &path, &HashMap::new()).await
+}
+
+/// `GET /api/v1/sessions/{id}/recording` — proxy recording status from upstream.
+pub async fn session_recording(
+    State(s): State<Arc<MuxState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    proxy_get(&s, &id, "/api/v1/recording", &HashMap::new()).await
+}
+
+/// `GET /api/v1/sessions/{id}/recording/catchup` — proxy recording catchup.
+pub async fn session_recording_catchup(
+    State(s): State<Arc<MuxState>>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    proxy_get(&s, &id, "/api/v1/recording/catchup", &params).await
+}
+
 /// `GET /api/v1/config/launch` — whether launch is available.
 pub async fn launch_config(State(s): State<Arc<MuxState>>) -> impl IntoResponse {
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -662,6 +716,39 @@ async fn proxy_post(
 
     let client = UpstreamClient::new(entry.url.clone(), entry.auth_token.clone());
     match client.post_json(path, &body).await {
+        Ok(value) => Json(value).into_response(),
+        Err(e) => {
+            MuxError::UpstreamError.to_http_response(format!("upstream error: {e}")).into_response()
+        }
+    }
+}
+
+/// Generic GET proxy to upstream coop.
+async fn proxy_get(
+    state: &MuxState,
+    session_id: &str,
+    path: &str,
+    params: &HashMap<String, String>,
+) -> axum::response::Response {
+    let sessions = state.sessions.read().await;
+    let entry = match sessions.get(session_id) {
+        Some(e) => Arc::clone(e),
+        None => {
+            return MuxError::SessionNotFound.to_http_response("session not found").into_response()
+        }
+    };
+    drop(sessions);
+
+    // Build upstream path with query parameters.
+    let upstream_path = if params.is_empty() {
+        path.to_owned()
+    } else {
+        let qs: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        format!("{path}?{}", qs.join("&"))
+    };
+
+    let client = UpstreamClient::new(entry.url.clone(), entry.auth_token.clone());
+    match client.get_json(&upstream_path).await {
         Ok(value) => Json(value).into_response(),
         Err(e) => {
             MuxError::UpstreamError.to_http_response(format!("upstream error: {e}")).into_response()
