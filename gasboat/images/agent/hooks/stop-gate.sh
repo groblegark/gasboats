@@ -8,6 +8,11 @@
 
 set -uo pipefail
 
+# ── Debug logging ──────────────────────────────────────────────────────
+DEBUG_LOG="/tmp/stop-gate-debug.log"
+_log() { echo "$(date '+%H:%M:%S') $*" >> "$DEBUG_LOG"; }
+_log "=== stop-gate.sh invoked ==="
+
 # ── Yield-aware fast path ────────────────────────────────────────────────
 # When the agent is actively yielding on a decision, there's nothing more
 # it can do — the decision exists, the agent is waiting. Block silently
@@ -15,6 +20,7 @@ set -uo pipefail
 # The yield marker is written by gb yield and cleared on exit.
 YIELD_MARKER="/tmp/stop-gate-yielding"
 if [ -f "$YIELD_MARKER" ]; then
+    _log "EXIT 2: yield marker present"
     exit 2
 fi
 
@@ -33,11 +39,13 @@ block_count=0
 if [ -f "$BLOCK_COUNT_FILE" ]; then
     block_count=$(cat "$BLOCK_COUNT_FILE" 2>/dev/null || echo 0)
 fi
+_log "block_count=$block_count MAX_BLOCKS=$MAX_BLOCKS"
 
 # ── Escape hatch ───────────────────────────────────────────────────────
 # After too many consecutive blocks, allow the stop to prevent infinite
 # cost-sink loops (decision → yield → block → repeat).
 if [ "$block_count" -ge "$MAX_BLOCKS" ]; then
+    _log "EXIT 0: escape hatch (block_count=$block_count >= MAX_BLOCKS=$MAX_BLOCKS)"
     echo "[stop-gate] Escape hatch: $block_count consecutive blocks, allowing stop" >&2
     echo "<system-reminder>Stop gate escape hatch activated after repeated blocks.</system-reminder>"
     rm -f "$COOLDOWN_FILE" "$BLOCK_COUNT_FILE"
@@ -58,10 +66,15 @@ if [ -f "$COOLDOWN_FILE" ]; then
         i=$(( i + 1 ))
     done
     [ "$cooldown" -gt 300 ] && cooldown=300
+    _log "cooldown check: elapsed=${elapsed}s cooldown=${cooldown}s"
     if [ "$elapsed" -lt "$cooldown" ]; then
         # Still within cooldown — block silently without re-injecting text.
+        _log "EXIT 2: cooldown active (${elapsed}s < ${cooldown}s)"
         exit 2
     fi
+    _log "cooldown expired (${elapsed}s >= ${cooldown}s), proceeding"
+else
+    _log "no cooldown file, first run or reset"
 fi
 
 # ── Rate-limit escape hatch ─────────────────────────────────────────────
@@ -71,6 +84,7 @@ fi
 _agent_state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null || echo '{}')
 _error_cat=$(echo "$_agent_state" | jq -r '.error_category // empty' 2>/dev/null)
 if [ "${_error_cat}" = "rate_limited" ]; then
+    _log "EXIT 0: rate-limited escape hatch"
     echo "[stop-gate] Agent is rate-limited, allowing stop without checkpoint" >&2
     gb gate clear decision 2>/dev/null || true
     rm -f "$COOLDOWN_FILE"
@@ -80,15 +94,18 @@ fi
 # Read stdin (Claude Code hook JSON) and forward to gb bus emit.
 # stderr flows through so Claude Code sees the block reason.
 _stdin=$(cat)
+_log "calling gb bus emit --hook=Stop"
 
 echo "$_stdin" | gb bus emit --hook=Stop
 _rc=$?
+_log "gb bus emit returned rc=$_rc"
 
 if [ $_rc -eq 2 ]; then
     # Record block time and increment counter for exponential backoff.
     date +%s > "$COOLDOWN_FILE"
     block_count=$(( block_count + 1 ))
     echo "$block_count" > "$BLOCK_COUNT_FILE"
+    _log "EXIT 2: gate blocked (block_count now $block_count)"
 
     # Gate blocked — inject checkpoint instructions into the conversation via stdout.
     # Prefer config-bead-materialized file; fall back to minimal inline text.
@@ -109,9 +126,12 @@ fi
 
 # Gate allowed — clear cooldown and block count files.
 rm -f "$COOLDOWN_FILE" "$BLOCK_COUNT_FILE"
+_log "EXIT 0: gate allowed, cleared cooldown files"
 
-# Clear any remaining gate state so the next session must re-satisfy from scratch.
-gb gate clear decision 2>/dev/null || true
+# Gate consumption is handled server-side in http_hooks.go:
+# - yield: gate is consumed (reset to pending) so next Stop blocks
+# - operator: gate persists so thread agents don't loop
+# Do NOT clear the gate here — it undoes operator overrides.
 
 echo "[stop-gate] Stop allowed" >&2
 exit 0
