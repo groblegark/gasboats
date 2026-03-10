@@ -112,7 +112,7 @@ var gateMarkCmd = &cobra.Command{
 
 var gateClearCmd = &cobra.Command{
 	Use:   "clear <gate-id>",
-	Short: "Clear a gate (reset to pending)",
+	Short: "Clear a gate (satisfy as operator so stop hook allows through persistently)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		gateID := args[0]
@@ -121,19 +121,22 @@ var gateClearCmd = &cobra.Command{
 			return err
 		}
 
-		if err := daemon.ClearGate(cmd.Context(), agentID, gateID); err != nil {
+		// Satisfy the gate instead of resetting to pending. The stop hook handler
+		// in http_hooks.go skips gate consumption for operator-satisfied gates,
+		// so this persists across repeated stop attempts (e.g. idle thread agents).
+		if err := daemon.SatisfyGate(cmd.Context(), agentID, gateID); err != nil {
 			return fmt.Errorf("clearing gate: %w", err)
 		}
 
-		// When clearing the decision gate, also clear the gate_satisfied_by marker
-		// so stale values don't mislead stop-gate.sh in the next session.
+		// Set gate_satisfied_by=operator so the stop hook handler recognizes this
+		// as an authorized override and does not consume the gate.
 		if gateID == "decision" {
 			clearCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := daemon.UpdateBeadFields(clearCtx, agentID, map[string]string{
-				"gate_satisfied_by": "",
+				"gate_satisfied_by": "operator",
 			}); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to clear gate_satisfied_by: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to set gate_satisfied_by: %v\n", err)
 			}
 		}
 
