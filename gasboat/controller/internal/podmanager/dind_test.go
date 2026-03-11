@@ -62,12 +62,14 @@ func TestBuildPod_DockerEnabled(t *testing.T) {
 		t.Error("DinD sidecar should run in privileged mode")
 	}
 
-	// Verify RunAsUser=0 to override pod-level runAsUser (dockerd must run as root).
+	// Verify RunAsUser: 0 (override pod-level runAsUser: 1000).
 	if dind.SecurityContext.RunAsUser == nil || *dind.SecurityContext.RunAsUser != 0 {
-		t.Error("DinD sidecar should have RunAsUser=0 to run dockerd as root")
+		t.Error("DinD sidecar should run as root (RunAsUser: 0)")
 	}
-	if dind.SecurityContext.RunAsNonRoot == nil || *dind.SecurityContext.RunAsNonRoot != false {
-		t.Error("DinD sidecar should have RunAsNonRoot=false")
+
+	// Verify RunAsNonRoot: false (override pod-level runAsNonRoot: true).
+	if dind.SecurityContext.RunAsNonRoot == nil || *dind.SecurityContext.RunAsNonRoot {
+		t.Error("DinD sidecar should have RunAsNonRoot: false")
 	}
 
 	// Verify DOCKER_TLS_CERTDIR="" env var.
