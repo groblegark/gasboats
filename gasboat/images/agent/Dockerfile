@@ -68,9 +68,13 @@ RUN set -e && \
 COPY --from=gb-builder /gb /usr/local/bin/gb
 
 # ── Agent user ───────────────────────────────────────────────────
+# Rename the default ubuntu user (UID 1000) to agent across passwd,
+# shadow, and group so that sudo/PAM account checks work correctly
+# in containers that lack CAP_AUDIT_WRITE.
 RUN sed -i 's/^ubuntu:/agent:/' /etc/passwd && \
     sed -i 's|/home/ubuntu|/home/agent|' /etc/passwd && \
     sed -i 's|/bin/sh|/bin/bash|' /etc/passwd && \
+    sed -i 's/^ubuntu:/agent:/' /etc/shadow && \
     sed -i 's/^ubuntu:/agent:/' /etc/group && \
     mkdir -p /home/agent/workspace && \
     chown -R 1000:1000 /home/agent && \
@@ -250,6 +254,13 @@ RUN case "${TARGETARCH}" in arm64) RTK_TRIPLE=aarch64-unknown-linux-gnu ;; *) RT
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_TRIPLE}.tar.gz" \
       | tar -xz -C /usr/local/bin rtk
 
+# ── RWX CLI (CI pipeline runner) ──────────────────────────────
+ARG RWX_VERSION=3.7.1
+RUN case "${TARGETARCH}" in arm64) RWX_ARCH=aarch64 ;; *) RWX_ARCH=x86_64 ;; esac && \
+    curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
+      -o /usr/local/bin/rwx && \
+    chmod +x /usr/local/bin/rwx
+
 # ── whisper-cli (audio transcription for JIRA video attachments) ──
 ARG WHISPER_CPP_VERSION=1.8.3
 RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
@@ -264,13 +275,20 @@ RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHI
 # NOTE: apt lists were cleaned after the system packages step above,
 # so we must re-run apt-get update before --with-deps can install
 # browser system library dependencies (libglib, libnss3, etc.).
-# Both chromium and chrome are installed because @playwright/mcp
-# defaults to --browser=chrome (Chrome for Testing).
+# Chromium is Playwright-managed (downloaded to $PLAYWRIGHT_BROWSERS_PATH).
+# Chrome is system-installed via Google's apt repo (/opt/google/chrome/chrome).
 ARG PLAYWRIGHT_VERSION=1.58.2
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
-    npx playwright install --with-deps chromium chrome && \
+    npx playwright install --with-deps chromium && \
+    $(npm root -g)/@playwright/mcp/node_modules/.bin/playwright install chromium && \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+      | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+      fonts-noto-core fontconfig && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
     chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}

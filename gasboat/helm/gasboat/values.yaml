@@ -112,6 +112,9 @@ agents:
   # Optional cluster-admin ServiceAccount for agent pods that need full cluster access.
   # Creates a separate SA + ClusterRoleBinding to the built-in cluster-admin ClusterRole.
   # Assign to specific projects via the project bead's service_account field.
+  # NOTE: Enabling this also grants the controller and agent SAs permission to manage
+  # the cluster-scoped ClusterRoleBinding. A cluster admin must run the first deploy
+  # after enabling this (bootstrap), then subsequent deploys work with normal SAs.
   clusterAdmin:
     enabled: false
     name: ""          # defaults to "<release>-agent-cluster-admin"
@@ -658,6 +661,52 @@ adviceViewer:
     enabled: false
     host: ""
     # Path prefix for the advice viewer (e.g. "/advice"). Traefik strips
+    # the prefix before forwarding; BASE_PATH env var is set so templates
+    # generate correct links.
+    pathPrefix: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+      depth: 1
+    basicAuth:
+      enabled: false
+      secret: ""  # Per-service override; falls back to global.basicAuth.secret
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Roles Server — web UI for managing agent roles and configuration
+# =============================================================================
+rolesServer:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/gasboats/roles-server
+    tag: ""
+    pullPolicy: Always
+
+  # Log level: debug, info, warn, error
+  logLevel: ""
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  ingress:
+    enabled: false
+    host: ""
+    # Path prefix for the roles server (e.g. "/roles"). Traefik strips
     # the prefix before forwarding; BASE_PATH env var is set so templates
     # generate correct links.
     pathPrefix: ""

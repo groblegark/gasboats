@@ -294,8 +294,13 @@ func runSetupClaudeRemove(workspace string) error {
 func runSetupClaude(ctx context.Context, workspace, role string) error {
 	subs := buildSubscriptions(role)
 
+	// ── Project-level inline config overrides ────────────────────────────
+	// If the project bead has a claude_config field, inject those values
+	// as extra layers between role (2:) and agent (3:) specificity.
+	projectExtras := fetchProjectClaudeConfig(ctx)
+
 	// ── User-level settings (claude-settings) ───────────────────────────
-	settings, _ := ResolveConfigBeads(ctx, daemon, "claude-settings", subs)
+	settings, _ := ResolveConfigBeads(ctx, daemon, "claude-settings", subs, projectExtras["claude-settings"]...)
 	if settings != nil {
 		if err := writeUserSettings(settings); err != nil {
 			fmt.Fprintf(os.Stderr, "[setup] warning: failed to write user settings: %v\n", err)
@@ -307,7 +312,7 @@ func runSetupClaude(ctx context.Context, workspace, role string) error {
 	}
 
 	// ── Project-level MCP config (claude-mcp) ───────────────────────────
-	mcpConfig, _ := ResolveConfigBeads(ctx, daemon, "claude-mcp", subs)
+	mcpConfig, _ := ResolveConfigBeads(ctx, daemon, "claude-mcp", subs, projectExtras["claude-mcp"]...)
 	if mcpConfig == nil {
 		mcpConfig = defaultMCPConfig()
 	}
@@ -318,7 +323,7 @@ func runSetupClaude(ctx context.Context, workspace, role string) error {
 	}
 
 	// ── Workspace-level hooks (claude-hooks) ────────────────────────────
-	hooks, _ := ResolveConfigBeads(ctx, daemon, "claude-hooks", subs)
+	hooks, _ := ResolveConfigBeads(ctx, daemon, "claude-hooks", subs, projectExtras["claude-hooks"]...)
 	if hooks == nil {
 		return fmt.Errorf("no claude-hooks config found")
 	}
@@ -345,7 +350,7 @@ func runSetupClaude(ctx context.Context, workspace, role string) error {
 	fmt.Fprintf(os.Stderr, "[setup] wrote %s\n", outPath)
 
 	// ── Agent instructions (claude-instructions) ────────────────────────
-	instructions, _ := ResolveConfigBeads(ctx, daemon, "claude-instructions", subs)
+	instructions, _ := ResolveConfigBeads(ctx, daemon, "claude-instructions", subs, projectExtras["claude-instructions"]...)
 	if instructions != nil {
 		writeInstructionFiles(workspace, instructions)
 	}
@@ -354,4 +359,41 @@ func runSetupClaude(ctx context.Context, workspace, role string) error {
 	symlinkClaudeExtensions(workspace)
 
 	return nil
+}
+
+// projectInlineSpecificity is the sort key for project bead inline config.
+// Sorts after role-level (2:) and before agent-level (3:), since '~' > ':'.
+const projectInlineSpecificity = "2~:project-inline"
+
+// fetchProjectClaudeConfig returns per-category extra layers from the
+// current project bead's claude_config field. Returns an empty map (safe
+// to index) when no project is set or the field is absent.
+func fetchProjectClaudeConfig(ctx context.Context) map[string][]resolvedConfig {
+	result := make(map[string][]resolvedConfig)
+
+	project := os.Getenv("BOAT_PROJECT")
+	if project == "" {
+		return result
+	}
+
+	projects, err := daemon.ListProjectBeads(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[setup] warning: failed to list projects for claude_config: %v\n", err)
+		return result
+	}
+
+	info, ok := projects[project]
+	if !ok || info.ClaudeConfig == nil {
+		return result
+	}
+
+	for category, raw := range info.ClaudeConfig {
+		result[category] = []resolvedConfig{{
+			value:       raw,
+			specificity: projectInlineSpecificity,
+		}}
+	}
+
+	fmt.Fprintf(os.Stderr, "[setup] loaded %d claude_config categories from project bead %q\n", len(result), project)
+	return result
 }

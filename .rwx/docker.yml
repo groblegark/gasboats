@@ -18,6 +18,10 @@
 #
 # Key monorepo improvement: coop and kd are built FROM SOURCE, not downloaded
 # from GitHub releases. No cross-repo dispatch needed.
+#
+# Feature branch builds (agent-only):
+#   rwx run .rwx/docker.yml --init build-target=agent
+#   Builds and pushes only the agent image, tagged "cli".
 
 on:
   github:
@@ -26,12 +30,14 @@ on:
       init:
         commit-sha: ${{ event.git.sha }}
         ref-name: ${{ event.git.ref }}
+        build-target: all
       status-checks:
         name: Docker
     pull_request:
       init:
         commit-sha: ${{ event.git.sha }}
         ref-name: pr
+        build-target: all
       status-checks:
         - tasks: [build-controller, build-gb, build-slack-bridge, build-jira-bridge, build-gitlab-bridge, build-advice-viewer, build-coop, build-kd]
           name: Docker
@@ -39,6 +45,7 @@ on:
     init:
       commit-sha: ${{ event.git.sha }}
       ref-name: cli
+      build-target: all
 
 base:
   image: ubuntu:24.04
@@ -328,7 +335,7 @@ tasks:
   # ── Push controller ─────────────────────────────────────────────────
   - key: push-controller
     use: [code, build-controller, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -356,7 +363,7 @@ tasks:
   # ── Push slack-bridge ───────────────────────────────────────────────
   - key: push-slack-bridge
     use: [code, build-slack-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -380,7 +387,7 @@ tasks:
   # ── Push jira-bridge ────────────────────────────────────────────────
   - key: push-jira-bridge
     use: [build-jira-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -404,7 +411,7 @@ tasks:
   # ── Push gitlab-bridge ──────────────────────────────────────────────
   - key: push-gitlab-bridge
     use: [build-gitlab-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -428,7 +435,7 @@ tasks:
   # ── Push advice-viewer ──────────────────────────────────────────────
   - key: push-advice-viewer
     use: [build-advice-viewer, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -452,7 +459,7 @@ tasks:
   # ── Push kbeads (MONOREPO: built from source, no cross-repo dispatch) ─
   - key: push-kbeads
     use: [build-kd, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -476,7 +483,7 @@ tasks:
   # ── Push coop/coopmux (MONOREPO: built from source) ────────────────
   - key: push-coop
     use: [build-coop, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -514,7 +521,7 @@ tasks:
   # ── Push beads3d (MONOREPO: built from source, no more retag) ──────
   - key: push-beads3d
     use: [build-beads3d, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -698,19 +705,55 @@ tasks:
         | tar -xJ --strip-components=1 -C $OUT/usr/local
 
       PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
+      # Install for both the standalone playwright and the @playwright/mcp bundled
+      # version — they may expect different chromium revisions.
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright $OUT/usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
 
-      # Capture browser system deps
+      # Capture chromium system deps for the agent image.
+      # The dpkg before/after diff misses packages already in the RWX runner,
+      # so we explicitly capture all chromium runtime deps + transitive deps.
       DEPS_OUT=/tmp/pw-deps
       mkdir -p $DEPS_OUT
-      for lib in $(find $OUT/ms-playwright -name '*.so*' -type f 2>/dev/null); do
-        ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
+
+      # Parse chromium's declared deps from deb.deps and resolve transitive deps
+      CHROME_DIR=$(find $OUT/ms-playwright -maxdepth 2 -name 'deb.deps' -path '*/chromium-*/chrome-linux*/deb.deps' | head -1)
+      if [ -n "$CHROME_DIR" ]; then
+        # Extract package names from deb.deps (strip version constraints)
+        DECLARED_DEPS=$(sed 's/ (.*)//g' "$CHROME_DIR" | tr '\n' ' ')
+      else
+        DECLARED_DEPS=""
+      fi
+
+      # Combine declared deps with known transitive deps that chromium dlopen's
+      ALL_DEPS="$DECLARED_DEPS libsqlite3-0 libfontconfig1 libfreetype6 libpng16-16t64 \
+        libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+        libxfixes3 libxrandr2 libxshmfence1 libxkbcommon0 libxkbfile1 \
+        libdrm2 libdrm-amdgpu1 libdrm-intel1 libgbm1 \
+        libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+        libnss3 libnspr4 libcups2t64 libcairo2 libpango-1.0-0 \
+        libasound2t64 libdbus-1-3 libglib2.0-0t64 libexpat1 \
+        libpixman-1-0 libthai0 libdatrie1 libfribidi0 libharfbuzz0b \
+        libgraphite2-3 libpciaccess0 libxcb-dri3-0 libxcb-present0 \
+        libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0"
+
+      for pkg in $ALL_DEPS; do
+        dpkg -L "$pkg" 2>/dev/null | while read -r f; do
+          [ -e "$f" ] || continue
+          [ -d "$f" ] && { mkdir -p "$DEPS_OUT$f"; continue; }
+          mkdir -p "$DEPS_OUT$(dirname "$f")" && cp -a "$f" "$DEPS_OUT${f}" 2>/dev/null || true
+        done || true
+      done
+
+      # Also capture .so deps via ldd on the chrome binary itself
+      for bin in $(find $OUT/ms-playwright -name 'chrome' -o -name 'chrome-headless-shell' 2>/dev/null); do
+        ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
           [ -f "$dep" ] || continue
           mkdir -p "$DEPS_OUT$(dirname "$dep")"
           cp -n "$dep" "$DEPS_OUT${dep}" 2>/dev/null || true
         done || true
       done
-      tar -cf /tmp/pwdeps.tar -C $DEPS_OUT . 2>/dev/null || true
+
       tar -cf playwright.tar -C $OUT .
       # Append system deps
       tar -rf playwright.tar -C $DEPS_OUT . 2>/dev/null || true
@@ -880,6 +923,12 @@ tasks:
         chmod +x $OUT/usr/local/bin/claudeless
       ) &
       (
+        # RWX CLI
+        curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v3.7.1/rwx-linux-x86_64" \
+          -o $OUT/usr/local/bin/rwx
+        chmod +x $OUT/usr/local/bin/rwx
+      ) &
+      (
         # whisper-cli
         sudo apt-get update && sudo apt-get install -y cmake libsdl2-dev gcc g++ make
         curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz" \
@@ -889,6 +938,12 @@ tasks:
         cmake --build /tmp/whisper-build --config Release -j$(nproc) --target whisper-cli
         cp /tmp/whisper-build/bin/whisper-cli $OUT/usr/local/bin/whisper-cli
         rm -rf /tmp/whisper.cpp-1.8.3 /tmp/whisper-build
+      ) &
+      (
+        # rwx CLI
+        curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v3.7.1/rwx-linux-x86_64" \
+          -o $OUT/usr/local/bin/rwx
+        chmod +x $OUT/usr/local/bin/rwx
       ) &
       wait
 
@@ -901,7 +956,7 @@ tasks:
   # ── Agent assembly: merge all layers + push ────────────────────────
   - key: push-agent
     use: [code, build-gb, build-coop, build-kd, install-crane, agent-install-syspackages, agent-install-node, agent-install-playwright, agent-install-go, agent-install-rust, agent-install-clis]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
     cache: false
     timeout: 10m
     run: |
@@ -912,16 +967,36 @@ tasks:
       LAYER=/tmp/layer
       mkdir -p $LAYER
 
-      # Unpack all cached install layers in parallel
-      echo "=== Unpacking cached layers (parallel) ==="
-      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER &
+      # Unpack syspackages and playwright sequentially — both write to
+      # /usr/lib/x86_64-linux-gnu/ and parallel extraction races on shared
+      # directory entries, silently dropping .so files (libnspr4, libnss3, etc.).
+      echo "=== Unpacking layers with shared lib dirs (sequential) ==="
+      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER
+      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER
+      echo "=== Unpacking remaining layers (parallel) ==="
       sudo tar -xf ${{ tasks.agent-install-node.artifacts.node-tar }} -C $LAYER &
-      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-go.artifacts.go-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-rust.artifacts.rust-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-clis.artifacts.clis-tar }} -C $LAYER &
       wait
       echo "=== All layers unpacked ==="
+
+      # Restore usrmerge symlinks.
+      # ubuntu:24.04 base has /lib -> usr/lib, /bin -> usr/bin, /sbin -> usr/sbin.
+      # The layer tars create real /lib/, /bin/, /sbin/ directories (from ldd copy
+      # loops that follow the symlinks), which clobber the base image's symlinks
+      # when crane-appended as a flat layer. This breaks shared library resolution
+      # for any libs installed to /usr/lib/x86_64-linux-gnu/ (e.g., Playwright's
+      # browser deps: libnspr4, libnss3, libatk, etc.).
+      echo "=== Restoring usrmerge symlinks ==="
+      for dir in lib bin sbin; do
+        if [ -d "$LAYER/$dir" ] && ! [ -L "$LAYER/$dir" ]; then
+          sudo cp -a "$LAYER/$dir/"* "$LAYER/usr/$dir/" 2>/dev/null || true
+          sudo rm -rf "$LAYER/$dir"
+          ln -s "usr/$dir" "$LAYER/$dir"
+          echo "  $dir/ -> usr/$dir (merged $(find $LAYER/usr/$dir -type f 2>/dev/null | wc -l) files)"
+        fi
+      done
 
       # Project binaries — ALL FROM SOURCE (monorepo advantage)
       echo "=== Adding project binaries (built from source) ==="
@@ -956,6 +1031,8 @@ tasks:
       sed -i "s/^ubuntu:/agent:/" $LAYER/etc/passwd
       sed -i "s|/home/ubuntu|/home/agent|" $LAYER/etc/passwd
       sed -i "s|/bin/sh|/bin/bash|" $LAYER/etc/passwd
+      sudo cp /etc/shadow $LAYER/etc/shadow
+      sudo sed -i "s/^ubuntu:/agent:/" $LAYER/etc/shadow
       cp /etc/group $LAYER/etc/group
       sed -i "s/^ubuntu:/agent:/" $LAYER/etc/group
       mkdir -p $LAYER/home/agent/workspace

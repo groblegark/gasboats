@@ -48,7 +48,7 @@ func buildRoleIndex(subscriptions []string) map[string]int {
 	return idx
 }
 
-func ResolveConfigBeads(ctx context.Context, lister configBeadLister, category string, subscriptions []string) (map[string]any, int) {
+func ResolveConfigBeads(ctx context.Context, lister configBeadLister, category string, subscriptions []string, extraLayers ...resolvedConfig) (map[string]any, int) {
 	cat := LookupCategory(category)
 	if cat == nil {
 		return nil, 0
@@ -105,11 +105,14 @@ func ResolveConfigBeads(ctx context.Context, lister configBeadLister, category s
 		})
 	}
 
+	// Append any extra layers (e.g. project bead inline claude_config).
+	matched = append(matched, extraLayers...)
+
 	if len(matched) == 0 {
 		return nil, 0
 	}
 
-	// Sort by specificity: global (0:) < project (1:) < role (2:) < agent (3:).
+	// Sort by specificity: global (0:) < project (1:) < role (2:) < project-inline (2~:) < agent (3:).
 	sort.Slice(matched, func(i, j int) bool {
 		return matched[i].specificity < matched[j].specificity
 	})

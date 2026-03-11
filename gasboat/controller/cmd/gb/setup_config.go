@@ -79,6 +79,14 @@ func writeMCPConfig(workspace string, config map[string]any) error {
 			existingServers[name] = cfg
 		}
 	}
+
+	// Ensure playwright MCP always has --browser and PLAYWRIGHT_BROWSERS_PATH.
+	// Without --browser, playwright-mcp defaults to "chrome" which requires
+	// system-installed Google Chrome. Add --browser chromium as a fallback
+	// to guarantee browser availability.
+	fixPlaywrightBrowser(existingServers)
+	fixPlaywrightEnv(existingServers)
+
 	existing["mcpServers"] = existingServers
 
 	data, err := json.MarshalIndent(existing, "", "  ")
@@ -116,8 +124,7 @@ func expandEnvVars(s string) string {
 // defaultMCPConfig returns a fallback MCP config with Playwright if the
 // playwright-mcp binary is on PATH. Returns nil if not found.
 // Uses --browser=chromium to ensure the bundled Chromium browser is used,
-// which is always available in the agent image (unlike Chrome for Testing
-// which @playwright/mcp defaults to).
+// which is always available in the agent image.
 func defaultMCPConfig() map[string]any {
 	if !pathExists("playwright-mcp") {
 		return nil
@@ -127,8 +134,64 @@ func defaultMCPConfig() map[string]any {
 			"playwright": map[string]any{
 				"command": "playwright-mcp",
 				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox"},
+				"env": map[string]any{
+					"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+				},
 			},
 		},
+	}
+}
+
+// fixPlaywrightBrowser ensures the playwright MCP server config includes
+// a --browser flag. Without it, playwright-mcp defaults to "chrome" which
+// requires system-installed Google Chrome — if Chrome is missing, the MCP
+// server fails with "Chromium distribution 'chrome' is not found".
+// This adds "--browser chromium" as a fallback when no --browser is specified.
+func fixPlaywrightBrowser(servers map[string]any) {
+	pw, ok := servers["playwright"]
+	if !ok {
+		return
+	}
+	cfg, ok := pw.(map[string]any)
+	if !ok {
+		return
+	}
+	args, ok := cfg["args"].([]any)
+	if !ok {
+		return
+	}
+	for _, a := range args {
+		if s, ok := a.(string); ok && s == "--browser" {
+			return // already has --browser flag
+		}
+	}
+	// Prepend --browser chromium so the bundled Chromium is used as fallback.
+	cfg["args"] = append([]any{"--browser", "chromium"}, args...)
+	fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added --browser chromium (no --browser flag found)\n")
+}
+
+// fixPlaywrightEnv ensures the playwright MCP server config includes
+// PLAYWRIGHT_BROWSERS_PATH in its env block. Without it, the MCP server
+// cannot find Chromium installed at /ms-playwright/ even though the
+// Dockerfile sets the env var — config beads or user-provided .mcp.json
+// may override the default config, losing the env section.
+func fixPlaywrightEnv(servers map[string]any) {
+	pw, ok := servers["playwright"]
+	if !ok {
+		return
+	}
+	cfg, ok := pw.(map[string]any)
+	if !ok {
+		return
+	}
+	env, ok := cfg["env"].(map[string]any)
+	if !ok {
+		env = make(map[string]any)
+		cfg["env"] = env
+	}
+	if _, ok := env["PLAYWRIGHT_BROWSERS_PATH"]; !ok {
+		env["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
+		fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\n")
 	}
 }
 

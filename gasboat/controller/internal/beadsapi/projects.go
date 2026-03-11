@@ -57,10 +57,28 @@ type ProjectInfo struct {
 	// Keys absent or empty in the JSON are silently skipped.
 	EnvOverrides map[string]string
 
+	// ChannelRoles maps Slack channel IDs to agent role overrides.
+	// When /spawn is invoked from a channel listed here, the agent
+	// is assigned the specified role instead of the default.
+	ChannelRoles map[string]string
+
+	// ChannelModes maps Slack channel IDs to interaction modes.
+	// Supported modes: "concierge" (auto-thread with Start/Dismiss buttons),
+	// "mention" (default — require @mention to interact).
+	// Parsed from the "channel_modes" JSON field on project beads.
+	ChannelModes map[string]string
+
 	Secrets        []SecretEntry       // Per-project secret overrides
 	EnvVars        []EnvEntry          // Per-project plain env vars
 	Repos          []RepoEntry         // Multi-repo definitions
 	PrewarmedPool  *PrewarmedPoolConfig // Per-project prewarmed agent pool config (nil = disabled)
+
+	// ClaudeConfig holds per-category Claude config overrides stored inline
+	// on the project bead (field: "claude_config"). Each key is a config
+	// category name (e.g. "claude-settings", "claude-hooks") and the value
+	// is the raw JSON config for that category. Used by gb setup claude to
+	// inject project-level overrides between role and agent specificity.
+	ClaudeConfig map[string]json.RawMessage
 }
 
 // PrewarmedPoolConfig holds per-project prewarmed agent pool settings.
@@ -103,6 +121,20 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			MemoryLimit:    fields["memory_limit"],
 			SlackChannels:  parseSlackChannels(fields["slack_channel"]),
 		}
+		// Parse per-channel role overrides from JSON field.
+		if raw := fields["channel_roles"]; raw != "" {
+			var roles map[string]string
+			if json.Unmarshal([]byte(raw), &roles) == nil {
+				info.ChannelRoles = roles
+			}
+		}
+		// Parse per-channel interaction modes from JSON field.
+		if raw := fields["channel_modes"]; raw != "" {
+			var modes map[string]string
+			if json.Unmarshal([]byte(raw), &modes) == nil {
+				info.ChannelModes = modes
+			}
+		}
 		// Parse per-project secrets from JSON field.
 		if raw := fields["secrets"]; raw != "" {
 			var secrets []SecretEntry
@@ -141,6 +173,13 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 					poolCfg.Mode = "crew"
 				}
 				info.PrewarmedPool = &poolCfg
+			}
+		}
+		// Parse inline Claude config overrides from JSON field.
+		if raw := fields["claude_config"]; raw != "" {
+			var cfg map[string]json.RawMessage
+			if json.Unmarshal([]byte(raw), &cfg) == nil {
+				info.ClaudeConfig = cfg
 			}
 		}
 		// Parse env_json field.
@@ -190,4 +229,19 @@ func (p ProjectInfo) HasChannel(channelID string) bool {
 		}
 	}
 	return false
+}
+
+// ChannelRole returns the role override for the given Slack channel, or empty string if none.
+func (p ProjectInfo) ChannelRole(channelID string) string {
+	return p.ChannelRoles[channelID]
+}
+
+// ChannelMode returns the interaction mode for the given Slack channel.
+// Returns "concierge" for channels configured in concierge mode, or
+// "mention" (the default) for unconfigured channels.
+func (p ProjectInfo) ChannelMode(channelID string) string {
+	if mode := p.ChannelModes[channelID]; mode != "" {
+		return mode
+	}
+	return "mention"
 }

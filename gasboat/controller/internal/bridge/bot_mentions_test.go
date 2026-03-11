@@ -198,6 +198,46 @@ func TestGetAgentByThread_ThreadAgents(t *testing.T) {
 			t.Errorf("got %q, want %q", got, "gasboat/crew/k8s")
 		}
 	})
+
+	t.Run("matches card posted in-thread via ThreadTS", func(t *testing.T) {
+		// Card posted as a reply in thread 5555.6666 — card's own timestamp
+		// is 5555.7777 but ThreadTS points to the parent thread.
+		b.mu.Lock()
+		b.agentCards["thread-bound-agent"] = MessageRef{
+			ChannelID: "C-thread",
+			Timestamp: "5555.7777", // card's own ts
+			ThreadTS:  "5555.6666", // parent thread ts
+			Agent:     "thread-bound-agent",
+		}
+		b.mu.Unlock()
+
+		// Should match when looking up the parent thread ts.
+		got := b.getAgentByThread("C-thread", "5555.6666")
+		if got != "thread-bound-agent" {
+			t.Errorf("got %q, want %q", got, "thread-bound-agent")
+		}
+
+		// Should also match via card's own ts (replies under the card itself).
+		got = b.getAgentByThread("C-thread", "5555.7777")
+		if got != "thread-bound-agent" {
+			t.Errorf("got %q, want %q", got, "thread-bound-agent")
+		}
+	})
+
+	t.Run("matches persisted card via ThreadTS", func(t *testing.T) {
+		// Store an in-thread card only in persisted state (not hot cache).
+		_ = state.SetAgentCard("persisted-thread-agent", MessageRef{
+			ChannelID: "C-persist",
+			Timestamp: "6666.7777",
+			ThreadTS:  "6666.5555",
+			Agent:     "persisted-thread-agent",
+		})
+
+		got := b.getAgentByThread("C-persist", "6666.5555")
+		if got != "persisted-thread-agent" {
+			t.Errorf("got %q, want %q", got, "persisted-thread-agent")
+		}
+	})
 }
 
 func TestResolveAgentFromText(t *testing.T) {
@@ -741,6 +781,277 @@ func TestParseListenFlag(t *testing.T) {
 	}
 }
 
+// --- parseMentionCommand tests ---
+
+func TestParseMentionCommand_Kill(t *testing.T) {
+	cmd, remaining := parseMentionCommand("kill")
+	if cmd != "kill" {
+		t.Errorf("expected cmd=kill, got %q", cmd)
+	}
+	if remaining != "" {
+		t.Errorf("expected empty remaining, got %q", remaining)
+	}
+}
+
+func TestParseMentionCommand_KillWithArgs(t *testing.T) {
+	cmd, remaining := parseMentionCommand("kill --force")
+	if cmd != "kill" {
+		t.Errorf("expected cmd=kill, got %q", cmd)
+	}
+	if remaining != "--force" {
+		t.Errorf("expected remaining=--force, got %q", remaining)
+	}
+}
+
+func TestParseMentionCommand_CaseInsensitive(t *testing.T) {
+	cmd, _ := parseMentionCommand("Kill")
+	if cmd != "kill" {
+		t.Errorf("expected cmd=kill, got %q", cmd)
+	}
+}
+
+func TestParseMentionCommand_NotACommand(t *testing.T) {
+	cmd, remaining := parseMentionCommand("fix the bug please")
+	if cmd != "" {
+		t.Errorf("expected empty cmd, got %q", cmd)
+	}
+	if remaining != "fix the bug please" {
+		t.Errorf("expected text unchanged, got %q", remaining)
+	}
+}
+
+func TestParseMentionCommand_Empty(t *testing.T) {
+	cmd, remaining := parseMentionCommand("")
+	if cmd != "" {
+		t.Errorf("expected empty cmd, got %q", cmd)
+	}
+	if remaining != "" {
+		t.Errorf("expected empty remaining, got %q", remaining)
+	}
+}
+
+// --- handleMentionKill tests ---
+
+func TestHandleMentionKill_KillsThreadAgent(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	// Bind agent to thread.
+	_ = sm.SetThreadAgent("C123", "1111.2222", "thread-1111-2222")
+
+	// Seed agent bead so killAgent can find it.
+	daemon.mu.Lock()
+	daemon.beads["thread-1111-2222"] = &beadsapi.BeadDetail{
+		ID:     "bd-thread-agent",
+		Title:  "thread-1111-2222",
+		Type:   "agent",
+		Fields: map[string]string{"agent": "thread-1111-2222"},
+	}
+	daemon.mu.Unlock()
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	bot.handleMentionKill(context.Background(), ev, false)
+
+	// Wait for background goroutine to complete the kill.
+	deadline := time.After(5 * time.Second)
+	for {
+		daemon.mu.Lock()
+		closed := len(daemon.closed)
+		daemon.mu.Unlock()
+		if closed > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for agent to be closed")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	// Thread mapping should be cleared by killAgent.
+	if _, ok := sm.GetThreadAgent("C123", "1111.2222"); ok {
+		t.Error("expected thread agent mapping to be removed after kill")
+	}
+}
+
+func TestHandleMentionKill_NoAgentInThread(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	// Should not panic when no agent is bound.
+	bot.handleMentionKill(context.Background(), ev, false)
+
+	// No beads should be closed.
+	daemon.mu.Lock()
+	closedCount := len(daemon.closed)
+	daemon.mu.Unlock()
+	if closedCount != 0 {
+		t.Errorf("expected 0 close calls, got %d", closedCount)
+	}
+}
+
+// --- parseMentionCommand clear tests ---
+
+func TestParseMentionCommand_Clear(t *testing.T) {
+	cmd, remaining := parseMentionCommand("clear")
+	if cmd != "clear" {
+		t.Errorf("expected cmd=clear, got %q", cmd)
+	}
+	if remaining != "" {
+		t.Errorf("expected empty remaining, got %q", remaining)
+	}
+}
+
+func TestParseMentionCommand_ClearCaseInsensitive(t *testing.T) {
+	cmd, _ := parseMentionCommand("CLEAR")
+	if cmd != "clear" {
+		t.Errorf("expected cmd=clear, got %q", cmd)
+	}
+}
+
+// --- handleMentionClear tests ---
+
+func TestHandleMentionClear_ClearsThreadMapping(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	// Bind agent to thread with listen mode.
+	_ = sm.SetThreadAgent("C123", "1111.2222", "thread-1111-2222")
+	_ = sm.SetListenThread("C123", "1111.2222")
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	bot.handleMentionClear(context.Background(), ev)
+
+	// Thread mapping should be cleared.
+	if _, ok := sm.GetThreadAgent("C123", "1111.2222"); ok {
+		t.Error("expected thread agent mapping to be removed after clear")
+	}
+
+	// Listen mode should also be cleared.
+	if sm.IsListenThread("C123", "1111.2222") {
+		t.Error("expected listen thread to be removed after clear")
+	}
+}
+
+func TestHandleMentionClear_NoAgentInThread(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	// Should not panic when no agent is bound.
+	bot.handleMentionClear(context.Background(), ev)
+}
+
+func TestHandleMentionClear_AgentNotKilled(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	tmpDir := t.TempDir()
+	sm, err := NewStateManager(filepath.Join(tmpDir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create state manager: %v", err)
+	}
+	bot.state = sm
+
+	// Bind agent to thread.
+	_ = sm.SetThreadAgent("C123", "1111.2222", "thread-1111-2222")
+
+	// Seed agent bead.
+	daemon.mu.Lock()
+	daemon.beads["thread-1111-2222"] = &beadsapi.BeadDetail{
+		ID:     "bd-thread-agent",
+		Title:  "thread-1111-2222",
+		Type:   "agent",
+		Fields: map[string]string{"agent": "thread-1111-2222"},
+	}
+	daemon.mu.Unlock()
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C123",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U456",
+	}
+
+	bot.handleMentionClear(context.Background(), ev)
+
+	// Thread mapping should be cleared.
+	if _, ok := sm.GetThreadAgent("C123", "1111.2222"); ok {
+		t.Error("expected thread agent mapping to be removed after clear")
+	}
+
+	// Agent bead should NOT be closed — clear only unbinds, doesn't kill.
+	daemon.mu.Lock()
+	closedCount := len(daemon.closed)
+	daemon.mu.Unlock()
+	if closedCount != 0 {
+		t.Errorf("expected 0 close calls (clear should not kill), got %d", closedCount)
+	}
+}
+
 func TestSanitizeTS(t *testing.T) {
 	tests := []struct {
 		input string
@@ -773,5 +1084,115 @@ func TestProjectFromAgentIdentity(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("projectFromAgentIdentity(%q) = %q, want %q", tt.identity, got, tt.want)
 		}
+	}
+}
+
+func TestParseThreadCommand(t *testing.T) {
+	tests := []struct {
+		text      string
+		wantCmd   string
+		wantForce bool
+	}{
+		{"kill", "kill", false},
+		{"stop", "stop", false},
+		{"restart", "restart", false},
+		{"kill --force", "kill", true},
+		{"stop --force", "stop", true},
+		{"  Kill  ", "kill", false},
+		{"RESTART", "restart", false},
+		// Not commands — contain extra words.
+		{"kill the deployment", "", false},
+		{"restart the agent now", "", false},
+		{"check the logs", "", false},
+		{"", "", false},
+		{"--force", "", false},
+	}
+
+	for _, tt := range tests {
+		cmd, force := parseThreadCommand(tt.text)
+		if cmd != tt.wantCmd || force != tt.wantForce {
+			t.Errorf("parseThreadCommand(%q) = (%q, %v), want (%q, %v)",
+				tt.text, cmd, force, tt.wantCmd, tt.wantForce)
+		}
+	}
+}
+
+func TestGetThreadAgentsByChannel(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add thread agents in two different channels.
+	_ = state.SetThreadAgent("C-general", "1111.2222", "thread-1111-2222")
+	_ = state.SetThreadAgent("C-general", "3333.4444", "thread-3333-4444")
+	_ = state.SetThreadAgent("C-other", "5555.6666", "thread-5555-6666")
+
+	agents := state.GetThreadAgentsByChannel("C-general")
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents in C-general, got %d", len(agents))
+	}
+
+	agents = state.GetThreadAgentsByChannel("C-other")
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent in C-other, got %d", len(agents))
+	}
+	if agents[0] != "thread-5555-6666" {
+		t.Errorf("expected thread-5555-6666, got %s", agents[0])
+	}
+
+	agents = state.GetThreadAgentsByChannel("C-nonexistent")
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents in nonexistent channel, got %d", len(agents))
+	}
+}
+
+func TestHandleMentionThreadCommand_CommandDispatch(t *testing.T) {
+	daemon := newMockDaemon()
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		botUserID:  "U-BOT",
+		agentCards: map[string]MessageRef{},
+	}
+
+	ev := &slackevents.AppMentionEvent{
+		Channel:         "C-test",
+		ThreadTimeStamp: "1111.2222",
+		User:            "U-USER",
+		TimeStamp:       "9999.0001",
+	}
+
+	tests := []struct {
+		text    string
+		handled bool
+	}{
+		{"kill", true},
+		{"stop", true},
+		{"restart", true},
+		{"kill --force", true},
+		{"stop --force", true},
+		{"check the logs", false},
+		{"kill the deployment", false},
+		{"restart the server now", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		handled := b.handleMentionThreadCommand(context.Background(), ev, "thread-agent-1", tt.text)
+		if handled != tt.handled {
+			t.Errorf("handleMentionThreadCommand(%q) = %v, want %v", tt.text, handled, tt.handled)
+		}
+		// Give goroutines time to finish to avoid panics (kill/restart goroutines
+		// will fail on the mock daemon but that's expected).
+		time.Sleep(10 * time.Millisecond)
 	}
 }

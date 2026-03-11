@@ -34,7 +34,10 @@ func newTestBot(daemon BeadClient, slackSrv *httptest.Server) *Bot {
 		agentProject:       make(map[string]string),
 		agentScheduleTitle: make(map[string]string),
 		agentSpawnedAt:     make(map[string]time.Time),
+		agentSpawnChannel:  make(map[string]string),
 		threadSpawnMsgs:    make(map[string]MessageRef),
+		spawnInFlight:      make(map[string]bool),
+		conciergeDebouncer: newConciergeDebouncer(),
 	}
 }
 
@@ -163,8 +166,29 @@ func TestHandleStartCommand_SpawnsAgentWithTask(t *testing.T) {
 	}
 }
 
-func TestHandleStartCommand_SpawnsAgentNoProject(t *testing.T) {
+func TestHandleStartCommand_SpawnsAgentNoProject_Rejected(t *testing.T) {
 	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	bot.handleStartCommand(context.Background(), slack.SlashCommand{
+		Command:   "/start",
+		Text:      "my-bot",
+		ChannelID: "C-UNMAPPED",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 0 {
+		t.Errorf("expected no agent beads for unmapped channel, got %d", len(agentBeads))
+	}
+}
+
+func TestHandleStartCommand_SpawnsAgentWithChannelProject(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C123")
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 
@@ -177,8 +201,9 @@ func TestHandleStartCommand_SpawnsAgentNoProject(t *testing.T) {
 		UserID:    "U456",
 	})
 
-	if len(daemon.beads) != 1 {
-		t.Fatalf("expected 1 bead created, got %d", len(daemon.beads))
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
 	}
 }
 
@@ -424,7 +449,7 @@ func TestHandleStartCommand_TaskFirstModeWithRole(t *testing.T) {
 	}
 }
 
-func TestHandleStartCommand_TaskFirstModeNoProject(t *testing.T) {
+func TestHandleStartCommand_TaskFirstModeNoProject_Rejected(t *testing.T) {
 	daemon := newMockDaemon()
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
@@ -434,18 +459,13 @@ func TestHandleStartCommand_TaskFirstModeNoProject(t *testing.T) {
 	bot.handleStartCommand(context.Background(), slack.SlashCommand{
 		Command:   "/start",
 		Text:      `"fix the login bug"`,
-		ChannelID: "C123",
+		ChannelID: "C-UNMAPPED",
 		UserID:    "U456",
 	})
 
 	agentBeads := filterAgentBeads(daemon.beads)
-	if len(agentBeads) != 1 {
-		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
-	}
-
-	taskBeads := filterTaskBeads(daemon.beads)
-	if len(taskBeads) != 1 {
-		t.Fatalf("expected 1 task bead created, got %d", len(taskBeads))
+	if len(agentBeads) != 0 {
+		t.Errorf("expected no agent beads for unmapped channel, got %d", len(agentBeads))
 	}
 }
 
