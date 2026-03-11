@@ -344,6 +344,12 @@ func main() {
 	// doesn't re-fire created events (prevents state flicker on restart).
 	dedup.CatchUpAgents(ctx, daemon, logger)
 
+	// Reconcile thread→agent mappings from active agent beads so thread
+	// replies reach agents that were spawned by a previous bridge instance.
+	if bot != nil {
+		bot.ReconcileThreadAgents(ctx)
+	}
+
 	// Start the shared SSE stream (delivers events to all watchers).
 	go func() {
 		if err := sseStream.Start(ctx); err != nil && ctx.Err() == nil {

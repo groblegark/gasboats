@@ -70,7 +70,8 @@ type Bot struct {
 	agentPodName  map[string]string    // agent identity → pod hostname (coopmux session ID)
 	agentImageTag map[string]string   // agent identity → deployed image tag
 	agentRole     map[string]string   // agent identity → role (e.g., "crew", "lead", "ops")
-	agentProject  map[string]string   // agent identity → project name (for channel routing)
+	agentProject      map[string]string // agent identity → project name (for channel routing)
+	agentSpawnChannel map[string]string // agent identity → Slack channel where /spawn was issued
 
 	// TTL-cached project→primary channel mapping (refreshed every projectChannelCacheTTL).
 	projectChannelCache   map[string]string // project name → primary Slack channel ID
@@ -156,8 +157,9 @@ func NewBot(cfg BotConfig) *Bot {
 		agentPodName:     make(map[string]string),
 		agentImageTag:    make(map[string]string),
 		agentRole:        make(map[string]string),
-		agentProject:     make(map[string]string),
-		threadSpawnMsgs:  make(map[string]MessageRef),
+		agentProject:      make(map[string]string),
+		agentSpawnChannel: make(map[string]string),
+		threadSpawnMsgs:   make(map[string]MessageRef),
 		beadMsgs:         make(map[string]MessageRef),
 		spawnInFlight:    make(map[string]bool),
 		lastThreadNudge:    make(map[string]time.Time),
@@ -191,6 +193,38 @@ func NewBot(cfg BotConfig) *Bot {
 	}
 
 	return b
+}
+
+// ReconcileThreadAgents rebuilds the ThreadAgents mapping from active agent
+// beads that have slack_thread_channel/slack_thread_ts fields. This recovers
+// thread→agent associations that were lost during bridge restart (the mapping
+// is only set when the bridge instance itself spawns/respawns the agent).
+func (b *Bot) ReconcileThreadAgents(ctx context.Context) {
+	if b.state == nil || b.daemon == nil {
+		return
+	}
+	agents, err := b.daemon.ListAgentBeads(ctx)
+	if err != nil {
+		b.logger.Warn("reconcile thread agents: failed to list agents", "error", err)
+		return
+	}
+	var restored int
+	for _, a := range agents {
+		ch := a.Metadata["slack_thread_channel"]
+		ts := a.Metadata["slack_thread_ts"]
+		if ch == "" || ts == "" {
+			continue
+		}
+		agentName := extractAgentName(a.AgentName)
+		// Only set if not already mapped (don't overwrite fresh mappings).
+		if _, ok := b.state.GetThreadAgent(ch, ts); !ok {
+			_ = b.state.SetThreadAgent(ch, ts, agentName)
+			restored++
+		}
+	}
+	if restored > 0 {
+		b.logger.Info("reconciled thread agents from daemon", "restored", restored)
+	}
 }
 
 // API returns the underlying Slack API client for direct API calls.

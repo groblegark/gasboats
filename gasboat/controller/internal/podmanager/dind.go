@@ -15,8 +15,8 @@ func (m *K8sManager) buildDindSidecar() corev1.Container {
 			{Name: "DOCKER_TLS_CERTDIR", Value: ""},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			Privileged:  boolPtr(true),
-			RunAsUser:   intPtr(0),
+			Privileged:   boolPtr(true),
+			RunAsUser:    intPtr(0),
 			RunAsNonRoot: boolPtr(false),
 		},
 		VolumeMounts: []corev1.VolumeMount{
