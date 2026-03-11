@@ -166,6 +166,12 @@ func (m *mockDaemon) ListProjectBeads(_ context.Context) (map[string]beadsapi.Pr
 				if prefix := b.Fields["prefix"]; prefix != "" {
 					info.Prefix = prefix
 				}
+				if raw := b.Fields["channel_modes"]; raw != "" {
+					var modes map[string]string
+					if json.Unmarshal([]byte(raw), &modes) == nil {
+						info.ChannelModes = modes
+					}
+				}
 			}
 			result[b.Title] = info
 		}

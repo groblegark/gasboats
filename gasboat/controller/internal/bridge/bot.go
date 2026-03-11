@@ -83,6 +83,13 @@ type Bot struct {
 	// Nudge throttling for thread reply forwarding.
 	// Key: "agent:thread_ts", value: last nudge time.
 	lastThreadNudge map[string]time.Time
+
+	// Concierge mode debouncer to prevent button spam on rapid messages.
+	conciergeDebouncer *conciergeDebouncer
+
+	// TTL-cached concierge channel→project mapping (refreshed every projectChannelCacheTTL).
+	conciergeChannelCache   map[string]string // channel ID → project name (concierge channels only)
+	conciergeChannelCacheAt time.Time         // when cache was last refreshed
 }
 
 // BotConfig holds configuration for the Socket Mode bot.
@@ -153,8 +160,9 @@ func NewBot(cfg BotConfig) *Bot {
 		threadSpawnMsgs:  make(map[string]MessageRef),
 		beadMsgs:         make(map[string]MessageRef),
 		spawnInFlight:    make(map[string]bool),
-		lastThreadNudge: make(map[string]time.Time),
-		github:           gh,
+		lastThreadNudge:    make(map[string]time.Time),
+		conciergeDebouncer: newConciergeDebouncer(),
+		github:              gh,
 		repos:            cfg.Repos,
 		version:          cfg.Version,
 		controllerURL:    cfg.ControllerURL,
@@ -216,6 +224,20 @@ func (b *Bot) Run(ctx context.Context) error {
 
 	// Start periodic pruning to catch zombie cards from crashed agent pods.
 	go b.startPeriodicPrune(ctx)
+
+	// Periodically clean up the concierge debouncer to prevent unbounded growth.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				b.conciergeDebouncer.Cleanup()
+			}
+		}
+	}()
 
 	go b.handleEvents(ctx)
 
@@ -361,6 +383,17 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 			BotID:     ev.BotID,
 		})
 		return
+	}
+
+	// Concierge mode: if this channel is configured for concierge, post
+	// Start/Dismiss buttons in a thread under the message.
+	if ev.BotID == "" { // skip other bots' messages
+		if project, ok := b.conciergeChannelInfo(ctx, ev.Channel); ok {
+			if b.conciergeDebouncer.Allow(ev.User, ev.Channel) {
+				b.handleConciergeMessage(ctx, ev, project)
+			}
+			return
+		}
 	}
 
 	// Non-mention messages in non-thread contexts are ignored.
