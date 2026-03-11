@@ -62,6 +62,12 @@ type ProjectInfo struct {
 	// is assigned the specified role instead of the default.
 	ChannelRoles map[string]string
 
+	// ChannelModes maps Slack channel IDs to interaction modes.
+	// Supported modes: "concierge" (auto-thread with Start/Dismiss buttons),
+	// "mention" (default — require @mention to interact).
+	// Parsed from the "channel_modes" JSON field on project beads.
+	ChannelModes map[string]string
+
 	Secrets        []SecretEntry       // Per-project secret overrides
 	EnvVars        []EnvEntry          // Per-project plain env vars
 	Repos          []RepoEntry         // Multi-repo definitions
@@ -120,6 +126,13 @@ func (c *Client) ListProjectBeads(ctx context.Context) (map[string]ProjectInfo, 
 			var roles map[string]string
 			if json.Unmarshal([]byte(raw), &roles) == nil {
 				info.ChannelRoles = roles
+			}
+		}
+		// Parse per-channel interaction modes from JSON field.
+		if raw := fields["channel_modes"]; raw != "" {
+			var modes map[string]string
+			if json.Unmarshal([]byte(raw), &modes) == nil {
+				info.ChannelModes = modes
 			}
 		}
 		// Parse per-project secrets from JSON field.
@@ -221,4 +234,14 @@ func (p ProjectInfo) HasChannel(channelID string) bool {
 // ChannelRole returns the role override for the given Slack channel, or empty string if none.
 func (p ProjectInfo) ChannelRole(channelID string) string {
 	return p.ChannelRoles[channelID]
+}
+
+// ChannelMode returns the interaction mode for the given Slack channel.
+// Returns "concierge" for channels configured in concierge mode, or
+// "mention" (the default) for unconfigured channels.
+func (p ProjectInfo) ChannelMode(channelID string) string {
+	if mode := p.ChannelModes[channelID]; mode != "" {
+		return mode
+	}
+	return "mention"
 }
