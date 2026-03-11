@@ -282,7 +282,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
     npx playwright install --with-deps chromium && \
-    npx --package=@playwright/mcp playwright install chromium && \
+    $(npm root -g)/@playwright/mcp/node_modules/.bin/playwright install chromium && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \

@@ -706,6 +706,7 @@ tasks:
 
       PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright $OUT/usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
 
       # Capture chromium system deps for the agent image.
       # The dpkg before/after diff misses packages already in the RWX runner,
