@@ -185,7 +185,7 @@ func MonorepoImageConfigs(repo RepoRef, tag string) []ImageTrackConfig {
 		return nil
 	}
 	return []ImageTrackConfig{
-		{Name: "agent", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/agent/", "gasboat/.rwx/docker.yml", "gasboat/.rwx/agent-"}},
+		{Name: "agent", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/agent/", ".rwx/docker.yml", "gasboat/.rwx/agent-"}},
 		{Name: "controller", Repo: repo, Tag: tag, Paths: []string{"gasboat/controller/"}},
 		{Name: "slack-bridge", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/slack-bridge/", "gasboat/controller/"}},
 		{Name: "jira-bridge", Repo: repo, Tag: tag, Paths: []string{"gasboat/images/jira-bridge/", "gasboat/controller/"}},
