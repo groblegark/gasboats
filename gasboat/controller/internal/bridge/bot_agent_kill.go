@@ -98,6 +98,19 @@ func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentNa
 		}
 	}
 
+	// Reject respawns with no project — same rule as initial thread spawn.
+	if project == "" {
+		b.logger.Warn("respawn-thread-agent: rejected — no project resolved",
+			"channel", channel, "agent", agentName)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(":x: Cannot resume agent — no project is mapped to this channel. Use `--project <name>` to specify one.", false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		return
+	}
+
 	// Build agent bead fields.
 	fields := map[string]string{
 		"agent":                agentName,

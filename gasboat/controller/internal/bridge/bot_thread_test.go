@@ -245,6 +245,11 @@ func TestResolveAgentThread_NotFound(t *testing.T) {
 
 func TestRespawnThreadAgent_CreatesSameNameBead(t *testing.T) {
 	daemon := newMockDaemon()
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-test"] = &beadsapi.BeadDetail{
+		ID: "proj-test", Title: "testproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-thread-test"},
+	}
 
 	dir := t.TempDir()
 	state, err := NewStateManager(filepath.Join(dir, "state.json"))
@@ -306,6 +311,36 @@ func TestRespawnThreadAgent_CreatesSameNameBead(t *testing.T) {
 	}
 	if !hasLabel(found.Labels, "slack-thread") {
 		t.Errorf("expected slack-thread label, got %v", found.Labels)
+	}
+}
+
+func TestRespawnThreadAgent_RejectsNoProject(t *testing.T) {
+	daemon := newMockDaemon()
+	// No project bead → no channel mapping → should reject.
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = state.SetThreadAgent("C-unmapped", "1111.2222", "thread-1111-2222")
+
+	b := &Bot{
+		daemon:          daemon,
+		state:           state,
+		logger:          slog.Default(),
+		botUserID:       "U-BOT",
+		agentCards:      map[string]MessageRef{},
+		threadSpawnMsgs: make(map[string]MessageRef),
+	}
+
+	b.respawnThreadAgent(context.Background(), "C-unmapped", "1111.2222", "thread-1111-2222", "wake up")
+
+	// Should NOT have created any agent bead.
+	for _, bead := range daemon.beads {
+		if bead.Type == "agent" {
+			t.Errorf("expected no agent bead, got %q", bead.Title)
+		}
 	}
 }
 
@@ -460,6 +495,11 @@ func TestNotifyAgentState_FailedPreservesThreadMapping(t *testing.T) {
 func TestHandleAppMention_InactiveThreadAgent_Respawns(t *testing.T) {
 	daemon := newMockDaemon()
 	// Agent NOT in daemon → FindAgentBead will fail.
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-test"] = &beadsapi.BeadDetail{
+		ID: "proj-test", Title: "testproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-test"},
+	}
 
 	dir := t.TempDir()
 	state, err := NewStateManager(filepath.Join(dir, "state.json"))
@@ -514,6 +554,11 @@ func TestHandleAppMention_InactiveThreadAgent_Respawns(t *testing.T) {
 
 func TestHandleThreadSpawn_ConcurrentMentionsSpawnOnce(t *testing.T) {
 	daemon := newMockDaemon()
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-race"] = &beadsapi.BeadDetail{
+		ID: "proj-race", Title: "raceproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-race-test"},
+	}
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 

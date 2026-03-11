@@ -441,6 +441,20 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		}
 	}
 
+	// Reject thread spawns with no project — agents must have a project
+	// so they get the correct config, secrets, and repos.
+	if project == "" {
+		b.logger.Warn("thread-spawn: rejected — no project resolved",
+			"channel", channel, "thread_ts", threadTS)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(":x: Cannot spawn agent — no project is mapped to this channel. Use `--project <name>` to specify one.", false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		return
+	}
+
 	// Validate explicit project override exists as a project bead.
 	// If the user explicitly typed --project=X and X doesn't exist,
 	// warn them rather than silently spawning with no project config.

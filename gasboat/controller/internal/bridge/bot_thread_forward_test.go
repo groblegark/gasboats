@@ -263,6 +263,11 @@ func TestHandleMessageEvent_ThreadForward_SkipsSubtypes(t *testing.T) {
 func TestHandleMessageEvent_ThreadForward_InactiveAgent_Respawns(t *testing.T) {
 	daemon := newMockDaemon()
 	// Agent NOT in daemon → FindAgentBead will fail → should respawn with session resume.
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-test"] = &beadsapi.BeadDetail{
+		ID: "proj-test", Title: "testproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-test"},
+	}
 
 	dir := t.TempDir()
 	state, err := NewStateManager(filepath.Join(dir, "state.json"))
