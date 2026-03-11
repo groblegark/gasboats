@@ -457,8 +457,14 @@ func (s *Scheduler) spawnScheduledAgent(ctx context.Context, sched Schedule) (st
 		return "", fmt.Errorf("creating scheduled task bead: %w", err)
 	}
 
-	// Spawn the agent with the task pre-assigned.
-	beadID, err := s.daemon.SpawnAgent(ctx, agentName, project, taskID, role, prompt)
+	// Spawn the agent with the task pre-assigned, including schedule metadata
+	// so the bridge can identify this as a scheduled run and customize notifications.
+	schedFields := map[string]string{
+		"schedule_id":    sched.ID,
+		"schedule_title": sched.Title,
+		"schedule_cron":  sched.Cron,
+	}
+	beadID, err := s.daemon.SpawnAgent(ctx, agentName, project, taskID, role, prompt, schedFields)
 	if err != nil {
 		return "", fmt.Errorf("spawning agent for schedule %s: %w", sched.ID, err)
 	}

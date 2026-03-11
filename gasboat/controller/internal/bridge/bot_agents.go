@@ -77,6 +77,8 @@ func (b *Bot) pruneStaleAgentCards(ctx context.Context) {
 			delete(b.agentImageTag, agent)
 			delete(b.agentRole, agent)
 			delete(b.agentProject, agent)
+			delete(b.agentScheduleTitle, agent)
+			delete(b.agentSpawnedAt, agent)
 		}
 		b.mu.Unlock()
 
@@ -218,14 +220,19 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	// events that may use full paths vs short names.
 	agent = extractAgentName(agent)
 
+	now := time.Now()
 	b.mu.Lock()
 	b.agentState[agent] = "spawning"
-	b.agentSeen[agent] = time.Now()
+	b.agentSeen[agent] = now
+	b.agentSpawnedAt[agent] = now
 	if role := bead.Fields["role"]; role != "" {
 		b.agentRole[agent] = role
 	}
 	if project := bead.Fields["project"]; project != "" {
 		b.agentProject[agent] = project
+	}
+	if schedTitle := bead.Fields["schedule_title"]; schedTitle != "" {
+		b.agentScheduleTitle[agent] = schedTitle
 	}
 	if spawnCh := bead.Fields["slack_spawn_channel"]; spawnCh != "" {
 		b.agentSpawnChannel[agent] = spawnCh
@@ -247,6 +254,34 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	}
 
 	channel := b.resolveChannel(agent)
+
+	// Scheduled agents get a concise schedule-specific notification.
+	if schedTitle := bead.Fields["schedule_title"]; schedTitle != "" {
+		schedText := fmt.Sprintf(":clock1: Scheduled task *%s* started (`%s`)", schedTitle, agent)
+		if cron := bead.Fields["schedule_cron"]; cron != "" {
+			schedText += fmt.Sprintf(" · `%s`", cron)
+		}
+		_, _, err := b.api.PostMessageContext(ctx, channel,
+			slack.MsgOptionText(fmt.Sprintf("Scheduled task %s started (%s)", schedTitle, agent), false),
+			slack.MsgOptionBlocks(
+				slack.NewSectionBlock(
+					slack.NewTextBlockObject("mrkdwn", schedText, false, false),
+					nil, nil),
+			),
+		)
+		if err != nil {
+			b.logger.Error("failed to post scheduled agent spawn message",
+				"agent", agent, "schedule", schedTitle, "error", err)
+		}
+		// Also post the normal agent card if threading is enabled.
+		if b.agentThreadingEnabled() {
+			if _, err := b.ensureAgentCard(ctx, agent, channel); err != nil {
+				b.logger.Error("failed to post agent spawn card",
+					"agent", agent, "error", err)
+			}
+		}
+		return
+	}
 
 	if b.agentThreadingEnabled() {
 		if _, err := b.ensureAgentCard(ctx, agent, channel); err != nil {
@@ -313,6 +348,18 @@ func (b *Bot) NotifyAgentState(_ context.Context, bead BeadEvent) {
 			// Keep the thread→agent mapping so future replies in this thread
 			// can respawn the same agent with session resume (same name, same PVC).
 			return
+		}
+	}
+
+	// Scheduled agents: post a concise completion/failure notification.
+	if (state == "done" || state == "failed") && state != prevState {
+		b.mu.Lock()
+		schedTitle := b.agentScheduleTitle[agent]
+		spawnedAt := b.agentSpawnedAt[agent]
+		b.mu.Unlock()
+
+		if schedTitle != "" {
+			b.postScheduleStateNotification(agent, schedTitle, state, spawnedAt, bead)
 		}
 	}
 
@@ -386,6 +433,77 @@ func (b *Bot) postThreadStateReply(ctx context.Context, agent, state string, bea
 		b.logger.Error("failed to post thread state reply",
 			"agent", agent, "state", state, "error", err)
 	}
+}
+
+// postScheduleStateNotification posts a concise Slack message when a scheduled
+// agent reaches a terminal state (done or failed).
+func (b *Bot) postScheduleStateNotification(agent, schedTitle, state string, spawnedAt time.Time, bead BeadEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	channel := b.resolveChannel(agent)
+
+	var emoji, verb string
+	switch state {
+	case "done":
+		emoji = ":white_check_mark:"
+		verb = "completed"
+	case "failed":
+		emoji = ":x:"
+		verb = "failed"
+	default:
+		return
+	}
+
+	text := fmt.Sprintf("%s Scheduled task *%s* %s", emoji, schedTitle, verb)
+
+	// Add duration if we know the spawn time.
+	if !spawnedAt.IsZero() {
+		dur := time.Since(spawnedAt).Truncate(time.Second)
+		text += fmt.Sprintf(" in %s", formatDuration(dur))
+	}
+
+	// Add failure reason if available.
+	if state == "failed" {
+		if reason := bead.Fields["close_reason"]; reason != "" {
+			text += fmt.Sprintf(": %s", truncateText(reason, 300))
+		}
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, channel,
+		slack.MsgOptionText(fmt.Sprintf("Scheduled task %s %s", schedTitle, verb), false),
+		slack.MsgOptionBlocks(
+			slack.NewSectionBlock(
+				slack.NewTextBlockObject("mrkdwn", text, false, false),
+				nil, nil),
+		),
+	)
+	if err != nil {
+		b.logger.Error("failed to post schedule state notification",
+			"agent", agent, "schedule", schedTitle, "state", state, "error", err)
+	}
+}
+
+// formatDuration formats a duration as a human-readable string.
+// e.g., "4m 12s", "1h 23m", "45s".
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
 }
 
 // NotifyAgentTaskUpdate is called when a task bead assigned to an agent changes

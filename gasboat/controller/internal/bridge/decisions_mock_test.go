@@ -101,7 +101,7 @@ func (m *mockDaemon) CreateBead(_ context.Context, req beadsapi.CreateBeadReques
 	return id, nil
 }
 
-func (m *mockDaemon) SpawnAgent(_ context.Context, agentName, project, taskID, role, customPrompt string) (string, error) {
+func (m *mockDaemon) SpawnAgent(_ context.Context, agentName, project, taskID, role, customPrompt string, extraFields ...map[string]string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if role == "" {
@@ -118,6 +118,11 @@ func (m *mockDaemon) SpawnAgent(_ context.Context, agentName, project, taskID, r
 	}
 	if taskID != "" {
 		fields["task_id"] = taskID
+	}
+	for _, extra := range extraFields {
+		for k, v := range extra {
+			fields[k] = v
+		}
 	}
 	m.beads[id] = &beadsapi.BeadDetail{
 		ID:          id,

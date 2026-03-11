@@ -251,7 +251,9 @@ func (c *Client) CreateBead(ctx context.Context, req CreateBeadRequest) (string,
 // customPrompt is an optional prompt string injected into the agent session at startup.
 // When non-empty, it is stored in the bead's "prompt" field and passed as BOAT_PROMPT
 // to the agent pod.
-func (c *Client) SpawnAgent(ctx context.Context, agentName, project, taskID, role, customPrompt string) (string, error) {
+// extraFields is an optional map of additional fields to include in the agent bead
+// (e.g., schedule metadata). These are merged after the standard fields.
+func (c *Client) SpawnAgent(ctx context.Context, agentName, project, taskID, role, customPrompt string, extraFields ...map[string]string) (string, error) {
 	if role == "" {
 		role = "crew"
 	}
@@ -266,6 +268,11 @@ func (c *Client) SpawnAgent(ctx context.Context, agentName, project, taskID, rol
 	}
 	if taskID != "" {
 		fields["task_id"] = taskID
+	}
+	for _, extra := range extraFields {
+		for k, v := range extra {
+			fields[k] = v
+		}
 	}
 	fieldsJSON, err := json.Marshal(fields)
 	if err != nil {
