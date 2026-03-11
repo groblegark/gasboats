@@ -19,6 +19,16 @@ func (b *Bot) handleBlockActions(ctx context.Context, callback slack.Interaction
 		actionID := action.ActionID
 
 		switch {
+		// Concierge Start button: spawn agent for channel message.
+		case actionID == "concierge_start":
+			b.handleConciergeStart(ctx, action.Value, callback)
+			return
+
+		// Concierge Dismiss button: remove the prompt.
+		case actionID == "concierge_dismiss":
+			b.handleConciergeDismiss(ctx, callback)
+			return
+
 		// Autodestruct confirm/cancel buttons.
 		case actionID == "autodestruct_confirm" || actionID == "autodestruct_cancel":
 			b.handleAutoDestructButtonAction(ctx, actionID, callback)
