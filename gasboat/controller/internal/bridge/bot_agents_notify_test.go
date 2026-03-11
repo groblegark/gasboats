@@ -766,3 +766,47 @@ func TestEnsureAgentCard_DifferentChannel_PostsNewCard(t *testing.T) {
 		t.Error("expected new card timestamp, got old one")
 	}
 }
+
+func TestEnsureAgentCard_InThread_SetsThreadTS(t *testing.T) {
+	daemon := newMockDaemon()
+
+	var mu sync.Mutex
+	var postedThreadTS string
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat.postMessage" {
+			_ = r.ParseForm()
+			mu.Lock()
+			postedThreadTS = r.FormValue("thread_ts")
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C-THREAD", "ts": "8888.9999"})
+	}))
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	ts, err := bot.ensureAgentCard(context.Background(), "thread-agent", "C-THREAD", "1234.5678")
+	if err != nil {
+		t.Fatalf("ensureAgentCard: %v", err)
+	}
+	if ts != "8888.9999" {
+		t.Errorf("expected new timestamp 8888.9999, got %q", ts)
+	}
+
+	// Verify the card was posted in the thread.
+	mu.Lock()
+	defer mu.Unlock()
+	if postedThreadTS != "1234.5678" {
+		t.Errorf("expected thread_ts 1234.5678, got %q", postedThreadTS)
+	}
+
+	// Verify the cached ref has ThreadTS set.
+	ref, ok := bot.agentCards["thread-agent"]
+	if !ok {
+		t.Fatal("expected agent card to be cached")
+	}
+	if ref.ThreadTS != "1234.5678" {
+		t.Errorf("expected cached ThreadTS 1234.5678, got %q", ref.ThreadTS)
+	}
+}

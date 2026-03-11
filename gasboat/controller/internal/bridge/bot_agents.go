@@ -133,7 +133,10 @@ func (b *Bot) agentTaskTitle(ctx context.Context, agent string) string {
 
 // ensureAgentCard posts or retrieves the agent status card for threading.
 // Returns the card's message timestamp for use as threadTS.
-func (b *Bot) ensureAgentCard(ctx context.Context, agent, channelID string) (string, error) {
+// If inThreadTS is provided (non-empty), the card is posted as a reply in that
+// thread. This is used for thread-bound agents so the card lives inside the
+// agent's thread and getAgentByThread can match via ref.ThreadTS.
+func (b *Bot) ensureAgentCard(ctx context.Context, agent, channelID string, inThreadTS ...string) (string, error) {
 	b.mu.Lock()
 	if ref, ok := b.agentCards[agent]; ok && ref.ChannelID == channelID {
 		b.mu.Unlock()
@@ -153,15 +156,22 @@ func (b *Bot) ensureAgentCard(ctx context.Context, agent, channelID string) (str
 
 	taskTitle := b.agentTaskTitle(ctx, agent)
 	blocks := buildAgentCardBlocks(agent, pending, state, taskTitle, seen, b.coopmuxPublicURL, podName, imageTag, role)
-	cardChannel, ts, err := b.api.PostMessageContext(ctx, channelID,
+	opts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Agent: %s", extractAgentName(agent)), false),
 		slack.MsgOptionBlocks(blocks...),
-	)
+	}
+	// Post in-thread if a parent thread was specified.
+	var parentTS string
+	if len(inThreadTS) > 0 && inThreadTS[0] != "" {
+		parentTS = inThreadTS[0]
+		opts = append(opts, slack.MsgOptionTS(parentTS))
+	}
+	cardChannel, ts, err := b.api.PostMessageContext(ctx, channelID, opts...)
 	if err != nil {
 		return "", fmt.Errorf("post agent card: %w", err)
 	}
 
-	ref := MessageRef{ChannelID: cardChannel, Timestamp: ts, Agent: agent}
+	ref := MessageRef{ChannelID: cardChannel, Timestamp: ts, Agent: agent, ThreadTS: parentTS}
 
 	b.mu.Lock()
 	b.agentCards[agent] = ref
@@ -171,7 +181,7 @@ func (b *Bot) ensureAgentCard(ctx context.Context, agent, channelID string) (str
 		_ = b.state.SetAgentCard(agent, ref)
 	}
 
-	b.logger.Info("posted agent status card", "agent", agent, "channel", cardChannel, "ts", ts)
+	b.logger.Info("posted agent status card", "agent", agent, "channel", cardChannel, "ts", ts, "thread_ts", parentTS)
 	return ts, nil
 }
 
@@ -414,7 +424,15 @@ func (b *Bot) updateAgentCard(ctx context.Context, agent string) {
 		// full assignee path) by posting a card under the canonical identity.
 		if b.agentThreadingEnabled() {
 			channel := b.resolveChannel(agent)
-			if _, err := b.ensureAgentCard(ctx, agent, channel); err != nil {
+			// Thread-bound agents: post the card IN the agent's thread so that
+			// getAgentByThread can match via ref.ThreadTS. Without this, a card
+			// posted top-level is invisible to thread-reply routing.
+			var threadTS string
+			if ch, ts := b.resolveAgentThread(ctx, agent); ch != "" && ts != "" {
+				channel = ch
+				threadTS = ts
+			}
+			if _, err := b.ensureAgentCard(ctx, agent, channel, threadTS); err != nil {
 				b.logger.Error("failed to create agent card on state update",
 					"agent", agent, "error", err)
 			}
