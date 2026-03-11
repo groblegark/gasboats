@@ -698,7 +698,10 @@ tasks:
         | tar -xJ --strip-components=1 -C $OUT/usr/local
 
       PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
+      # Install for both the standalone playwright and the @playwright/mcp bundled
+      # version — they may expect different chromium revisions.
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx --package=@playwright/mcp playwright install chromium
 
       # Capture chromium system deps for the agent image.
       # The dpkg before/after diff misses packages already in the RWX runner,
@@ -951,16 +954,36 @@ tasks:
       LAYER=/tmp/layer
       mkdir -p $LAYER
 
-      # Unpack all cached install layers in parallel
-      echo "=== Unpacking cached layers (parallel) ==="
-      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER &
+      # Unpack syspackages and playwright sequentially — both write to
+      # /usr/lib/x86_64-linux-gnu/ and parallel extraction races on shared
+      # directory entries, silently dropping .so files (libnspr4, libnss3, etc.).
+      echo "=== Unpacking layers with shared lib dirs (sequential) ==="
+      sudo tar -xf ${{ tasks.agent-install-syspackages.artifacts.syspackages-tar }} -C $LAYER
+      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER
+      echo "=== Unpacking remaining layers (parallel) ==="
       sudo tar -xf ${{ tasks.agent-install-node.artifacts.node-tar }} -C $LAYER &
-      sudo tar -xf ${{ tasks.agent-install-playwright.artifacts.playwright-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-go.artifacts.go-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-rust.artifacts.rust-tar }} -C $LAYER &
       sudo tar -xf ${{ tasks.agent-install-clis.artifacts.clis-tar }} -C $LAYER &
       wait
       echo "=== All layers unpacked ==="
+
+      # Restore usrmerge symlinks.
+      # ubuntu:24.04 base has /lib -> usr/lib, /bin -> usr/bin, /sbin -> usr/sbin.
+      # The layer tars create real /lib/, /bin/, /sbin/ directories (from ldd copy
+      # loops that follow the symlinks), which clobber the base image's symlinks
+      # when crane-appended as a flat layer. This breaks shared library resolution
+      # for any libs installed to /usr/lib/x86_64-linux-gnu/ (e.g., Playwright's
+      # browser deps: libnspr4, libnss3, libatk, etc.).
+      echo "=== Restoring usrmerge symlinks ==="
+      for dir in lib bin sbin; do
+        if [ -d "$LAYER/$dir" ] && ! [ -L "$LAYER/$dir" ]; then
+          sudo cp -a "$LAYER/$dir/"* "$LAYER/usr/$dir/" 2>/dev/null || true
+          sudo rm -rf "$LAYER/$dir"
+          ln -s "usr/$dir" "$LAYER/$dir"
+          echo "  $dir/ -> usr/$dir (merged $(find $LAYER/usr/$dir -type f 2>/dev/null | wc -l) files)"
+        fi
+      done
 
       # Project binaries — ALL FROM SOURCE (monorepo advantage)
       echo "=== Adding project binaries (built from source) ==="
