@@ -18,6 +18,10 @@
 #
 # Key monorepo improvement: coop and kd are built FROM SOURCE, not downloaded
 # from GitHub releases. No cross-repo dispatch needed.
+#
+# Feature branch builds (agent-only):
+#   rwx run .rwx/docker.yml --init build-target=agent
+#   Builds and pushes only the agent image, tagged "cli".
 
 on:
   github:
@@ -26,12 +30,14 @@ on:
       init:
         commit-sha: ${{ event.git.sha }}
         ref-name: ${{ event.git.ref }}
+        build-target: all
       status-checks:
         name: Docker
     pull_request:
       init:
         commit-sha: ${{ event.git.sha }}
         ref-name: pr
+        build-target: all
       status-checks:
         - tasks: [build-controller, build-gb, build-slack-bridge, build-jira-bridge, build-gitlab-bridge, build-advice-viewer, build-coop, build-kd]
           name: Docker
@@ -39,6 +45,7 @@ on:
     init:
       commit-sha: ${{ event.git.sha }}
       ref-name: cli
+      build-target: all
 
 base:
   image: ubuntu:24.04
@@ -328,7 +335,7 @@ tasks:
   # ── Push controller ─────────────────────────────────────────────────
   - key: push-controller
     use: [code, build-controller, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -356,7 +363,7 @@ tasks:
   # ── Push slack-bridge ───────────────────────────────────────────────
   - key: push-slack-bridge
     use: [code, build-slack-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -380,7 +387,7 @@ tasks:
   # ── Push jira-bridge ────────────────────────────────────────────────
   - key: push-jira-bridge
     use: [build-jira-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -404,7 +411,7 @@ tasks:
   # ── Push gitlab-bridge ──────────────────────────────────────────────
   - key: push-gitlab-bridge
     use: [build-gitlab-bridge, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -428,7 +435,7 @@ tasks:
   # ── Push advice-viewer ──────────────────────────────────────────────
   - key: push-advice-viewer
     use: [build-advice-viewer, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -452,7 +459,7 @@ tasks:
   # ── Push kbeads (MONOREPO: built from source, no cross-repo dispatch) ─
   - key: push-kbeads
     use: [build-kd, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -476,7 +483,7 @@ tasks:
   # ── Push coop/coopmux (MONOREPO: built from source) ────────────────
   - key: push-coop
     use: [build-coop, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -514,7 +521,7 @@ tasks:
   # ── Push beads3d (MONOREPO: built from source, no more retag) ──────
   - key: push-beads3d
     use: [build-beads3d, install-crane]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && init.build-target == 'all' }}
     cache: false
     run: |
       set -ex
@@ -699,6 +706,7 @@ tasks:
 
       PATH=$OUT/usr/local/bin:$PATH npm install -g playwright@1.58.2 @playwright/mcp
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright PATH=$OUT/usr/local/bin:$PATH npx playwright install --with-deps chromium
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright $OUT/usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
 
       # Capture chromium system deps for the agent image.
       # The dpkg before/after diff misses packages already in the RWX runner,
@@ -913,6 +921,12 @@ tasks:
         chmod +x $OUT/usr/local/bin/claudeless
       ) &
       (
+        # RWX CLI
+        curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v3.7.1/rwx-linux-x86_64" \
+          -o $OUT/usr/local/bin/rwx
+        chmod +x $OUT/usr/local/bin/rwx
+      ) &
+      (
         # whisper-cli
         sudo apt-get update && sudo apt-get install -y cmake libsdl2-dev gcc g++ make
         curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz" \
@@ -940,7 +954,7 @@ tasks:
   # ── Agent assembly: merge all layers + push ────────────────────────
   - key: push-agent
     use: [code, build-gb, build-coop, build-kd, install-crane, agent-install-syspackages, agent-install-node, agent-install-playwright, agent-install-go, agent-install-rust, agent-install-clis]
-    if: ${{ init.ref-name != 'pr' }}
+    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
     cache: false
     timeout: 10m
     run: |

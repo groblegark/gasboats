@@ -749,7 +749,10 @@ tasks:
         done || true
       done
       # Install Chromium browser (managed by Playwright).
+      # Install for both the standalone playwright and the @playwright/mcp bundled
+      # version — they may expect different chromium revisions.
       PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx playwright install chromium
+      PLAYWRIGHT_BROWSERS_PATH=$OUT/ms-playwright npx --package=@playwright/mcp playwright install chromium
       chmod -R 777 $OUT/ms-playwright
 
       # Install Google Chrome Stable (system browser at /opt/google/chrome/chrome).

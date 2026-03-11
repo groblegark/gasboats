@@ -254,7 +254,7 @@ RUN case "${TARGETARCH}" in arm64) RTK_TRIPLE=aarch64-unknown-linux-gnu ;; *) RT
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_TRIPLE}.tar.gz" \
       | tar -xz -C /usr/local/bin rtk
 
-# ── RWX CLI (CI/CD platform CLI) ──────────────────────────────
+# ── RWX CLI (CI pipeline runner) ──────────────────────────────
 ARG RWX_VERSION=3.7.1
 RUN case "${TARGETARCH}" in arm64) RWX_ARCH=aarch64 ;; *) RWX_ARCH=x86_64 ;; esac && \
     curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
@@ -282,11 +282,13 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
     npx playwright install --with-deps chromium && \
+    $(npm root -g)/@playwright/mcp/node_modules/.bin/playwright install chromium && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+      fonts-noto-core fontconfig && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
     chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}
