@@ -198,6 +198,46 @@ func TestGetAgentByThread_ThreadAgents(t *testing.T) {
 			t.Errorf("got %q, want %q", got, "gasboat/crew/k8s")
 		}
 	})
+
+	t.Run("matches card posted in-thread via ThreadTS", func(t *testing.T) {
+		// Card posted as a reply in thread 5555.6666 — card's own timestamp
+		// is 5555.7777 but ThreadTS points to the parent thread.
+		b.mu.Lock()
+		b.agentCards["thread-bound-agent"] = MessageRef{
+			ChannelID: "C-thread",
+			Timestamp: "5555.7777", // card's own ts
+			ThreadTS:  "5555.6666", // parent thread ts
+			Agent:     "thread-bound-agent",
+		}
+		b.mu.Unlock()
+
+		// Should match when looking up the parent thread ts.
+		got := b.getAgentByThread("C-thread", "5555.6666")
+		if got != "thread-bound-agent" {
+			t.Errorf("got %q, want %q", got, "thread-bound-agent")
+		}
+
+		// Should also match via card's own ts (replies under the card itself).
+		got = b.getAgentByThread("C-thread", "5555.7777")
+		if got != "thread-bound-agent" {
+			t.Errorf("got %q, want %q", got, "thread-bound-agent")
+		}
+	})
+
+	t.Run("matches persisted card via ThreadTS", func(t *testing.T) {
+		// Store an in-thread card only in persisted state (not hot cache).
+		_ = state.SetAgentCard("persisted-thread-agent", MessageRef{
+			ChannelID: "C-persist",
+			Timestamp: "6666.7777",
+			ThreadTS:  "6666.5555",
+			Agent:     "persisted-thread-agent",
+		})
+
+		got := b.getAgentByThread("C-persist", "6666.5555")
+		if got != "persisted-thread-agent" {
+			t.Errorf("got %q, want %q", got, "persisted-thread-agent")
+		}
+	})
 }
 
 func TestResolveAgentFromText(t *testing.T) {

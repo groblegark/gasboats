@@ -248,9 +248,11 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 	}
 
 	// Check agentCards hot cache (agent card threads).
+	// Match on both ref.Timestamp (card is the thread parent) and
+	// ref.ThreadTS (card posted inside a thread — e.g. thread-bound agents).
 	b.mu.Lock()
 	for agent, ref := range b.agentCards {
-		if ref.ChannelID == channelID && ref.Timestamp == threadTS {
+		if ref.ChannelID == channelID && (ref.Timestamp == threadTS || ref.ThreadTS == threadTS) {
 			b.mu.Unlock()
 			return agent
 		}
@@ -260,7 +262,7 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 	// Fall back to persisted agentCards state.
 	if b.state != nil {
 		for agent, ref := range b.state.AllAgentCards() {
-			if ref.ChannelID == channelID && ref.Timestamp == threadTS {
+			if ref.ChannelID == channelID && (ref.Timestamp == threadTS || ref.ThreadTS == threadTS) {
 				return agent
 			}
 		}
