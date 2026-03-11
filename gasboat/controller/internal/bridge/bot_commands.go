@@ -163,6 +163,10 @@ func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, 
 	if len(positional) >= 2 {
 		project = positional[1]
 	}
+	// Fall back to channel-based project inference.
+	if project == "" {
+		project = b.projectFromChannel(ctx, cmd.ChannelID)
+	}
 
 	// Validate project exists.
 	if project != "" {
@@ -264,6 +268,11 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 		project = projectFlag
 	}
 
+	// Fall back to channel-based project inference.
+	if project == "" {
+		project = b.projectFromChannel(ctx, cmd.ChannelID)
+	}
+
 	// Validate project exists.
 	if project != "" {
 		if !b.validateProject(ctx, cmd, project) {
@@ -277,6 +286,14 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 // spawnAndRespond creates an agent bead and sends a confirmation ephemeral message.
 // Extracted from the old handleSpawnCommand to share between /spawn and /start.
 func (b *Bot) spawnAndRespond(ctx context.Context, cmd slack.SlashCommand, agentName, project, taskID, role, customPrompt string) {
+	if project == "" {
+		b.logger.Warn("spawn rejected — no project resolved",
+			"agent", agentName, "channel", cmd.ChannelID, "user", cmd.UserID)
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(":x: Cannot spawn agent — no project is mapped to this channel. Use `--project <name>` to specify one.", false))
+		return
+	}
+
 	beadID, err := b.daemon.SpawnAgent(ctx, agentName, project, taskID, role, customPrompt)
 	if err != nil {
 		b.logger.Error("failed to spawn agent", "agent", agentName, "project", project, "task", taskID, "role", role, "prompt", customPrompt, "error", err)

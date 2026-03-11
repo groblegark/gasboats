@@ -14,6 +14,7 @@ import (
 
 func TestHandleSpawnCommand_NoArgs_CreatesAgentWithAutoName(t *testing.T) {
 	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C123")
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 
@@ -31,13 +32,29 @@ func TestHandleSpawnCommand_NoArgs_CreatesAgentWithAutoName(t *testing.T) {
 		t.Fatalf("expected 1 agent bead created with auto-name, got %d", len(agentBeads))
 	}
 	for _, b := range agentBeads {
-		// Name should be "agent-<4chars>" since no project
-		if !strings.HasPrefix(b.Title, "agent-") {
-			t.Errorf("expected auto-generated name with prefix 'agent-', got %q", b.Title)
-		}
 		if !isValidAgentName(b.Title) {
 			t.Errorf("auto-generated name %q is not valid", b.Title)
 		}
+	}
+}
+
+func TestHandleSpawnCommand_NoProject_Rejected(t *testing.T) {
+	daemon := newMockDaemon()
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "",
+		ChannelID: "C-UNMAPPED",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 0 {
+		t.Errorf("expected no agent beads for unmapped channel, got %d", len(agentBeads))
 	}
 }
 
@@ -173,6 +190,7 @@ func TestHandleSpawnCommand_TicketNotFound_NoBeadCreated(t *testing.T) {
 
 func TestHandleSpawnCommand_WithRole(t *testing.T) {
 	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C123")
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 
@@ -346,7 +364,7 @@ func TestHandleSpawnCommand_ProjectAndTaskDescriptionOverridesChannel(t *testing
 	}
 }
 
-func TestHandleSpawnCommand_TaskFirstMode_NoProject(t *testing.T) {
+func TestHandleSpawnCommand_TaskFirstMode_NoProject_Rejected(t *testing.T) {
 	daemon := newMockDaemon()
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
@@ -356,18 +374,14 @@ func TestHandleSpawnCommand_TaskFirstMode_NoProject(t *testing.T) {
 	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
 		Command:   "/spawn",
 		Text:      `"fix the login bug"`,
-		ChannelID: "C123",
+		ChannelID: "C-UNMAPPED",
 		UserID:    "U456",
 	})
 
-	taskBeads := filterBeadsByType(daemon.beads, "task")
-	if len(taskBeads) != 1 {
-		t.Fatalf("expected 1 task bead created, got %d", len(taskBeads))
-	}
-
+	// Task bead is created before spawnAndRespond, but agent should be rejected.
 	agentBeads := filterAgentBeads(daemon.beads)
-	if len(agentBeads) != 1 {
-		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	if len(agentBeads) != 0 {
+		t.Errorf("expected no agent beads for unmapped channel, got %d", len(agentBeads))
 	}
 }
 
@@ -576,6 +590,7 @@ func TestExtractSpawnFlags(t *testing.T) {
 
 func TestHandleSlashCommand_RoutesStartAndSpawn(t *testing.T) {
 	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C123")
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 
@@ -643,6 +658,7 @@ func TestSplitQuotedArgs_SmartQuotes(t *testing.T) {
 
 func TestHandleSpawnCommand_SmartQuotes_PassesPrompt(t *testing.T) {
 	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C123")
 	slackSrv := newFakeSlackServer(t)
 	defer slackSrv.Close()
 
