@@ -829,6 +829,32 @@ func TestHandleSpawnCommand_ProjectFlag_WithRole(t *testing.T) {
 	}
 }
 
+func TestHandleSpawnCommand_StoresSpawnChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	bot.handleSpawnCommand(context.Background(), slack.SlashCommand{
+		Command:   "/spawn",
+		Text:      "",
+		ChannelID: "C-GASBOAT",
+		UserID:    "U456",
+	})
+
+	agentBeads := filterAgentBeads(daemon.beads)
+	if len(agentBeads) != 1 {
+		t.Fatalf("expected 1 agent bead created, got %d", len(agentBeads))
+	}
+	for _, b := range agentBeads {
+		if b.Fields["slack_spawn_channel"] != "C-GASBOAT" {
+			t.Errorf("expected slack_spawn_channel=C-GASBOAT, got %q", b.Fields["slack_spawn_channel"])
+		}
+	}
+}
+
 func TestHandleSpawnCommand_ProjectFlag_NoChannel(t *testing.T) {
 	daemon := newMockDaemon()
 	daemon.seedProject("gasboat")
@@ -853,6 +879,70 @@ func TestHandleSpawnCommand_ProjectFlag_NoChannel(t *testing.T) {
 		if b.Fields["project"] != "gasboat" {
 			t.Errorf("expected project=gasboat (from --project in unmapped channel), got %s", b.Fields["project"])
 		}
+	}
+}
+
+// --- resolveChannel spawn-channel-aware tests ---
+
+func TestResolveChannel_SpawnChannel_TakesPrecedenceOverProjectPrimary(t *testing.T) {
+	daemon := newMockDaemon()
+	// Project has C-PRIMARY as its first (primary) channel.
+	daemon.seedProjectWithChannel("monorepo", "C-PRIMARY")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+
+	bot.agentProject["my-agent"] = "monorepo"
+	// Agent was spawned from C-GASBOATS (a different channel than the primary).
+	bot.agentSpawnChannel["my-agent"] = "C-GASBOATS"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-GASBOATS" {
+		t.Errorf("expected C-GASBOATS (spawn channel > project primary), got %q", result)
+	}
+}
+
+func TestResolveChannel_SpawnChannel_NoSpawnChannel_FallsBackToProject(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+
+	bot.agentProject["my-agent"] = "gasboat"
+	// No spawn channel set — should fall back to project primary.
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-GASBOAT" {
+		t.Errorf("expected C-GASBOAT (project primary, no spawn channel), got %q", result)
+	}
+}
+
+func TestResolveChannel_RouterOverride_TakesPrecedenceOverSpawnChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C-GASBOAT")
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C-DEFAULT"
+	bot.router = NewRouter(RouterConfig{
+		DefaultChannel: "C-ROUTER-DEFAULT",
+		Overrides: map[string]string{
+			"my-agent": "C-OVERRIDE",
+		},
+	})
+
+	bot.agentProject["my-agent"] = "gasboat"
+	bot.agentSpawnChannel["my-agent"] = "C-GASBOATS"
+
+	result := bot.resolveChannel("my-agent")
+	if result != "C-OVERRIDE" {
+		t.Errorf("expected C-OVERRIDE (router override > spawn channel), got %q", result)
 	}
 }
 

@@ -304,12 +304,20 @@ func (b *Bot) spawnAndRespond(ctx context.Context, cmd slack.SlashCommand, agent
 
 	b.logger.Info("spawned agent via Slack", "agent", agentName, "project", project, "task", taskID, "role", role, "prompt", customPrompt, "bead", beadID, "user", cmd.UserID)
 
-	// Best-effort: store the Slack user ID of the spawner on the agent bead
-	// so decision notifications can @mention the right person.
-	if cmd.UserID != "" {
-		_ = b.daemon.UpdateBeadFields(ctx, beadID, map[string]string{
-			"slack_user_id": cmd.UserID,
-		})
+	// Best-effort: store the Slack user ID and source channel on the agent
+	// bead so decision notifications can @mention the right person and the
+	// agent card is posted to the channel where /spawn was issued.
+	{
+		fields := map[string]string{}
+		if cmd.UserID != "" {
+			fields["slack_user_id"] = cmd.UserID
+		}
+		if cmd.ChannelID != "" {
+			fields["slack_spawn_channel"] = cmd.ChannelID
+		}
+		if len(fields) > 0 {
+			_ = b.daemon.UpdateBeadFields(ctx, beadID, fields)
+		}
 	}
 
 	text := fmt.Sprintf(":rocket: Spawning agent *%s*", agentName)

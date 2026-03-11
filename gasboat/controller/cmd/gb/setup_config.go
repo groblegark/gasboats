@@ -80,11 +80,12 @@ func writeMCPConfig(workspace string, config map[string]any) error {
 		}
 	}
 
-	// Ensure playwright MCP always has --browser specified.
+	// Ensure playwright MCP always has --browser and PLAYWRIGHT_BROWSERS_PATH.
 	// Without --browser, playwright-mcp defaults to "chrome" which requires
 	// system-installed Google Chrome. Add --browser chromium as a fallback
 	// to guarantee browser availability.
 	fixPlaywrightBrowser(existingServers)
+	fixPlaywrightEnv(existingServers)
 
 	existing["mcpServers"] = existingServers
 
@@ -133,6 +134,9 @@ func defaultMCPConfig() map[string]any {
 			"playwright": map[string]any{
 				"command": "playwright-mcp",
 				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox"},
+				"env": map[string]any{
+					"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+				},
 			},
 		},
 	}
@@ -164,6 +168,31 @@ func fixPlaywrightBrowser(servers map[string]any) {
 	// Prepend --browser chromium so the bundled Chromium is used as fallback.
 	cfg["args"] = append([]any{"--browser", "chromium"}, args...)
 	fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added --browser chromium (no --browser flag found)\n")
+}
+
+// fixPlaywrightEnv ensures the playwright MCP server config includes
+// PLAYWRIGHT_BROWSERS_PATH in its env block. Without it, the MCP server
+// cannot find Chromium installed at /ms-playwright/ even though the
+// Dockerfile sets the env var — config beads or user-provided .mcp.json
+// may override the default config, losing the env section.
+func fixPlaywrightEnv(servers map[string]any) {
+	pw, ok := servers["playwright"]
+	if !ok {
+		return
+	}
+	cfg, ok := pw.(map[string]any)
+	if !ok {
+		return
+	}
+	env, ok := cfg["env"].(map[string]any)
+	if !ok {
+		env = make(map[string]any)
+		cfg["env"] = env
+	}
+	if _, ok := env["PLAYWRIGHT_BROWSERS_PATH"]; !ok {
+		env["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
+		fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\n")
+	}
 }
 
 // appendDetectedPlugins auto-detects installed LSP servers and adds them

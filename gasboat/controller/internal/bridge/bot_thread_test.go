@@ -607,3 +607,85 @@ func TestHandleThreadSpawn_ConcurrentMentionsSpawnOnce(t *testing.T) {
 		t.Errorf("expected exactly 1 agent bead from concurrent spawns, got %d", agentCount)
 	}
 }
+
+func TestReconcileThreadAgents(t *testing.T) {
+	daemon := newMockDaemon()
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		agentCards: make(map[string]MessageRef),
+	}
+
+	t.Run("restores thread mappings from agent beads", func(t *testing.T) {
+		// Simulate an agent bead with thread fields (spawned by a previous bridge).
+		daemon.mu.Lock()
+		daemon.beads["bd-thread-agent"] = &beadsapi.BeadDetail{
+			ID:    "bd-thread-agent",
+			Title: "my-thread-agent",
+			Type:  "agent",
+			Fields: map[string]string{
+				"agent":                "my-thread-agent",
+				"role":                 "thread",
+				"project":              "gasboat",
+				"slack_thread_channel": "C-test",
+				"slack_thread_ts":      "1111.2222",
+			},
+		}
+		daemon.mu.Unlock()
+
+		b.ReconcileThreadAgents(context.Background())
+
+		agent, ok := state.GetThreadAgent("C-test", "1111.2222")
+		if !ok {
+			t.Fatal("expected thread→agent mapping to be restored")
+		}
+		if agent != "my-thread-agent" {
+			t.Errorf("got %q, want %q", agent, "my-thread-agent")
+		}
+	})
+
+	t.Run("does not overwrite existing mappings", func(t *testing.T) {
+		// Pre-set a mapping for the same thread.
+		_ = state.SetThreadAgent("C-test", "1111.2222", "existing-agent")
+
+		b.ReconcileThreadAgents(context.Background())
+
+		agent, _ := state.GetThreadAgent("C-test", "1111.2222")
+		if agent != "existing-agent" {
+			t.Errorf("existing mapping was overwritten: got %q, want %q", agent, "existing-agent")
+		}
+	})
+
+	t.Run("skips agents without thread fields", func(t *testing.T) {
+		// Clear all previous state and beads.
+		state.ClearAllThreadAgents()
+		daemon.mu.Lock()
+		daemon.beads = map[string]*beadsapi.BeadDetail{
+			"bd-card-agent": {
+				ID:    "bd-card-agent",
+				Title: "card-only-agent",
+				Type:  "agent",
+				Fields: map[string]string{
+					"agent":   "card-only-agent",
+					"role":    "crew",
+					"project": "gasboat",
+				},
+			},
+		}
+		daemon.mu.Unlock()
+
+		b.ReconcileThreadAgents(context.Background())
+
+		if len(state.AllThreadAgents()) != 0 {
+			t.Errorf("expected no thread agents, got %d", len(state.AllThreadAgents()))
+		}
+	})
+}
