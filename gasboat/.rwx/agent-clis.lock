@@ -7,3 +7,4 @@ terragrunt=0.77.11
 stern=1.30.0
 claudeless=v0.4.0
 rtk=v0.23.0
+rwx=v3.7.1
