@@ -937,6 +937,12 @@ tasks:
         cp /tmp/whisper-build/bin/whisper-cli $OUT/usr/local/bin/whisper-cli
         rm -rf /tmp/whisper.cpp-1.8.3 /tmp/whisper-build
       ) &
+      (
+        # rwx CLI
+        curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v3.7.1/rwx-linux-x86_64" \
+          -o $OUT/usr/local/bin/rwx
+        chmod +x $OUT/usr/local/bin/rwx
+      ) &
       wait
 
       sudo tar -cf clis.tar -C $OUT .
