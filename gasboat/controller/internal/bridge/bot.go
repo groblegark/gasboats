@@ -70,7 +70,8 @@ type Bot struct {
 	agentPodName  map[string]string    // agent identity → pod hostname (coopmux session ID)
 	agentImageTag map[string]string   // agent identity → deployed image tag
 	agentRole     map[string]string   // agent identity → role (e.g., "crew", "lead", "ops")
-	agentProject  map[string]string   // agent identity → project name (for channel routing)
+	agentProject      map[string]string // agent identity → project name (for channel routing)
+	agentSpawnChannel map[string]string // agent identity → Slack channel where /spawn was issued
 
 	// TTL-cached project→primary channel mapping (refreshed every projectChannelCacheTTL).
 	projectChannelCache   map[string]string // project name → primary Slack channel ID
@@ -156,8 +157,9 @@ func NewBot(cfg BotConfig) *Bot {
 		agentPodName:     make(map[string]string),
 		agentImageTag:    make(map[string]string),
 		agentRole:        make(map[string]string),
-		agentProject:     make(map[string]string),
-		threadSpawnMsgs:  make(map[string]MessageRef),
+		agentProject:      make(map[string]string),
+		agentSpawnChannel: make(map[string]string),
+		threadSpawnMsgs:   make(map[string]MessageRef),
 		beadMsgs:         make(map[string]MessageRef),
 		spawnInFlight:    make(map[string]bool),
 		lastThreadNudge:    make(map[string]time.Time),
