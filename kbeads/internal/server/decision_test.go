@@ -517,6 +517,128 @@ func TestDecisionGateOperatorOverride(t *testing.T) {
 	}
 }
 
+// TestDecisionGateOperatorNotConsumed verifies that operator overrides persist
+// across multiple Stop attempts. Unlike yield-based satisfaction (which is
+// consumed after one Stop), operator overrides must survive repeated Stop hooks
+// so thread agents and operator-cleared gates don't loop indefinitely.
+func TestDecisionGateOperatorNotConsumed(t *testing.T) {
+	_, gs, h := newGatedTestServer()
+
+	const agentID = "kd-agent-operator-persist"
+
+	// Step 1: Stop → gate pending → blocked.
+	stop1 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop1, 200)
+	var r1 map[string]any
+	decodeJSON(t, stop1, &r1)
+	if r1["block"] != true {
+		t.Fatalf("step 1: expected block=true, got %v", r1)
+	}
+
+	// Step 2: Operator satisfies gate + sets gate_satisfied_by=operator.
+	satisfyRec := doJSON(t, h, "POST", "/v1/agents/"+agentID+"/gates/decision/satisfy", nil)
+	requireStatus(t, satisfyRec, 200)
+	gs.beads[agentID] = &model.Bead{
+		ID:     agentID,
+		Fields: json.RawMessage(`{"gate_satisfied_by":"operator"}`),
+	}
+
+	// Step 3: First Stop after operator override → allowed.
+	stop2 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop2, 200)
+	var r2 map[string]any
+	decodeJSON(t, stop2, &r2)
+	if r2["block"] == true {
+		t.Fatalf("step 3: expected unblocked, got %v", r2)
+	}
+
+	// Step 4: Second Stop → operator override was NOT consumed → still allowed.
+	// This is the key assertion: without the fix, the gate would be consumed
+	// after step 3, and this step would block, causing an infinite loop for
+	// thread agents.
+	stop3 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop3, 200)
+	var r3 map[string]any
+	decodeJSON(t, stop3, &r3)
+	if r3["block"] == true {
+		t.Fatalf("step 4: expected operator override to persist (not consumed), got block=true")
+	}
+
+	// Step 5: Third Stop → still allowed (persistence is indefinite).
+	stop4 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop4, 200)
+	var r4 map[string]any
+	decodeJSON(t, stop4, &r4)
+	if r4["block"] == true {
+		t.Fatalf("step 5: expected operator override to persist on third attempt, got block=true")
+	}
+}
+
+// TestDecisionGateManualForceNotConsumed verifies the legacy "manual-force"
+// value for gate_satisfied_by also persists across Stop attempts, matching
+// the operator override behavior for backward compatibility.
+func TestDecisionGateManualForceNotConsumed(t *testing.T) {
+	_, gs, h := newGatedTestServer()
+
+	const agentID = "kd-agent-manual-force-persist"
+
+	// Register gate via Stop.
+	doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+
+	// Satisfy gate + set legacy manual-force marker.
+	doJSON(t, h, "POST", "/v1/agents/"+agentID+"/gates/decision/satisfy", nil)
+	gs.beads[agentID] = &model.Bead{
+		ID:     agentID,
+		Fields: json.RawMessage(`{"gate_satisfied_by":"manual-force"}`),
+	}
+
+	// First Stop → allowed.
+	stop1 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop1, 200)
+	var r1 map[string]any
+	decodeJSON(t, stop1, &r1)
+	if r1["block"] == true {
+		t.Fatalf("expected unblocked with manual-force, got block=true")
+	}
+
+	// Second Stop → still allowed (not consumed).
+	stop2 := doJSON(t, h, "POST", "/v1/hooks/emit", map[string]any{
+		"agent_bead_id": agentID,
+		"hook_type":     "Stop",
+		"actor":         "test-agent",
+	})
+	requireStatus(t, stop2, 200)
+	var r2 map[string]any
+	decodeJSON(t, stop2, &r2)
+	if r2["block"] == true {
+		t.Fatalf("expected manual-force to persist (not consumed), got block=true")
+	}
+}
+
 // ── report-gated decision flow ─────────────────────────────────────────
 
 // TestDecisionReportGatedFlow exercises the report-gated lifecycle:

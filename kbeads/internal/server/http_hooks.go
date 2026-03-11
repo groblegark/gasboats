@@ -96,12 +96,16 @@ func (s *BeadsServer) handleHookEmit(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Consume the gate (reset to pending) so the next Stop blocks again.
-		if err := s.store.ClearGate(ctx, req.AgentBeadID, "decision"); err != nil {
-			slog.Warn("hookEmit: failed to clear decision gate after consume", "agent", req.AgentBeadID, "err", err)
-		}
-		// Clear gate_satisfied_by field so it doesn't carry over to the next session.
-		if err := s.mergeBeadFields(ctx, req.AgentBeadID, map[string]any{"gate_satisfied_by": nil}); err != nil {
-			slog.Warn("hookEmit: failed to clear gate_satisfied_by field", "agent", req.AgentBeadID, "err", err)
+		// Skip consume for operator overrides — these persist across stop attempts
+		// so thread agents and operator-cleared gates don't loop indefinitely.
+		if satisfiedBy != "operator" && satisfiedBy != "manual-force" {
+			if err := s.store.ClearGate(ctx, req.AgentBeadID, "decision"); err != nil {
+				slog.Warn("hookEmit: failed to clear decision gate after consume", "agent", req.AgentBeadID, "err", err)
+			}
+			// Clear gate_satisfied_by field so it doesn't carry over to the next session.
+			if err := s.mergeBeadFields(ctx, req.AgentBeadID, map[string]any{"gate_satisfied_by": nil}); err != nil {
+				slog.Warn("hookEmit: failed to clear gate_satisfied_by field", "agent", req.AgentBeadID, "err", err)
+			}
 		}
 	}
 

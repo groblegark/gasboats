@@ -127,12 +127,13 @@ func (b *Bot) handleFormulaList(ctx context.Context, cmd slack.SlashCommand) {
 	for _, f := range result.Beads {
 		// Parse vars/steps counts from fields.
 		ff := parseFormulaFields(f)
-		line := fmt.Sprintf("*%s*\n`%s`", f.Title, f.ID)
+		line := fmt.Sprintf("*%s*\n%s", f.Title, f.ID)
 		if len(ff.Vars) > 0 || len(ff.Steps) > 0 {
 			line += fmt.Sprintf(" · %d var%s, %d step%s",
 				len(ff.Vars), plural(len(ff.Vars)),
 				len(ff.Steps), plural(len(ff.Steps)))
 		}
+		line += fmt.Sprintf("\n/formula pour %s", f.ID)
 		blocks = append(blocks,
 			slack.NewSectionBlock(
 				slack.NewTextBlockObject("mrkdwn", line, false, false),
@@ -162,7 +163,7 @@ func (b *Bot) handleFormulaShow(ctx context.Context, cmd slack.SlashCommand, idO
 	ff := parseFormulaFields(formula)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(":test_tube: *%s*\n`%s`\n", formula.Title, formula.ID))
+	sb.WriteString(fmt.Sprintf(":test_tube: *%s*\n%s\n", formula.Title, formula.ID))
 
 	if formula.Description != "" {
 		desc := formula.Description
@@ -225,6 +226,7 @@ func (b *Bot) handleFormulaShow(ctx context.Context, cmd slack.SlashCommand, idO
 		}
 	}
 
+	sb.WriteString(fmt.Sprintf("\n/formula pour %s", formula.ID))
 	b.postEphemeral(cmd, sb.String())
 }
 

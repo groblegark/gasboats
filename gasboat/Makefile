@@ -1,4 +1,4 @@
-.PHONY: build build-bridge build-jira-bridge build-gitlab-bridge build-advice-viewer test lint e2e verify image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-all push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-all helm-package helm-template release release-dry-run clean
+.PHONY: build build-bridge build-jira-bridge build-gitlab-bridge build-advice-viewer build-roles-server test lint e2e verify image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-roles-server image-all push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-roles-server push-all helm-package helm-template release release-dry-run clean
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -23,6 +23,9 @@ build-gitlab-bridge:
 
 build-advice-viewer:
 	cd controller && go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/advice-viewer ./cmd/advice-viewer/
+
+build-roles-server:
+	cd controller && go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/roles-server ./cmd/roles-server/
 
 test:
 	$(MAKE) -C controller test
@@ -88,7 +91,16 @@ image-advice-viewer:
 		-t $(REGISTRY)/advice-viewer:latest \
 		-f images/advice-viewer/Dockerfile .
 
-image-all: image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer
+image-roles-server:
+	docker build \
+		--platform linux/amd64 \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		-t $(REGISTRY)/roles-server:$(VERSION) \
+		-t $(REGISTRY)/roles-server:latest \
+		-f images/roles-server/Dockerfile .
+
+image-all: image image-agent image-bridge image-jira-bridge image-gitlab-bridge image-advice-viewer image-roles-server
 
 push: image
 	docker push $(REGISTRY)/controller:$(VERSION)
@@ -114,7 +126,11 @@ push-advice-viewer: image-advice-viewer
 	docker push $(REGISTRY)/advice-viewer:$(VERSION)
 	docker push $(REGISTRY)/advice-viewer:latest
 
-push-all: push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer
+push-roles-server: image-roles-server
+	docker push $(REGISTRY)/roles-server:$(VERSION)
+	docker push $(REGISTRY)/roles-server:latest
+
+push-all: push push-agent push-bridge push-jira-bridge push-gitlab-bridge push-advice-viewer push-roles-server
 
 # ── Helm ────────────────────────────────────────────────────────────────
 

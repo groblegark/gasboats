@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,34 @@ func TestRemoveThreadAgentByAgent(t *testing.T) {
 	// k8s entry should remain.
 	if agent, ok := state.GetThreadAgent("C-c", "3.3"); !ok || agent != "gasboat/crew/k8s" {
 		t.Errorf("expected C-c:3.3 to remain, got (%q, %v)", agent, ok)
+	}
+}
+
+func TestRemoveThreadAgentByAgent_CleansListenFlags(t *testing.T) {
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up threads with listen mode.
+	_ = state.SetThreadAgent("C-a", "1.1", "agent-a")
+	_ = state.SetListenThread("C-a", "1.1")
+	_ = state.SetThreadAgent("C-b", "2.2", "agent-b")
+	_ = state.SetListenThread("C-b", "2.2")
+
+	// Remove agent-a — should also clean up its listen flag.
+	if err := state.RemoveThreadAgentByAgent("agent-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	// agent-a's listen flag should be gone.
+	if state.IsListenThread("C-a", "1.1") {
+		t.Error("expected listen flag for C-a:1.1 to be removed")
+	}
+	// agent-b's listen flag should remain.
+	if !state.IsListenThread("C-b", "2.2") {
+		t.Error("expected listen flag for C-b:2.2 to remain")
 	}
 }
 
@@ -216,6 +245,11 @@ func TestResolveAgentThread_NotFound(t *testing.T) {
 
 func TestRespawnThreadAgent_CreatesSameNameBead(t *testing.T) {
 	daemon := newMockDaemon()
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-test"] = &beadsapi.BeadDetail{
+		ID: "proj-test", Title: "testproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-thread-test"},
+	}
 
 	dir := t.TempDir()
 	state, err := NewStateManager(filepath.Join(dir, "state.json"))
@@ -277,6 +311,36 @@ func TestRespawnThreadAgent_CreatesSameNameBead(t *testing.T) {
 	}
 	if !hasLabel(found.Labels, "slack-thread") {
 		t.Errorf("expected slack-thread label, got %v", found.Labels)
+	}
+}
+
+func TestRespawnThreadAgent_RejectsNoProject(t *testing.T) {
+	daemon := newMockDaemon()
+	// No project bead → no channel mapping → should reject.
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = state.SetThreadAgent("C-unmapped", "1111.2222", "thread-1111-2222")
+
+	b := &Bot{
+		daemon:          daemon,
+		state:           state,
+		logger:          slog.Default(),
+		botUserID:       "U-BOT",
+		agentCards:      map[string]MessageRef{},
+		threadSpawnMsgs: make(map[string]MessageRef),
+	}
+
+	b.respawnThreadAgent(context.Background(), "C-unmapped", "1111.2222", "thread-1111-2222", "wake up")
+
+	// Should NOT have created any agent bead.
+	for _, bead := range daemon.beads {
+		if bead.Type == "agent" {
+			t.Errorf("expected no agent bead, got %q", bead.Title)
+		}
 	}
 }
 
@@ -431,6 +495,11 @@ func TestNotifyAgentState_FailedPreservesThreadMapping(t *testing.T) {
 func TestHandleAppMention_InactiveThreadAgent_Respawns(t *testing.T) {
 	daemon := newMockDaemon()
 	// Agent NOT in daemon → FindAgentBead will fail.
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-test"] = &beadsapi.BeadDetail{
+		ID: "proj-test", Title: "testproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-test"},
+	}
 
 	dir := t.TempDir()
 	state, err := NewStateManager(filepath.Join(dir, "state.json"))
@@ -481,4 +550,142 @@ func TestHandleAppMention_InactiveThreadAgent_Respawns(t *testing.T) {
 	if _, ok := state.GetThreadAgent("C-test", "1111.2222"); !ok {
 		t.Error("expected thread→agent mapping to be preserved after respawn")
 	}
+}
+
+func TestHandleThreadSpawn_ConcurrentMentionsSpawnOnce(t *testing.T) {
+	daemon := newMockDaemon()
+	// Add a project bead so the channel maps to a project.
+	daemon.beads["proj-race"] = &beadsapi.BeadDetail{
+		ID: "proj-race", Title: "raceproject", Type: "project",
+		Fields: map[string]string{"slack_channel": "C-race-test"},
+	}
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot.state = state
+	bot.botUserID = "U-BOT"
+	bot.lastThreadNudge = make(map[string]time.Time)
+
+	channel := "C-race-test"
+	threadTS := "9999.1111"
+
+	// Fire 5 concurrent mentions to the same thread.
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bot.handleThreadSpawn(context.Background(), &slackevents.AppMentionEvent{
+				User:            "U-USER",
+				Text:            "<@U-BOT> help me",
+				TimeStamp:       "2222.3333",
+				ThreadTimeStamp: threadTS,
+				Channel:         channel,
+			}, "help me")
+		}()
+	}
+	wg.Wait()
+
+	// Count how many agent beads were created for this thread.
+	daemon.mu.Lock()
+	var agentCount int
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			agentCount++
+		}
+	}
+	daemon.mu.Unlock()
+
+	if agentCount != 1 {
+		t.Errorf("expected exactly 1 agent bead from concurrent spawns, got %d", agentCount)
+	}
+}
+
+func TestReconcileThreadAgents(t *testing.T) {
+	daemon := newMockDaemon()
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Bot{
+		daemon:     daemon,
+		state:      state,
+		logger:     slog.Default(),
+		agentCards: make(map[string]MessageRef),
+	}
+
+	t.Run("restores thread mappings from agent beads", func(t *testing.T) {
+		// Simulate an agent bead with thread fields (spawned by a previous bridge).
+		daemon.mu.Lock()
+		daemon.beads["bd-thread-agent"] = &beadsapi.BeadDetail{
+			ID:    "bd-thread-agent",
+			Title: "my-thread-agent",
+			Type:  "agent",
+			Fields: map[string]string{
+				"agent":                "my-thread-agent",
+				"role":                 "thread",
+				"project":              "gasboat",
+				"slack_thread_channel": "C-test",
+				"slack_thread_ts":      "1111.2222",
+			},
+		}
+		daemon.mu.Unlock()
+
+		b.ReconcileThreadAgents(context.Background())
+
+		agent, ok := state.GetThreadAgent("C-test", "1111.2222")
+		if !ok {
+			t.Fatal("expected thread→agent mapping to be restored")
+		}
+		if agent != "my-thread-agent" {
+			t.Errorf("got %q, want %q", agent, "my-thread-agent")
+		}
+	})
+
+	t.Run("does not overwrite existing mappings", func(t *testing.T) {
+		// Pre-set a mapping for the same thread.
+		_ = state.SetThreadAgent("C-test", "1111.2222", "existing-agent")
+
+		b.ReconcileThreadAgents(context.Background())
+
+		agent, _ := state.GetThreadAgent("C-test", "1111.2222")
+		if agent != "existing-agent" {
+			t.Errorf("existing mapping was overwritten: got %q, want %q", agent, "existing-agent")
+		}
+	})
+
+	t.Run("skips agents without thread fields", func(t *testing.T) {
+		// Clear all previous state and beads.
+		state.ClearAllThreadAgents()
+		daemon.mu.Lock()
+		daemon.beads = map[string]*beadsapi.BeadDetail{
+			"bd-card-agent": {
+				ID:    "bd-card-agent",
+				Title: "card-only-agent",
+				Type:  "agent",
+				Fields: map[string]string{
+					"agent":   "card-only-agent",
+					"role":    "crew",
+					"project": "gasboat",
+				},
+			},
+		}
+		daemon.mu.Unlock()
+
+		b.ReconcileThreadAgents(context.Background())
+
+		if len(state.AllThreadAgents()) != 0 {
+			t.Errorf("expected no thread agents, got %d", len(state.AllThreadAgents()))
+		}
+	})
 }

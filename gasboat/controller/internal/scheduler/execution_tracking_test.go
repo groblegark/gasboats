@@ -196,7 +196,7 @@ func TestRecordRunCompletion_AgentDone(t *testing.T) {
 		LastRun:     time.Now().Add(-5 * time.Minute),
 	}
 
-	s.recordRunCompletion(context.Background(), sched)
+	s.trackLastAgentStatus(context.Background(), &sched)
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -252,7 +252,7 @@ func TestRecordRunCompletion_AgentFailed(t *testing.T) {
 		LastRun:     time.Now().Add(-10 * time.Minute),
 	}
 
-	s.recordRunCompletion(context.Background(), sched)
+	s.trackLastAgentStatus(context.Background(), &sched)
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -292,7 +292,7 @@ func TestRecordRunCompletion_SkipsAlreadyChecked(t *testing.T) {
 		LastRun:     time.Now().Add(-5 * time.Minute),
 	}
 
-	s.recordRunCompletion(context.Background(), sched)
+	s.trackLastAgentStatus(context.Background(), &sched)
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -321,7 +321,7 @@ func TestRecordRunCompletion_SkipsRunningAgent(t *testing.T) {
 		LastAgentID: "agent-running",
 	}
 
-	s.recordRunCompletion(context.Background(), sched)
+	s.trackLastAgentStatus(context.Background(), &sched)
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -351,7 +351,7 @@ func TestRecordRunCompletion_IncludesDuration(t *testing.T) {
 		LastRun:     time.Now().Add(-4*time.Minute - 12*time.Second),
 	}
 
-	s.recordRunCompletion(context.Background(), sched)
+	s.trackLastAgentStatus(context.Background(), &sched)
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()

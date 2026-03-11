@@ -292,3 +292,89 @@ func TestResolveConfigBeads_SpecificityOrder(t *testing.T) {
 	}
 }
 
+func TestResolveConfigBeads_ProjectInlineOverridesRole(t *testing.T) {
+	// Project bead inline config (extra layer at "2~:" specificity) should
+	// override role config beads but be overridden by agent config beads.
+	lister := &mockConfigBeadLister{
+		beads: []*beadsapi.BeadDetail{
+			{
+				Title:       "claude-settings",
+				Labels:      []string{"global"},
+				Description: `{"model":"sonnet","base":"yes"}`,
+			},
+			{
+				Title:       "claude-settings",
+				Labels:      []string{"role:crew"},
+				Description: `{"model":"haiku","role_key":"yes"}`,
+			},
+		},
+	}
+
+	// Inject project inline config as an extra layer.
+	extras := []resolvedConfig{{
+		value:       []byte(`{"model":"opus","project_inline":"yes"}`),
+		specificity: projectInlineSpecificity,
+	}}
+
+	subs := []string{"global", "role:crew"}
+	merged, count := ResolveConfigBeads(context.Background(), lister, "claude-settings", subs, extras...)
+
+	if count != 3 {
+		t.Fatalf("expected 3 layers (global + role + inline), got %d", count)
+	}
+	// Project inline should override role for "model".
+	if merged["model"] != "opus" {
+		t.Errorf("expected model=opus (project inline wins over role), got %v", merged["model"])
+	}
+	// Role key should survive.
+	if merged["role_key"] != "yes" {
+		t.Error("expected role_key=yes from role layer")
+	}
+	// Project inline key should be present.
+	if merged["project_inline"] != "yes" {
+		t.Error("expected project_inline=yes from inline layer")
+	}
+	// Global base should survive.
+	if merged["base"] != "yes" {
+		t.Error("expected base=yes from global layer")
+	}
+}
+
+func TestResolveConfigBeads_AgentOverridesProjectInline(t *testing.T) {
+	// Agent-level config beads (3:) should override project inline (2~:).
+	lister := &mockConfigBeadLister{
+		beads: []*beadsapi.BeadDetail{
+			{
+				Title:       "claude-settings",
+				Labels:      []string{"global"},
+				Description: `{"model":"sonnet"}`,
+			},
+			{
+				Title:       "claude-settings",
+				Labels:      []string{"agent:kd-test-agent"},
+				Description: `{"model":"opus"}`,
+			},
+		},
+	}
+
+	extras := []resolvedConfig{{
+		value:       []byte(`{"model":"haiku","inline_key":"yes"}`),
+		specificity: projectInlineSpecificity,
+	}}
+
+	subs := []string{"global", "agent:kd-test-agent"}
+	merged, count := ResolveConfigBeads(context.Background(), lister, "claude-settings", subs, extras...)
+
+	if count != 3 {
+		t.Fatalf("expected 3 layers, got %d", count)
+	}
+	// Agent should win for "model".
+	if merged["model"] != "opus" {
+		t.Errorf("expected model=opus (agent wins over project inline), got %v", merged["model"])
+	}
+	// Project inline key should survive.
+	if merged["inline_key"] != "yes" {
+		t.Error("expected inline_key=yes from project inline layer")
+	}
+}
+

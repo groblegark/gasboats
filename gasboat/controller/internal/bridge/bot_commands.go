@@ -26,6 +26,8 @@ func (b *Bot) handleSlashCommand(ctx context.Context, cmd slack.SlashCommand) {
 		b.handleStartCommand(ctx, cmd)
 	case "/kill":
 		b.handleKillCommand(ctx, cmd)
+	case "/kill-thread":
+		b.handleKillThreadCommand(ctx, cmd)
 	case "/unreleased":
 		b.handleUnreleasedCommand(ctx, cmd)
 	case "/clear-threads":
@@ -161,6 +163,10 @@ func (b *Bot) handleTaskFirstSpawn(ctx context.Context, cmd slack.SlashCommand, 
 	if len(positional) >= 2 {
 		project = positional[1]
 	}
+	// Fall back to channel-based project inference.
+	if project == "" {
+		project = b.projectFromChannel(ctx, cmd.ChannelID)
+	}
 
 	// Validate project exists.
 	if project != "" {
@@ -262,6 +268,11 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 		project = projectFlag
 	}
 
+	// Fall back to channel-based project inference.
+	if project == "" {
+		project = b.projectFromChannel(ctx, cmd.ChannelID)
+	}
+
 	// Validate project exists.
 	if project != "" {
 		if !b.validateProject(ctx, cmd, project) {
@@ -275,6 +286,14 @@ func (b *Bot) handleStartCommand(ctx context.Context, cmd slack.SlashCommand) {
 // spawnAndRespond creates an agent bead and sends a confirmation ephemeral message.
 // Extracted from the old handleSpawnCommand to share between /spawn and /start.
 func (b *Bot) spawnAndRespond(ctx context.Context, cmd slack.SlashCommand, agentName, project, taskID, role, customPrompt string) {
+	if project == "" {
+		b.logger.Warn("spawn rejected — no project resolved",
+			"agent", agentName, "channel", cmd.ChannelID, "user", cmd.UserID)
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(":x: Cannot spawn agent — no project is mapped to this channel. Use `--project <name>` to specify one.", false))
+		return
+	}
+
 	beadID, err := b.daemon.SpawnAgent(ctx, agentName, project, taskID, role, customPrompt)
 	if err != nil {
 		b.logger.Error("failed to spawn agent", "agent", agentName, "project", project, "task", taskID, "role", role, "prompt", customPrompt, "error", err)
@@ -285,12 +304,20 @@ func (b *Bot) spawnAndRespond(ctx context.Context, cmd slack.SlashCommand, agent
 
 	b.logger.Info("spawned agent via Slack", "agent", agentName, "project", project, "task", taskID, "role", role, "prompt", customPrompt, "bead", beadID, "user", cmd.UserID)
 
-	// Best-effort: store the Slack user ID of the spawner on the agent bead
-	// so decision notifications can @mention the right person.
-	if cmd.UserID != "" {
-		_ = b.daemon.UpdateBeadFields(ctx, beadID, map[string]string{
-			"slack_user_id": cmd.UserID,
-		})
+	// Best-effort: store the Slack user ID and source channel on the agent
+	// bead so decision notifications can @mention the right person and the
+	// agent card is posted to the channel where /spawn was issued.
+	{
+		fields := map[string]string{}
+		if cmd.UserID != "" {
+			fields["slack_user_id"] = cmd.UserID
+		}
+		if cmd.ChannelID != "" {
+			fields["slack_spawn_channel"] = cmd.ChannelID
+		}
+		if len(fields) > 0 {
+			_ = b.daemon.UpdateBeadFields(ctx, beadID, fields)
+		}
 	}
 
 	text := fmt.Sprintf(":rocket: Spawning agent *%s*", agentName)
@@ -661,6 +688,98 @@ func (b *Bot) handleKillCommand(ctx context.Context, cmd slack.SlashCommand) {
 
 	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 		slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing agent *%s*…", agentName), false))
+}
+
+// handleKillThreadCommand kills a thread-bound agent by name or lists thread agents
+// in the current channel. Since slash commands don't carry thread context, this
+// requires the agent name as an argument.
+// Usage: /kill-thread <agent> [--force] [--restart]
+func (b *Bot) handleKillThreadCommand(_ context.Context, cmd slack.SlashCommand) {
+	args := strings.Fields(strings.TrimSpace(cmd.Text))
+	if len(args) == 0 {
+		// No agent specified — list thread agents in this channel.
+		b.listChannelThreadAgents(cmd)
+		return
+	}
+
+	force := false
+	restart := false
+	positional := args[:0]
+	for _, a := range args {
+		switch a {
+		case "--force":
+			force = true
+		case "--restart":
+			restart = true
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) == 0 {
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(":x: Usage: `/kill-thread <agent> [--force] [--restart]`", false))
+		return
+	}
+
+	agentName := positional[0]
+
+	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+		slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agentName), false))
+
+	go func() {
+		// Look up the agent bead to capture thread metadata before killing.
+		bead, err := b.daemon.FindAgentBead(context.Background(), extractAgentName(agentName))
+		if err != nil {
+			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+				slack.MsgOptionText(fmt.Sprintf(":x: Agent %q not found: %s", agentName, err), false))
+			return
+		}
+		threadChannel := bead.Fields["slack_thread_channel"]
+		threadTS := bead.Fields["slack_thread_ts"]
+
+		if err := b.killAgent(context.Background(), agentName, force); err != nil {
+			b.logger.Error("kill-thread command: failed", "agent", agentName, "error", err)
+			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+				slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill thread agent %q: %s", agentName, err.Error()), false))
+			return
+		}
+
+		b.logger.Info("killed thread agent via slash command", "agent", agentName, "user", cmd.UserID, "restart", restart)
+
+		if restart && threadChannel != "" && threadTS != "" {
+			b.respawnThreadAgent(context.Background(), threadChannel, threadTS, agentName,
+				"Restarted via /kill-thread --restart")
+			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+				slack.MsgOptionText(fmt.Sprintf(":arrows_counterclockwise: Thread agent *%s* restarted with session resume.", agentName), false))
+		} else {
+			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+				slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agentName), false))
+		}
+	}()
+}
+
+// listChannelThreadAgents shows thread agents bound to threads in the given channel.
+func (b *Bot) listChannelThreadAgents(cmd slack.SlashCommand) {
+	if b.state == nil {
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(":x: State manager not available", false))
+		return
+	}
+
+	agents := b.state.GetThreadAgentsByChannel(cmd.ChannelID)
+	if len(agents) == 0 {
+		_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+			slack.MsgOptionText(":information_source: No thread agents in this channel.\nUsage: `/kill-thread <agent> [--force] [--restart]`", false))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(":thread: *Thread agents in this channel:*\n")
+	for _, a := range agents {
+		sb.WriteString(fmt.Sprintf("• `%s` — `/kill-thread %s`\n", a, a))
+	}
+	_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
+		slack.MsgOptionText(sb.String(), false))
 }
 
 // handleClearThreadsCommand removes all thread→agent mappings from state.

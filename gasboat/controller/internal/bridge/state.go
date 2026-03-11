@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -207,13 +208,15 @@ func (sm *StateManager) RemoveThreadAgent(channel, threadTS string) error {
 	return sm.saveLocked()
 }
 
-// RemoveThreadAgentByAgent removes all thread associations for a given agent and persists.
+// RemoveThreadAgentByAgent removes all thread associations for a given agent
+// and their corresponding listen-thread flags, then persists.
 func (sm *StateManager) RemoveThreadAgentByAgent(agent string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for k, v := range sm.data.ThreadAgents {
 		if v == agent {
 			delete(sm.data.ThreadAgents, k)
+			delete(sm.data.ListenThreads, k)
 		}
 	}
 	return sm.saveLocked()
@@ -237,6 +240,20 @@ func (sm *StateManager) ClearAllThreadAgents() (int, error) {
 	n := len(sm.data.ThreadAgents)
 	sm.data.ThreadAgents = make(map[string]string)
 	return n, sm.saveLocked()
+}
+
+// GetThreadAgentsByChannel returns agent names for all threads in a given channel.
+func (sm *StateManager) GetThreadAgentsByChannel(channel string) []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	prefix := channel + ":"
+	var agents []string
+	for k, v := range sm.data.ThreadAgents {
+		if strings.HasPrefix(k, prefix) {
+			agents = append(agents, v)
+		}
+	}
+	return agents
 }
 
 // --- Listen Threads ---

@@ -198,9 +198,15 @@ func queryListBeads(ctx context.Context, db executor, filter model.BeadFilter) (
 
 	for key, val := range filter.Fields {
 		kp := nextArg()
-		vp := nextArg()
-		whereClauses = append(whereClauses, fmt.Sprintf("fields->>%s = %s", kp, vp))
-		args = append(args, key, val)
+		if val == "" {
+			// Empty value: match beads where the field is absent or empty.
+			whereClauses = append(whereClauses, fmt.Sprintf("(fields->>%s IS NULL OR fields->>%s = '')", kp, kp))
+			args = append(args, key)
+		} else {
+			vp := nextArg()
+			whereClauses = append(whereClauses, fmt.Sprintf("fields->>%s = %s", kp, vp))
+			args = append(args, key, val)
+		}
 	}
 
 	if filter.NoOpenDeps {

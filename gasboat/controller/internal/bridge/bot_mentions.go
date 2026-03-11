@@ -36,6 +36,25 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 		return
 	}
 
+	// Check for in-thread command keywords (kill, clear) before normal routing.
+	if cmd, cmdArgs := parseMentionCommand(text); cmd != "" {
+		if ev.ThreadTimeStamp == "" {
+			if b.api != nil {
+				_, _ = b.api.PostEphemeral(ev.Channel, ev.User,
+					slack.MsgOptionText(":x: `"+cmd+"` only works in threads with a bound agent.", false))
+			}
+			return
+		}
+		switch cmd {
+		case "kill":
+			b.handleMentionKill(ctx, ev, strings.Contains(cmdArgs, "--force"))
+			return
+		case "clear":
+			b.handleMentionClear(ctx, ev)
+			return
+		}
+	}
+
 	var agent string
 	replyTS := ev.ThreadTimeStamp // timestamp to thread the confirmation reply under
 	agentSpawning := false // true if agent is still in spawning state
@@ -130,6 +149,14 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	// and stored refs use consistent keys.
 	agent = extractAgentName(agent)
 
+	// Check for thread control commands: @gasboat kill, @gasboat restart, @gasboat stop.
+	// These only work in threads where an agent is bound.
+	if ev.ThreadTimeStamp != "" && agent != "" {
+		if handled := b.handleMentionThreadCommand(ctx, ev, agent, text); handled {
+			return
+		}
+	}
+
 	// Resolve sender display name.
 	username := ev.User
 	if user, err := b.api.GetUserInfo(ev.User); err == nil {
@@ -221,9 +248,11 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 	}
 
 	// Check agentCards hot cache (agent card threads).
+	// Match on both ref.Timestamp (card is the thread parent) and
+	// ref.ThreadTS (card posted inside a thread — e.g. thread-bound agents).
 	b.mu.Lock()
 	for agent, ref := range b.agentCards {
-		if ref.ChannelID == channelID && ref.Timestamp == threadTS {
+		if ref.ChannelID == channelID && (ref.Timestamp == threadTS || ref.ThreadTS == threadTS) {
 			b.mu.Unlock()
 			return agent
 		}
@@ -233,7 +262,7 @@ func (b *Bot) getAgentByThread(channelID, threadTS string) string {
 	// Fall back to persisted agentCards state.
 	if b.state != nil {
 		for agent, ref := range b.state.AllAgentCards() {
-			if ref.ChannelID == channelID && ref.Timestamp == threadTS {
+			if ref.ChannelID == channelID && (ref.Timestamp == threadTS || ref.ThreadTS == threadTS) {
 				return agent
 			}
 		}
@@ -369,6 +398,25 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		}
 	}
 
+	// Atomic check-and-set: prevent concurrent spawn attempts for the same thread.
+	// The state guard above catches already-completed spawns; this catches
+	// in-flight spawns where state hasn't been persisted yet.
+	spawnKey := channel + ":" + threadTS
+	b.mu.Lock()
+	if b.spawnInFlight[spawnKey] {
+		b.mu.Unlock()
+		b.logger.Info("thread-spawn: spawn already in flight, skipping",
+			"channel", channel, "thread_ts", threadTS)
+		return
+	}
+	b.spawnInFlight[spawnKey] = true
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.spawnInFlight, spawnKey)
+		b.mu.Unlock()
+	}()
+
 	// Check for --listen flag (auto-forward all thread replies without @mention).
 	listen, text := parseListenFlag(text)
 
@@ -393,6 +441,20 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 		if mapped := b.router.GetAgentByChannel(channel); mapped != "" {
 			project = projectFromAgentIdentity(mapped)
 		}
+	}
+
+	// Reject thread spawns with no project — agents must have a project
+	// so they get the correct config, secrets, and repos.
+	if project == "" {
+		b.logger.Warn("thread-spawn: rejected — no project resolved",
+			"channel", channel, "thread_ts", threadTS)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(":x: Cannot spawn agent — no project is mapped to this channel. Use `--project <name>` to specify one.", false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		return
 	}
 
 	// Validate explicit project override exists as a project bead.
@@ -696,6 +758,104 @@ func isValidThreadBinding(channel, threadTS string) bool {
 }
 
 
+// parseMentionCommand checks if mention text starts with a known command
+// keyword (kill, clear, restart). Returns (keyword, remaining) or ("", text).
+func parseMentionCommand(text string) (string, string) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return "", text
+	}
+	keyword := strings.ToLower(words[0])
+	switch keyword {
+	case "kill", "clear":
+		remaining := strings.TrimSpace(strings.Join(words[1:], " "))
+		return keyword, remaining
+	}
+	return "", text
+}
+
+// handleMentionKill kills the thread-bound agent when "@gasboat kill" is posted
+// in a thread. This provides a name-free way to shut down the current thread's
+// agent without needing to know or type its name.
+func (b *Bot) handleMentionKill(ctx context.Context, ev *slackevents.AppMentionEvent, force bool) {
+	channel := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+	userID := ev.User
+
+	agent := b.getAgentByThread(channel, threadTS)
+	if agent == "" {
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channel, userID,
+				slack.MsgOptionText(":x: No agent is bound to this thread.", false))
+		}
+		return
+	}
+	agent = extractAgentName(agent)
+
+	// Acknowledge immediately — graceful shutdown can take 30s+.
+	if b.api != nil {
+		_, _, _ = b.api.PostMessage(channel,
+			slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agent), false),
+			slack.MsgOptionTS(threadTS))
+	}
+
+	go func() {
+		if err := b.killAgent(context.Background(), agent, force); err != nil {
+			b.logger.Error("mention-kill: failed", "agent", agent, "error", err)
+			if b.api != nil {
+				_, _, _ = b.api.PostMessage(channel,
+					slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent *%s*: %s", agent, err.Error()), false),
+					slack.MsgOptionTS(threadTS))
+			}
+			return
+		}
+		b.logger.Info("killed thread agent via mention", "agent", agent, "user", userID)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agent), false),
+				slack.MsgOptionTS(threadTS))
+		}
+	}()
+}
+
+// handleMentionClear resets the thread→agent mapping when "@gasboat clear" is
+// posted in a thread. The agent is NOT killed — it continues running but is
+// unbound from the thread. A subsequent @mention in the same thread will spawn
+// a new agent. This is useful when a thread agent is stuck or the user wants
+// a fresh agent in the same thread.
+func (b *Bot) handleMentionClear(ctx context.Context, ev *slackevents.AppMentionEvent) {
+	channel := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+	userID := ev.User
+
+	agent := b.getAgentByThread(channel, threadTS)
+	if agent == "" {
+		if b.api != nil {
+			_, _ = b.api.PostEphemeral(channel, userID,
+				slack.MsgOptionText(":x: No agent is bound to this thread.", false))
+		}
+		return
+	}
+	agent = extractAgentName(agent)
+
+	// Remove thread→agent mapping.
+	if b.state != nil {
+		_ = b.state.RemoveThreadAgent(channel, threadTS)
+		_ = b.state.RemoveListenThread(channel, threadTS)
+	}
+
+	b.logger.Info("cleared thread agent mapping via mention",
+		"agent", agent, "channel", channel, "thread_ts", threadTS, "user", userID)
+
+	if b.api != nil {
+		_, _, _ = b.api.PostMessage(channel,
+			slack.MsgOptionText(
+				fmt.Sprintf(":broom: Cleared thread binding for *%s*. Mention me again to spawn a new agent here.", agent),
+				false),
+			slack.MsgOptionTS(threadTS))
+	}
+}
+
 // stripBotMention removes all <@BOTID> occurrences from text and trims whitespace.
 func stripBotMention(text, botUserID string) string {
 	mention := fmt.Sprintf("<@%s>", botUserID)
@@ -718,4 +878,91 @@ func (b *Bot) nudgeAgentForMention(ctx context.Context, agent, text, beadID stri
 	b.logger.Info("nudged agent for mention",
 		"agent", agentName, "bead", beadID)
 	return nil
+}
+
+// handleMentionThreadCommand checks if a thread @mention is a control command
+// (kill, stop, restart) and executes it. Returns true if the command was handled.
+// This provides in-thread agent lifecycle control via @gasboat kill/restart.
+func (b *Bot) handleMentionThreadCommand(_ context.Context, ev *slackevents.AppMentionEvent, agent, text string) bool {
+	cmd, force := parseThreadCommand(text)
+	if cmd == "" {
+		return false
+	}
+
+	channelID := ev.Channel
+	threadTS := ev.ThreadTimeStamp
+	userID := ev.User
+
+	switch cmd {
+	case "kill", "stop":
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channelID,
+				slack.MsgOptionText(fmt.Sprintf(":hourglass_flowing_sand: Killing thread agent *%s*…", agent), false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		go func() {
+			if err := b.killAgent(context.Background(), agent, force); err != nil {
+				b.logger.Error("mention kill: failed", "agent", agent, "error", err)
+				if b.api != nil {
+					_, _ = b.api.PostEphemeral(channelID, userID,
+						slack.MsgOptionText(fmt.Sprintf(":x: Failed to kill agent %q: %s", agent, err.Error()), false))
+				}
+				return
+			}
+			b.logger.Info("killed thread agent via mention", "agent", agent, "user", userID)
+			if b.api != nil {
+				_, _, _ = b.api.PostMessage(channelID,
+					slack.MsgOptionText(fmt.Sprintf(":skull: Thread agent *%s* terminated.", agent), false),
+					slack.MsgOptionTS(threadTS),
+				)
+			}
+		}()
+		return true
+
+	case "restart":
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channelID,
+				slack.MsgOptionText(fmt.Sprintf(":arrows_counterclockwise: Restarting thread agent *%s*…", agent), false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
+		go func() {
+			b.respawnThreadAgent(context.Background(), channelID, threadTS, agent,
+				"Restarted via @mention command")
+		}()
+		return true
+	}
+
+	return false
+}
+
+// parseThreadCommand extracts a thread control command from mention text.
+// Returns the command name and whether --force was specified.
+// Only matches exact command keywords (with optional flags) to avoid false
+// positives on messages like "kill the deployment process".
+func parseThreadCommand(text string) (cmd string, force bool) {
+	text = strings.TrimSpace(strings.ToLower(text))
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return "", false
+	}
+
+	switch words[0] {
+	case "kill", "stop", "restart":
+		cmd = words[0]
+	default:
+		return "", false
+	}
+
+	// Only recognize as a command if no extra words beyond flags.
+	for _, w := range words[1:] {
+		if w == "--force" {
+			force = true
+		} else {
+			// Extra words like "kill the deployment" — not a command.
+			return "", false
+		}
+	}
+	return cmd, force
 }

@@ -1,0 +1,52 @@
+{{/*
+When clusterAdmin is enabled, the chart creates cluster-scoped resources
+(ClusterRoleBinding, ServiceAccount for cluster-admin agent pods). The
+deployer SA needs permission to manage these resources during helm upgrade.
+
+BOOTSTRAP: The first time clusterAdmin is enabled, a cluster admin must
+apply this chart (or pre-create the ClusterRole/ClusterRoleBinding below)
+since the deployer SA won't yet have the permissions.
+*/}}
+{{- if and .Values.agents.enabled .Values.agents.clusterAdmin.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gasboat.agents.fullname" . }}-cluster-manager
+  labels:
+    {{- include "gasboat.agents.labels" . | nindent 4 }}
+rules:
+  # Manage ClusterRoleBindings created by agent-cluster-rbac.yaml
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resourceNames:
+      - {{ include "gasboat.coop.clusterAdminServiceAccountName" . }}
+  # Allow initial creation (resourceNames filter doesn't apply to create)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["create"]
+  # Read cluster-admin ClusterRole (referenced in the binding)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get"]
+    resourceNames:
+      - cluster-admin
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gasboat.agents.fullname" . }}-cluster-manager
+  labels:
+    {{- include "gasboat.agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gasboat.agents.fullname" . }}-cluster-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gasboat.agents.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ include "gasboat.coop.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
