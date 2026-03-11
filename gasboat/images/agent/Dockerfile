@@ -287,7 +287,8 @@ RUN apt-get update && \
       | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+      fonts-noto-core fontconfig && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
     npm cache clean --force && \
     chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}
