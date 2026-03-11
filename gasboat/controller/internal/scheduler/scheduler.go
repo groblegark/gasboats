@@ -60,11 +60,12 @@ const (
 )
 
 // Reconcile performs a single evaluation pass. For each enabled schedule bead:
-//  1. Parse the cron expression
-//  2. Calculate the most recent fire time before now
-//  3. Check guard rails (concurrency, failure tracking)
-//  4. If fire time is after last_run and guard rails pass, spawn an agent
-//  5. Enforce timeouts on running scheduled agents
+//  1. Check and record completion of the last spawned agent
+//  2. Parse the cron expression
+//  3. Calculate the most recent fire time before now
+//  4. Check guard rails (concurrency, failure tracking)
+//  5. If fire time is after last_run and guard rails pass, spawn an agent
+//  6. Enforce timeouts on running scheduled agents
 func (s *Scheduler) Reconcile(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,7 +84,7 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	for i := range schedules {
 		sched := &schedules[i]
 
-		// Track last agent status for failure counting before checking enabled.
+		// Track last agent status for failure counting and record run history.
 		s.trackLastAgentStatus(ctx, sched)
 
 		if !sched.Enabled {
@@ -140,6 +141,8 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		if err != nil {
 			s.logger.Error("failed to spawn scheduled agent",
 				"schedule", sched.ID, "error", err)
+			_ = s.daemon.AddComment(ctx, sched.ID, "scheduler",
+				fmt.Sprintf("Run failed to start: %v", err))
 			s.recordFailure(ctx, sched)
 			continue
 		}
@@ -152,6 +155,10 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 			s.logger.Warn("failed to update schedule last_run",
 				"schedule", sched.ID, "error", err)
 		}
+
+		// Record spawn in run history.
+		_ = s.daemon.AddComment(ctx, sched.ID, "scheduler",
+			fmt.Sprintf("Run started → %s", agentID))
 	}
 
 	// Enforce timeouts on all running scheduled agents.
@@ -161,10 +168,10 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 }
 
 // trackLastAgentStatus checks the status of the last spawned agent and updates
-// the schedule's consecutive failure count. If the agent completed successfully,
-// the failure count is reset. If it failed, the count is incremented and the
-// schedule may be auto-disabled. Uses last_checked_agent on the schedule bead
-// to avoid re-processing the same agent's result on every reconcile cycle.
+// the schedule's consecutive failure count and run history. If the agent
+// completed successfully, the failure count is reset. If it failed, the count
+// is incremented and the schedule may be auto-disabled. Uses last_checked_agent
+// on the schedule bead to avoid re-processing the same agent's result.
 func (s *Scheduler) trackLastAgentStatus(ctx context.Context, sched *Schedule) {
 	if sched.LastAgentID == "" {
 		return
@@ -188,7 +195,31 @@ func (s *Scheduler) trackLastAgentStatus(ctx context.Context, sched *Schedule) {
 
 	agentState := detail.Fields["agent_state"]
 
-	// Mark this agent as checked to avoid re-processing.
+	// Record run history comment with duration.
+	var durationStr string
+	if !sched.LastRun.IsZero() {
+		durationStr = formatRunDuration(time.Since(sched.LastRun))
+	}
+	var comment string
+	switch agentState {
+	case "done":
+		comment = fmt.Sprintf("Run completed → %s done", sched.LastAgentID)
+	case "failed":
+		reason := detail.Fields["close_reason"]
+		if reason != "" {
+			comment = fmt.Sprintf("Run failed → %s failed (%s)", sched.LastAgentID, reason)
+		} else {
+			comment = fmt.Sprintf("Run failed → %s failed", sched.LastAgentID)
+		}
+	default:
+		comment = fmt.Sprintf("Run ended → %s closed (state: %s)", sched.LastAgentID, agentState)
+	}
+	if durationStr != "" {
+		comment += " [" + durationStr + "]"
+	}
+	_ = s.daemon.AddComment(ctx, sched.ID, "scheduler", comment)
+
+	// Mark this agent as checked and update failure tracking.
 	updateFields := map[string]string{
 		"last_checked_agent": sched.LastAgentID,
 	}
@@ -212,6 +243,28 @@ func (s *Scheduler) trackLastAgentStatus(ctx context.Context, sched *Schedule) {
 	}
 
 	_ = s.daemon.UpdateBeadFields(ctx, sched.ID, updateFields)
+}
+
+// formatRunDuration formats a duration for run history display.
+func formatRunDuration(d time.Duration) string {
+	d = d.Truncate(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
 }
 
 // recordFailure increments the consecutive failure count and auto-disables
