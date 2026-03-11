@@ -313,6 +313,14 @@ func TestWriteMCPConfig_DoesNotOverrideExistingServer(t *testing.T) {
 	if len(args) != 3 || args[0] != "--browser" || args[1] != "chromium" || args[2] != "--custom" {
 		t.Errorf("expected [--browser chromium --custom], got args=%v", args)
 	}
+	// fixPlaywrightEnv adds PLAYWRIGHT_BROWSERS_PATH.
+	env, ok := pw["env"].(map[string]any)
+	if !ok {
+		t.Fatal("expected env to be added by fixPlaywrightEnv")
+	}
+	if env["PLAYWRIGHT_BROWSERS_PATH"] != "/ms-playwright" {
+		t.Errorf("expected PLAYWRIGHT_BROWSERS_PATH=/ms-playwright, got %v", env["PLAYWRIGHT_BROWSERS_PATH"])
+	}
 }
 
 func TestWriteMCPConfig_EmptyServers(t *testing.T) {
@@ -629,6 +637,14 @@ func TestDefaultMCPConfig_PlaywrightFound(t *testing.T) {
 	if servers["playwright"] == nil {
 		t.Error("expected playwright server entry")
 	}
+	pw := servers["playwright"].(map[string]any)
+	env, ok := pw["env"].(map[string]any)
+	if !ok {
+		t.Fatal("expected env key in playwright config")
+	}
+	if env["PLAYWRIGHT_BROWSERS_PATH"] != "/ms-playwright" {
+		t.Errorf("expected PLAYWRIGHT_BROWSERS_PATH=/ms-playwright, got %v", env["PLAYWRIGHT_BROWSERS_PATH"])
+	}
 }
 
 func TestDefaultMCPConfig_PlaywrightNotFound(t *testing.T) {
@@ -692,6 +708,57 @@ func TestFixPlaywrightBrowser_NoPlaywright(t *testing.T) {
 
 	// Should not panic or modify anything
 	fixPlaywrightBrowser(servers)
+
+	if _, ok := servers["playwright"]; ok {
+		t.Error("should not create playwright entry")
+	}
+}
+
+func TestFixPlaywrightEnv_AddsWhenMissing(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"args":    []any{"--browser", "chromium"},
+		},
+	}
+
+	fixPlaywrightEnv(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	env, ok := cfg["env"].(map[string]any)
+	if !ok {
+		t.Fatal("expected env to be added")
+	}
+	if env["PLAYWRIGHT_BROWSERS_PATH"] != "/ms-playwright" {
+		t.Errorf("expected PLAYWRIGHT_BROWSERS_PATH=/ms-playwright, got %v", env["PLAYWRIGHT_BROWSERS_PATH"])
+	}
+}
+
+func TestFixPlaywrightEnv_SkipsWhenPresent(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"env": map[string]any{
+				"PLAYWRIGHT_BROWSERS_PATH": "/custom/path",
+			},
+		},
+	}
+
+	fixPlaywrightEnv(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	env := cfg["env"].(map[string]any)
+	if env["PLAYWRIGHT_BROWSERS_PATH"] != "/custom/path" {
+		t.Errorf("expected custom path to be preserved, got %v", env["PLAYWRIGHT_BROWSERS_PATH"])
+	}
+}
+
+func TestFixPlaywrightEnv_NoPlaywright(t *testing.T) {
+	servers := map[string]any{
+		"other-server": map[string]any{"command": "foo"},
+	}
+
+	fixPlaywrightEnv(servers)
 
 	if _, ok := servers["playwright"]; ok {
 		t.Error("should not create playwright entry")
