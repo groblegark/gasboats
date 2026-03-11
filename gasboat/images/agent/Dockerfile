@@ -254,6 +254,13 @@ RUN case "${TARGETARCH}" in arm64) RTK_TRIPLE=aarch64-unknown-linux-gnu ;; *) RT
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_TRIPLE}.tar.gz" \
       | tar -xz -C /usr/local/bin rtk
 
+# ── RWX CLI (CI/CD platform CLI) ──────────────────────────────
+ARG RWX_VERSION=3.7.1
+RUN case "${TARGETARCH}" in arm64) RWX_ARCH=aarch64 ;; *) RWX_ARCH=x86_64 ;; esac && \
+    curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
+      -o /usr/local/bin/rwx && \
+    chmod +x /usr/local/bin/rwx
+
 # ── whisper-cli (audio transcription for JIRA video attachments) ──
 ARG WHISPER_CPP_VERSION=1.8.3
 RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
