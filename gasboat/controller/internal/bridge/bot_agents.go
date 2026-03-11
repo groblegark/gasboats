@@ -217,9 +217,13 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	if project := bead.Fields["project"]; project != "" {
 		b.agentProject[agent] = project
 	}
+	if spawnCh := bead.Fields["slack_spawn_channel"]; spawnCh != "" {
+		b.agentSpawnChannel[agent] = spawnCh
+	}
 	b.mu.Unlock()
 
 	// Fetch pod_name from the agent bead notes for coopmux terminal linking.
+	// Also picks up slack_spawn_channel if the created event didn't have it.
 	b.fetchAndCachePodName(ctx, agent)
 
 	// Thread-bound agents: skip the spawn notification here because
@@ -643,6 +647,9 @@ func (b *Bot) fetchAndCachePodName(ctx context.Context, agent string) {
 	if project != "" {
 		b.agentProject[agent] = project
 	}
+	if spawnCh := detail.Fields["slack_spawn_channel"]; spawnCh != "" {
+		b.agentSpawnChannel[agent] = spawnCh
+	}
 	b.mu.Unlock()
 }
 
@@ -671,14 +678,26 @@ func extractAgentProject(identity string) string {
 // resolveChannel returns the target Slack channel for an agent.
 // Priority:
 //  1. Router override/pattern match (if router configured)
-//  2. Agent's project primary channel (first channel in project bead's slack_channel)
-//  3. Router default / bot default channel
+//  2. Spawn channel (the channel where /spawn was issued)
+//  3. Agent's project primary channel (first channel in project bead's slack_channel)
+//  4. Router default / bot default channel
 func (b *Bot) resolveChannel(agent string) string {
 	var routerResult RouteResult
 	if b.router != nil && agent != "" {
 		routerResult = b.router.Resolve(agent)
 		if routerResult.ChannelID != "" && !routerResult.IsDefault {
 			return routerResult.ChannelID
+		}
+	}
+
+	// Prefer the channel where the agent was spawned, so the card appears
+	// in the same channel as the /spawn command.
+	if agent != "" {
+		b.mu.Lock()
+		spawnCh := b.agentSpawnChannel[agent]
+		b.mu.Unlock()
+		if spawnCh != "" {
+			return spawnCh
 		}
 	}
 
