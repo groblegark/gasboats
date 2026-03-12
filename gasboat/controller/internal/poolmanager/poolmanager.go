@@ -22,19 +22,21 @@ import (
 // Manager maintains prewarmed agent pools across multiple projects.
 // Each project with a prewarmed_pool config gets its own independent pool.
 type Manager struct {
-	daemon *beadsapi.Client
-	cfg    *config.Config
-	logger *slog.Logger
-	mu     sync.Mutex
-	seq    int // monotonic counter for unique agent names
+	daemon  *beadsapi.Client
+	cfg     *config.Config
+	logger  *slog.Logger
+	mu      sync.Mutex
+	seq     int            // monotonic counter for unique agent names
+	tracker *spawnTracker  // tracks assignment rate for predictive scaling
 }
 
 // New creates a multi-pool Manager.
 func New(daemon *beadsapi.Client, cfg *config.Config, logger *slog.Logger) *Manager {
 	return &Manager{
-		daemon: daemon,
-		cfg:    cfg,
-		logger: logger,
+		daemon:  daemon,
+		cfg:     cfg,
+		logger:  logger,
+		tracker: newSpawnTracker(),
 	}
 }
 
@@ -108,16 +110,22 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	// Reconcile each project pool: scale up to min, cap at max.
+	// Reconcile each project pool: scale to target (between min and max),
+	// adjusted by recent spawn rate for predictive scaling.
 	for _, pp := range pools {
 		active := byProject[pp.name]
 
-		// Enforce max_size: close excess agents if pool was shrunk.
-		if len(active) > pp.cfg.MaxSize {
-			excess := len(active) - pp.cfg.MaxSize
-			m.logger.Info("pool exceeds max_size, closing excess agents",
+		// Compute dynamic target based on recent assignment rate.
+		spawnRate := m.tracker.Rate(pp.name)
+		target := targetPoolSize(spawnRate, pp.cfg.MinSize, pp.cfg.MaxSize)
+
+		// Enforce max_size: close excess agents if pool was shrunk or
+		// spawn rate dropped.
+		if len(active) > target {
+			excess := len(active) - target
+			m.logger.Info("pool above target, closing excess agents",
 				"project", pp.name, "current", len(active),
-				"max", pp.cfg.MaxSize, "closing", excess)
+				"target", target, "spawn_rate", spawnRate, "closing", excess)
 			// Close oldest first (FIFO order).
 			sortByAge(active)
 			for i := 0; i < excess; i++ {
@@ -129,11 +137,11 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			active = active[excess:]
 		}
 
-		deficit := pp.cfg.MinSize - len(active)
+		deficit := target - len(active)
 		if deficit <= 0 {
 			continue
 		}
-		// Cap creation to not exceed max size.
+		// Hard cap at max_size regardless of target calculation.
 		if len(active)+deficit > pp.cfg.MaxSize {
 			deficit = pp.cfg.MaxSize - len(active)
 		}
@@ -141,9 +149,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		m.logger.Info("pool below minimum, creating prewarmed agents",
+		m.logger.Info("pool below target, creating prewarmed agents",
 			"project", pp.name, "current", len(active),
-			"min", pp.cfg.MinSize, "creating", deficit)
+			"target", target, "spawn_rate", spawnRate, "creating", deficit)
 
 		for i := 0; i < deficit; i++ {
 			if err := m.createPrewarmedAgent(ctx, pp.name, pp.cfg); err != nil {
@@ -330,6 +338,9 @@ func (m *Manager) AssignPrewarmed(ctx context.Context, req AssignRequest) (*Assi
 	m.logger.Info("assigned prewarmed agent",
 		"bead", pick.ID, "agent", pick.AgentName,
 		"channel", req.Channel, "thread_ts", req.ThreadTS)
+
+	// Record assignment for predictive scaling.
+	m.tracker.Record(pick.Project)
 
 	// Nudge the agent's Claude session with the work description.
 	// The coop_url is stored in the bead notes by the status reporter.
