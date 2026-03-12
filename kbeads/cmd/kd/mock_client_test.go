@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -210,20 +209,6 @@ func (m *mockBeadsClient) GetComments(context.Context, string) ([]*model.Comment
 func (m *mockBeadsClient) GetEvents(context.Context, string) ([]*model.Event, error) {
 	return nil, nil
 }
-
-func (m *mockBeadsClient) SetConfig(_ context.Context, key string, value json.RawMessage) (*model.Config, error) {
-	return &model.Config{Key: key, Value: value}, nil
-}
-
-func (m *mockBeadsClient) GetConfig(_ context.Context, key string) (*model.Config, error) {
-	return &model.Config{Key: key}, nil
-}
-
-func (m *mockBeadsClient) ListConfigs(context.Context, string) ([]*model.Config, error) {
-	return nil, nil
-}
-
-func (m *mockBeadsClient) DeleteConfig(context.Context, string) error { return nil }
 
 func (m *mockBeadsClient) EmitHook(context.Context, *client.EmitHookRequest) (*client.EmitHookResponse, error) {
 	return &client.EmitHookResponse{}, nil

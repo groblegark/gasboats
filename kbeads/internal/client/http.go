@@ -230,40 +230,6 @@ func (c *HTTPClient) GetEvents(ctx context.Context, beadID string) ([]*model.Eve
 	return resp.Events, nil
 }
 
-// --- Config ---
-
-func (c *HTTPClient) SetConfig(ctx context.Context, key string, value json.RawMessage) (*model.Config, error) {
-	body := map[string]json.RawMessage{"value": value}
-	var config model.Config
-	if err := c.doJSON(ctx, http.MethodPut, "/v1/configs/"+key, body, &config); err != nil {
-		return nil, err
-	}
-	return &config, nil
-}
-
-func (c *HTTPClient) GetConfig(ctx context.Context, key string) (*model.Config, error) {
-	var config model.Config
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/configs/"+key, nil, &config); err != nil {
-		return nil, err
-	}
-	return &config, nil
-}
-
-func (c *HTTPClient) ListConfigs(ctx context.Context, namespace string) ([]*model.Config, error) {
-	var resp struct {
-		Configs []*model.Config `json:"configs"`
-	}
-	path := "/v1/configs?namespace=" + url.QueryEscape(namespace)
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Configs, nil
-}
-
-func (c *HTTPClient) DeleteConfig(ctx context.Context, key string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/v1/configs/"+key, nil, nil)
-}
-
 // --- Hooks ---
 
 func (c *HTTPClient) EmitHook(ctx context.Context, req *EmitHookRequest) (*EmitHookResponse, error) {

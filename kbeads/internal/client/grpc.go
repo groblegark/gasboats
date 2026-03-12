@@ -289,44 +289,6 @@ func (c *GRPCClient) GetEvents(ctx context.Context, beadID string) ([]*model.Eve
 	return events, nil
 }
 
-// --- Config ---
-
-func (c *GRPCClient) SetConfig(ctx context.Context, key string, value json.RawMessage) (*model.Config, error) {
-	resp, err := c.client.SetConfig(ctx, &beadsv1.SetConfigRequest{
-		Key:   key,
-		Value: value,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return protoConfigToModel(resp.GetConfig()), nil
-}
-
-func (c *GRPCClient) GetConfig(ctx context.Context, key string) (*model.Config, error) {
-	resp, err := c.client.GetConfig(ctx, &beadsv1.GetConfigRequest{Key: key})
-	if err != nil {
-		return nil, err
-	}
-	return protoConfigToModel(resp.GetConfig()), nil
-}
-
-func (c *GRPCClient) ListConfigs(ctx context.Context, namespace string) ([]*model.Config, error) {
-	resp, err := c.client.ListConfigs(ctx, &beadsv1.ListConfigsRequest{Namespace: namespace})
-	if err != nil {
-		return nil, err
-	}
-	configs := make([]*model.Config, 0, len(resp.GetConfigs()))
-	for _, pb := range resp.GetConfigs() {
-		configs = append(configs, protoConfigToModel(pb))
-	}
-	return configs, nil
-}
-
-func (c *GRPCClient) DeleteConfig(ctx context.Context, key string) error {
-	_, err := c.client.DeleteConfig(ctx, &beadsv1.DeleteConfigRequest{Key: key})
-	return err
-}
-
 // --- Hooks ---
 
 // EmitHook is not implemented over gRPC (no proto definition exists).
@@ -467,19 +429,3 @@ func protoEventToModel(pb *beadsv1.Event) *model.Event {
 	return e
 }
 
-func protoConfigToModel(pb *beadsv1.Config) *model.Config {
-	if pb == nil {
-		return nil
-	}
-	c := &model.Config{
-		Key:   pb.GetKey(),
-		Value: json.RawMessage(pb.GetValue()),
-	}
-	if pb.GetCreatedAt() != nil {
-		c.CreatedAt = pb.GetCreatedAt().AsTime()
-	}
-	if pb.GetUpdatedAt() != nil {
-		c.UpdatedAt = pb.GetUpdatedAt().AsTime()
-	}
-	return c
-}

@@ -145,7 +145,6 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(remoteCmd)
 }
 

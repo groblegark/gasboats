@@ -40,12 +40,6 @@ type BeadsClient interface {
 	// Events
 	GetEvents(ctx context.Context, beadID string) ([]*model.Event, error)
 
-	// Config
-	SetConfig(ctx context.Context, key string, value json.RawMessage) (*model.Config, error)
-	GetConfig(ctx context.Context, key string) (*model.Config, error)
-	ListConfigs(ctx context.Context, namespace string) ([]*model.Config, error)
-	DeleteConfig(ctx context.Context, key string) error
-
 	// Hooks
 	EmitHook(ctx context.Context, req *EmitHookRequest) (*EmitHookResponse, error)
 
