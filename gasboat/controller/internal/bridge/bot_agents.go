@@ -237,6 +237,11 @@ func (b *Bot) NotifyAgentSpawn(ctx context.Context, bead BeadEvent) {
 	if spawnCh := bead.Fields["slack_spawn_channel"]; spawnCh != "" {
 		b.agentSpawnChannel[agent] = spawnCh
 	}
+	// Schedule-level channel override: use as spawn channel so resolveChannel
+	// routes all notifications (spawn, completion, card) to the right place.
+	if schedCh := bead.Fields["schedule_slack_channel"]; schedCh != "" {
+		b.agentSpawnChannel[agent] = schedCh
+	}
 	b.mu.Unlock()
 
 	// Fetch pod_name from the agent bead notes for coopmux terminal linking.
