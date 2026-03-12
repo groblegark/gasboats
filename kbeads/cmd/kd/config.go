@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/groblegark/kbeads/internal/model"
 	"github.com/spf13/cobra"
@@ -11,20 +12,20 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:     "config",
-	Short:   "Manage configs (type, view, context definitions)",
+	Short:   "Manage configs (deprecated — use config beads instead)",
 	GroupID: "system",
 }
 
 var configCreateCmd = &cobra.Command{
-	Use:     "create <key> <json-value>",
-	Aliases: []string{"new"},
-	Short:   "Create or update a config",
-	Args:    cobra.ExactArgs(2),
+	Use:        "create <key> <json-value>",
+	Aliases:    []string{"new"},
+	Short:      "Create or update a config (deprecated)",
+	Args:       cobra.ExactArgs(2),
+	Deprecated: "KV configs are superseded by config beads. Use 'gb config load' instead.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		value := []byte(args[1])
 
-		// Validate that value is valid JSON.
 		if !json.Valid(value) {
 			return fmt.Errorf("value must be valid JSON")
 		}
@@ -40,9 +41,10 @@ var configCreateCmd = &cobra.Command{
 }
 
 var configGetCmd = &cobra.Command{
-	Use:   "get <key>",
-	Short: "Get a config by key",
-	Args:  cobra.ExactArgs(1),
+	Use:        "get <key>",
+	Short:      "Get a config by key (deprecated)",
+	Args:       cobra.ExactArgs(1),
+	Deprecated: "KV configs are superseded by config beads. Use 'kd list --type=config' instead.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		config, err := beadsClient.GetConfig(context.Background(), args[0])
 		if err != nil {
@@ -55,9 +57,10 @@ var configGetCmd = &cobra.Command{
 }
 
 var configListCmd = &cobra.Command{
-	Use:   "list [namespace]",
-	Short: "List configs by namespace (e.g. view, type, context)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:        "list [namespace]",
+	Short:      "List configs by namespace (deprecated)",
+	Args:       cobra.MaximumNArgs(1),
+	Deprecated: "KV configs are superseded by config beads. Use 'kd list --type=config' instead.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		namespace := ""
 		if len(args) > 0 {
@@ -83,10 +86,12 @@ var configListCmd = &cobra.Command{
 }
 
 var configDeleteCmd = &cobra.Command{
-	Use:   "delete <key>",
-	Short: "Delete a config by key",
-	Args:  cobra.ExactArgs(1),
+	Use:        "delete <key>",
+	Short:      "Delete a config by key (deprecated)",
+	Args:       cobra.ExactArgs(1),
+	Deprecated: "KV configs are superseded by config beads. Manage config beads via 'gb config' instead.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintf(os.Stderr, "Warning: this deletes from the legacy KV store, not from config beads.\n")
 		if err := beadsClient.DeleteConfig(context.Background(), args[0]); err != nil {
 			return fmt.Errorf("deleting config %q: %w", args[0], err)
 		}
@@ -97,7 +102,6 @@ var configDeleteCmd = &cobra.Command{
 }
 
 func printConfigJSON(c *model.Config) {
-	// Pretty-print by unmarshalling the value bytes so they render as JSON, not base64.
 	var valueObj any
 	_ = json.Unmarshal(c.Value, &valueObj)
 
