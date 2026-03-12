@@ -19,6 +19,11 @@ const threadNudgeInterval = 30 * time.Second
 
 // handleThreadForward creates a tracking bead and nudges the bound agent when
 // a non-mention message is posted in an agent thread.
+//
+// To avoid bead pollution in busy threads, a tracking bead is only created when
+// the nudge is NOT throttled. Throttled messages are still visible in the Slack
+// thread — the agent can read them via `gb slack thread`. The agent always sees
+// the full thread context on its next interaction.
 func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEvent, agent string) {
 	agentName := extractAgentName(agent)
 
@@ -29,6 +34,14 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 		// Agent is gone — respawn the SAME agent name so the entrypoint
 		// finds the existing session JSONL and PVC for session continuity.
 		b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agentName, ev.Text)
+		return
+	}
+
+	// Throttle check first — skip bead creation for rapid-fire thread replies
+	// to avoid creating dozens of orphaned task beads in active threads.
+	if b.shouldThrottleNudge(agentName, ev.ThreadTimeStamp) {
+		b.logger.Debug("thread-forward: skipping bead creation (throttled)",
+			"agent", agentName, "channel", ev.Channel)
 		return
 	}
 
@@ -80,21 +93,22 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 
 	// Persist message ref for response relay.
 	if b.state != nil {
-		_ = b.state.SetChatMessage(beadID, MessageRef{
+		if err := b.state.SetChatMessage(beadID, MessageRef{
 			ChannelID: ev.Channel,
 			Timestamp: ev.ThreadTimeStamp,
 			Agent:     agent,
-		})
+		}); err != nil {
+			b.logger.Warn("thread-forward: failed to persist chat message ref",
+				"bead", beadID, "error", err)
+		}
 	}
 
-	// Nudge with throttling — avoid flooding the agent in active threads.
-	if !b.shouldThrottleNudge(agentName, ev.ThreadTimeStamp) {
-		message := fmt.Sprintf("Slack thread reply (bead %s): %s", beadID, truncateText(ev.Text, 200))
-		client := &http.Client{Timeout: 10 * time.Second}
-		if err := NudgeAgent(ctx, b.daemon, client, b.logger, agentName, message); err != nil {
-			b.logger.Error("failed to nudge agent for thread forward",
-				"agent", agentName, "bead", beadID, "error", err)
-		}
+	// Nudge the agent with the thread reply.
+	message := fmt.Sprintf("Slack thread reply (bead %s): %s", beadID, truncateText(ev.Text, 200))
+	client := &http.Client{Timeout: 10 * time.Second}
+	if err := NudgeAgent(ctx, b.daemon, client, b.logger, agentName, message); err != nil {
+		b.logger.Error("failed to nudge agent for thread forward",
+			"agent", agentName, "bead", beadID, "error", err)
 	}
 }
 

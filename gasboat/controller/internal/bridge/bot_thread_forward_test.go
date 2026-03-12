@@ -389,7 +389,7 @@ func TestNudgeThrottling_Expiry(t *testing.T) {
 	}
 }
 
-func TestHandleThreadForward_BeadAlwaysCreated(t *testing.T) {
+func TestHandleThreadForward_ThrottledMessagesSkipBeadCreation(t *testing.T) {
 	daemon := newMockDaemon()
 	daemon.beads["hq"] = &beadsapi.BeadDetail{
 		ID:    "bd-agent-hq",
@@ -420,7 +420,8 @@ func TestHandleThreadForward_BeadAlwaysCreated(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Send two messages in quick succession — both should create beads.
+	// Send two messages in quick succession — only the first should create a bead.
+	// The second is throttled (within threadNudgeInterval) to prevent bead pollution.
 	for i, text := range []string{"first message", "second message"} {
 		ev := &slackevents.MessageEvent{
 			User:            "U-HUMAN",
@@ -439,8 +440,8 @@ func TestHandleThreadForward_BeadAlwaysCreated(t *testing.T) {
 			count++
 		}
 	}
-	if count != 2 {
-		t.Errorf("expected 2 thread-reply beads, got %d", count)
+	if count != 1 {
+		t.Errorf("expected 1 thread-reply bead (second throttled), got %d", count)
 	}
 }
 

@@ -319,6 +319,59 @@ func (sm *StateManager) SetLastEventID(id string) error {
 	return sm.saveLocked()
 }
 
+// --- Compaction ---
+
+// CompactStaleEntries removes decision/chat messages and agent cards for
+// agents that are no longer active. This prevents unbounded growth of the
+// state file over weeks of operation. Returns the number of entries removed.
+// The activeAgents set should contain short agent names of currently active agents.
+func (sm *StateManager) CompactStaleEntries(activeAgents map[string]bool) (int, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	removed := 0
+
+	// Compact decision messages for agents that are no longer active.
+	for id, ref := range sm.data.DecisionMessages {
+		if ref.Agent != "" && !activeAgents[ref.Agent] {
+			delete(sm.data.DecisionMessages, id)
+			removed++
+		}
+	}
+
+	// Compact chat messages for agents that are no longer active.
+	for id, ref := range sm.data.ChatMessages {
+		if ref.Agent != "" && !activeAgents[ref.Agent] {
+			delete(sm.data.ChatMessages, id)
+			removed++
+		}
+	}
+
+	// Compact agent cards for agents that are no longer active.
+	for agent := range sm.data.AgentCards {
+		if !activeAgents[agent] {
+			delete(sm.data.AgentCards, agent)
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		return removed, sm.saveLocked()
+	}
+	return 0, nil
+}
+
+// Stats returns counts of all tracked state entries (for observability).
+func (sm *StateManager) Stats() (decisions, chats, cards, threads, listens int) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.data.DecisionMessages),
+		len(sm.data.ChatMessages),
+		len(sm.data.AgentCards),
+		len(sm.data.ThreadAgents),
+		len(sm.data.ListenThreads)
+}
+
 // --- Persistence ---
 
 func (sm *StateManager) load() error {
