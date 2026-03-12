@@ -27,7 +27,7 @@ var watchCmd = &cobra.Command{
 		once, _ := cmd.Flags().GetBool("once")
 
 		// 1. Fetch the view config.
-		config, err := beadsClient.GetConfig(context.Background(), "view:"+name)
+		config, err := resolveConfigBead(context.Background(), "view:"+name)
 		if err != nil {
 			return fmt.Errorf("getting view config %q: %w", name, err)
 		}

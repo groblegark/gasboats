@@ -261,62 +261,6 @@ func TestCloseBead_SkipsFieldUpdateWhenEmpty(t *testing.T) {
 	}
 }
 
-// --- SetConfig tests ---
-
-func TestSetConfig_SendsCorrectRequest(t *testing.T) {
-	var gotMethod string
-	var gotPath string
-	var gotBody map[string]json.RawMessage
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &gotBody)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	c := &Client{baseURL: srv.URL, httpClient: srv.Client()}
-	err := c.SetConfig(context.Background(), "my-key", []byte(`"my-value"`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if gotMethod != http.MethodPut {
-		t.Errorf("expected PUT, got %s", gotMethod)
-	}
-	if gotPath != "/v1/configs/my-key" {
-		t.Errorf("expected path /v1/configs/my-key, got %s", gotPath)
-	}
-
-	valueRaw, ok := gotBody["value"]
-	if !ok {
-		t.Fatal("expected 'value' key in body")
-	}
-	if string(valueRaw) != `"my-value"` {
-		t.Errorf("expected value '\"my-value\"', got %s", string(valueRaw))
-	}
-}
-
-func TestSetConfig_EscapesConfigKey(t *testing.T) {
-	var gotRawPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotRawPath = r.URL.RawPath
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	c := &Client{baseURL: srv.URL, httpClient: srv.Client()}
-	err := c.SetConfig(context.Background(), "key/with/slashes", []byte(`"val"`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotRawPath != "/v1/configs/key%2Fwith%2Fslashes" {
-		t.Errorf("expected encoded path, got %s", gotRawPath)
-	}
-}
-
 // --- Content-Type header test ---
 
 func TestDoJSON_SetsContentTypeForBody(t *testing.T) {

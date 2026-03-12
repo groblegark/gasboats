@@ -8,28 +8,17 @@ import (
 	"net/url"
 )
 
-// ConfigEntry represents a config key/value from the daemon.
+// ConfigEntry represents a config key/value from the daemon's legacy KV store.
 type ConfigEntry struct {
 	Key   string          `json:"key"`
 	Value json.RawMessage `json:"value"`
 }
 
-// GetConfig fetches a config entry by key.
+// ListConfigs returns all config entries in the given namespace from the
+// legacy KV store.
 //
 // Deprecated: KV config is superseded by label-based config beads.
-// Use ListBeadsFiltered with type="config" instead.
-func (c *Client) GetConfig(ctx context.Context, key string) (*ConfigEntry, error) {
-	var entry ConfigEntry
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/configs/"+url.PathEscape(key), nil, &entry); err != nil {
-		return nil, fmt.Errorf("getting config %s: %w", key, err)
-	}
-	return &entry, nil
-}
-
-// ListConfigs returns all config entries in the given namespace.
-//
-// Deprecated: KV config is superseded by label-based config beads.
-// Use ListBeadsFiltered with type="config" instead.
+// Retained temporarily for gb config migrate.
 func (c *Client) ListConfigs(ctx context.Context, namespace string) ([]ConfigEntry, error) {
 	q := url.Values{}
 	if namespace != "" {
@@ -47,15 +36,4 @@ func (c *Client) ListConfigs(ctx context.Context, namespace string) ([]ConfigEnt
 		return nil, fmt.Errorf("listing configs: %w", err)
 	}
 	return resp.Configs, nil
-}
-
-// DeleteConfig removes a config entry by key.
-//
-// Deprecated: KV config is superseded by label-based config beads.
-// Use ListBeadsFiltered with type="config" instead.
-func (c *Client) DeleteConfig(ctx context.Context, key string) error {
-	if err := c.doJSON(ctx, http.MethodDelete, "/v1/configs/"+url.PathEscape(key), nil, nil); err != nil {
-		return fmt.Errorf("deleting config %s: %w", key, err)
-	}
-	return nil
 }

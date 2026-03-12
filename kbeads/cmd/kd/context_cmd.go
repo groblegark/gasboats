@@ -35,7 +35,7 @@ var contextCmd = &cobra.Command{
 		name := args[0]
 
 		// 1. Fetch the context config.
-		config, err := beadsClient.GetConfig(context.Background(), "context:"+name)
+		config, err := resolveConfigBead(context.Background(), "context:"+name)
 		if err != nil {
 			return fmt.Errorf("getting context config %q: %w", name, err)
 		}
@@ -56,7 +56,7 @@ var contextCmd = &cobra.Command{
 			}
 
 			// Resolve the named view.
-			viewCfg, err := beadsClient.GetConfig(context.Background(), "view:"+section.View)
+			viewCfg, err := resolveConfigBead(context.Background(), "view:"+section.View)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading view %q: %v\n", section.View, err)
 				continue
