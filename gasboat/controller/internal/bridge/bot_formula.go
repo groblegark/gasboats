@@ -373,9 +373,33 @@ func (b *Bot) handleFormulaPour(ctx context.Context, cmd slack.SlashCommand, arg
 		b.logger.Info("formula poured via Slack",
 			"formula", formula.ID, "molecule", molID, "steps", stepCount,
 			"phase", phase, "user", cmd.UserID)
+
+		// Spawn an agent to work on the molecule.
+		agentMsg := ""
+		if project != "" {
+			agentName := ""
+			if formula.Fields != nil {
+				agentName = formula.Fields["assigned_agent"]
+			}
+			if agentName == "" {
+				molTitle := formulaSubstituteVars(formula.Title, varPairs)
+				agentName = generateAgentName(molTitle)
+			}
+			agentID, spawnErr := b.daemon.SpawnAgent(
+				context.Background(), agentName, project, molID, "crew", "")
+			if spawnErr != nil {
+				b.logger.Error("formula pour: failed to spawn agent",
+					"formula", formula.ID, "molecule", molID, "error", spawnErr)
+			} else {
+				b.logger.Info("formula pour: spawned agent for molecule",
+					"formula", formula.ID, "molecule", molID, "agent", agentID, "agentName", agentName)
+				agentMsg = fmt.Sprintf("\n:robot_face: Agent `%s` spawned to work on it.", agentName)
+			}
+		}
+
 		b.postEphemeral(cmd, fmt.Sprintf(
-			":bubbles: Created %s `%s` from formula *%s*\n%d step%s instantiated. Use `kd mol show %s` for details.",
-			phase, molID, formula.Title, stepCount, plural(stepCount), molID))
+			":bubbles: Created %s `%s` from formula *%s*\n%d step%s instantiated. Use `kd mol show %s` for details.%s",
+			phase, molID, formula.Title, stepCount, plural(stepCount), molID, agentMsg))
 	}()
 
 	b.postEphemeral(cmd, fmt.Sprintf(":hourglass_flowing_sand: Pouring formula *%s* (%d steps)...", formula.Title, len(active)))
