@@ -3,8 +3,9 @@
 on:
   github:
     push:
-      branches: [main]
-      tags: ['20*']
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, '20') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
     pull_request:
       init:
         commit-sha: ${{ event.git.sha }}
