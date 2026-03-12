@@ -585,7 +585,7 @@ tasks:
           libcurl4t64 libcurl3t64-gnutls \
           libnghttp2-14 libbrotli1 libpsl5t64 libonig5 libexpat1 \
           libicu74 libicu-dev icu-devtools \
-          postgresql-client libpq5 \
+          postgresql-client postgresql-client-16 postgresql-client-common libpq5 \
           ffmpeg cmake libsdl2-dev; do
         dpkg -L "$pkg" 2>/dev/null | while read -r f; do
           [ -e "$f" ] || continue
