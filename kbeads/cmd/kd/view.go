@@ -49,7 +49,7 @@ var viewCmd = &cobra.Command{
 		limitOverride, _ := cmd.Flags().GetInt("limit")
 
 		// 1. Fetch the view config.
-		config, err := beadsClient.GetConfig(context.Background(), "view:"+name)
+		config, err := resolveConfigBead(context.Background(), "view:"+name)
 		if err != nil {
 			return fmt.Errorf("getting view config %q: %w", name, err)
 		}
