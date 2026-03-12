@@ -8,14 +8,24 @@
 
 set -uo pipefail
 
+# ── Job-mode bypass ──────────────────────────────────────────────────────
+# Job-mode agents (thread agents, one-shot tasks) have a different lifecycle:
+# they idle and wait for follow-up messages rather than creating decision
+# checkpoints. The stop gate is designed for crew-mode agents that should
+# checkpoint before exiting. Allow job agents to stop freely.
+if [ "${BOAT_MODE:-}" = "job" ]; then
+    exit 0
+fi
+
 # ── Yield-aware fast path ────────────────────────────────────────────────
 # When the agent is actively yielding on a decision, there's nothing more
-# it can do — the decision exists, the agent is waiting. Block silently
-# with no output to avoid burning context on repeated stop hook feedback.
-# The yield marker is written by gb yield and cleared on exit.
+# it can do — the decision exists, the agent is waiting. Exit 0 silently
+# (not exit 2) to avoid the "[No stderr output]" feedback injection loop.
+# gb yield blocks in the foreground and re-nudges Claude when the decision
+# resolves, so allowing stop here is safe — the yield process keeps running.
 YIELD_MARKER="/tmp/stop-gate-yielding"
 if [ -f "$YIELD_MARKER" ]; then
-    exit 2
+    exit 0
 fi
 
 # ── Cooldown debouncing ──────────────────────────────────────────────────
@@ -59,8 +69,13 @@ if [ -f "$COOLDOWN_FILE" ]; then
     done
     [ "$cooldown" -gt 300 ] && cooldown=300
     if [ "$elapsed" -lt "$cooldown" ]; then
-        # Still within cooldown — block silently without re-injecting text.
-        exit 2
+        # Still within cooldown — allow stop silently. Exit 0 (not 2) because
+        # exit 2 doesn't actually prevent continuation when other Stop hooks
+        # (e.g. coop pipe) run later and exit 0, but it DOES generate a
+        # "[No stderr output]" feedback injection that wakes Claude up and
+        # creates a rapid-fire stop loop. The gate already injected its text
+        # on the first block; if Claude still wants to stop, let it.
+        exit 0
     fi
 fi
 
@@ -113,5 +128,4 @@ rm -f "$COOLDOWN_FILE" "$BLOCK_COUNT_FILE"
 # Clear any remaining gate state so the next session must re-satisfy from scratch.
 gb gate clear decision 2>/dev/null || true
 
-echo "[stop-gate] Stop allowed" >&2
 exit 0

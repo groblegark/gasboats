@@ -112,11 +112,24 @@ var hookStopGateCmd = &cobra.Command{
 	Use:   "stop-gate",
 	Short: "Emit Stop hook event and handle gate block (replaces stop-gate.sh)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// ── Job-mode bypass ──────────────────────────────────────────
+		// Job-mode agents (thread agents, one-shot tasks) idle and wait
+		// for follow-up messages. The decision gate is only meaningful
+		// for crew-mode agents that should checkpoint before exiting.
+		if os.Getenv("BOAT_MODE") == "job" {
+			os.Exit(0)
+		}
+
 		// ── Cooldown debouncing ──────────────────────────────────────
-		// If we blocked recently, exit 2 silently without re-injecting
-		// the checkpoint text. Uses exponential backoff to limit cost.
+		// If we blocked recently, allow stop silently. Exit 0 (not 2)
+		// because exit 2 doesn't actually prevent continuation when
+		// other Stop hooks (e.g. coop pipe) run later and exit 0, but
+		// it DOES generate a "[No stderr output]" feedback injection
+		// that wakes Claude up and creates a rapid-fire stop loop.
+		// The gate already injected its text on the first block; if
+		// Claude still wants to stop, let it.
 		if stopGateInCooldown() {
-			os.Exit(2)
+			os.Exit(0)
 		}
 
 		// ── Escape hatch ─────────────────────────────────────────────
