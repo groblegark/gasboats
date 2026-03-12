@@ -413,6 +413,206 @@ func TestHandleFormulaCommand_Routing(t *testing.T) {
 	}
 }
 
+// --- formula pour agent spawn tests ---
+
+func TestHandleFormulaPour_SpawnsAgent(t *testing.T) {
+	daemon := newFormulaMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C1")
+	seedFormula(daemon.mockDaemon, "kd-spawn1", "Deploy service",
+		nil,
+		[]formulaStep{{ID: "step1", Title: "Build"}},
+	)
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.daemon = daemon
+
+	bot.handleFormulaPour(context.Background(),
+		slack.SlashCommand{ChannelID: "C1", UserID: "U1"},
+		[]string{"kd-spawn1"}, false)
+
+	// Wait for the async goroutine to create the molecule and spawn an agent.
+	assertEventually(t, func() bool {
+		daemon.mu.Lock()
+		defer daemon.mu.Unlock()
+		for _, b := range daemon.beads {
+			if b.Type == "agent" {
+				return true
+			}
+		}
+		return false
+	}, "expected an agent bead to be spawned after formula pour")
+
+	// Verify the agent bead fields.
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	var agentBead *beadsapi.BeadDetail
+	var molBead *beadsapi.BeadDetail
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			agentBead = b
+		}
+		if b.Type == "molecule" {
+			molBead = b
+		}
+	}
+	if agentBead == nil {
+		t.Fatal("no agent bead found")
+	}
+	if molBead == nil {
+		t.Fatal("no molecule bead found")
+	}
+	if agentBead.Fields["project"] != "gasboat" {
+		t.Errorf("expected agent project=gasboat, got %q", agentBead.Fields["project"])
+	}
+	if agentBead.Fields["task_id"] != molBead.ID {
+		t.Errorf("expected agent task_id=%s, got %q", molBead.ID, agentBead.Fields["task_id"])
+	}
+}
+
+func TestHandleFormulaPour_UsesAssignedAgent(t *testing.T) {
+	daemon := newFormulaMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C1")
+
+	// Seed formula with assigned_agent field.
+	varsJSON, _ := json.Marshal([]formulaVarDef{})
+	stepsJSON, _ := json.Marshal([]formulaStep{{ID: "step1", Title: "Do work"}})
+	daemon.mu.Lock()
+	daemon.beads["kd-spawn2"] = &beadsapi.BeadDetail{
+		ID:     "kd-spawn2",
+		Title:  "Custom Agent Formula",
+		Type:   "formula",
+		Status: "open",
+		Fields: map[string]string{
+			"vars":           string(varsJSON),
+			"steps":          string(stepsJSON),
+			"assigned_agent": "my-custom-agent",
+		},
+	}
+	daemon.mu.Unlock()
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.daemon = daemon
+
+	bot.handleFormulaPour(context.Background(),
+		slack.SlashCommand{ChannelID: "C1", UserID: "U1"},
+		[]string{"kd-spawn2"}, false)
+
+	assertEventually(t, func() bool {
+		daemon.mu.Lock()
+		defer daemon.mu.Unlock()
+		for _, b := range daemon.beads {
+			if b.Type == "agent" {
+				return true
+			}
+		}
+		return false
+	}, "expected an agent bead to be spawned with assigned_agent name")
+
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			if b.Fields["agent"] != "my-custom-agent" {
+				t.Errorf("expected agent name 'my-custom-agent', got %q", b.Fields["agent"])
+			}
+			return
+		}
+	}
+}
+
+func TestHandleFormulaPour_NoSpawnWithoutProject(t *testing.T) {
+	daemon := newFormulaMockDaemon()
+	// No project seeded — projectFromChannel will return "".
+	seedFormula(daemon.mockDaemon, "kd-spawn3", "No project formula",
+		nil,
+		[]formulaStep{{ID: "step1", Title: "Build"}},
+	)
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.daemon = daemon
+
+	bot.handleFormulaPour(context.Background(),
+		slack.SlashCommand{ChannelID: "C-unknown", UserID: "U1"},
+		[]string{"kd-spawn3"}, false)
+
+	// Wait for molecule to be created.
+	assertEventually(t, func() bool {
+		daemon.mu.Lock()
+		defer daemon.mu.Unlock()
+		for _, b := range daemon.beads {
+			if b.Type == "molecule" {
+				return true
+			}
+		}
+		return false
+	}, "expected molecule to be created")
+
+	// Give a moment for any async agent spawn to happen.
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify no agent was spawned.
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			t.Error("expected no agent bead when project is empty")
+		}
+	}
+}
+
+func TestHandleFormulaPour_AgentNameFromFormulaTitle(t *testing.T) {
+	daemon := newFormulaMockDaemon()
+	daemon.seedProjectWithChannel("gasboat", "C1")
+	seedFormula(daemon.mockDaemon, "kd-spawn4", "Deploy {{env}} service",
+		[]formulaVarDef{{Name: "env", Default: "staging"}},
+		[]formulaStep{{ID: "step1", Title: "Build"}},
+	)
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.daemon = daemon
+
+	bot.handleFormulaPour(context.Background(),
+		slack.SlashCommand{ChannelID: "C1", UserID: "U1"},
+		[]string{"kd-spawn4"}, false)
+
+	assertEventually(t, func() bool {
+		daemon.mu.Lock()
+		defer daemon.mu.Unlock()
+		for _, b := range daemon.beads {
+			if b.Type == "agent" {
+				return true
+			}
+		}
+		return false
+	}, "expected agent bead to be spawned")
+
+	// Agent name should be derived from the var-substituted title "Deploy staging service".
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	for _, b := range daemon.beads {
+		if b.Type == "agent" {
+			name := b.Fields["agent"]
+			// generateAgentName("Deploy staging service") produces "deploy-staging-service-XXX"
+			if len(name) == 0 {
+				t.Error("expected non-empty agent name")
+			}
+			if name == "Deploy staging service" {
+				t.Error("expected agent name to be slugified, not raw title")
+			}
+			return
+		}
+	}
+}
+
 // --- assertEventually helper ---
 
 func assertEventually(t *testing.T, check func() bool, msg string) {
