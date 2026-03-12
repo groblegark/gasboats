@@ -140,6 +140,12 @@ mkdir -p "$PREFIX/bin" "$PREFIX/lib/docker/cli-plugins" "$PREFIX/share/helm/plug
 ) &
 
 (
+  # k6 (load testing)
+  curl -fsSL "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-${ARCH}.tar.gz" \
+    | tar -xz --strip-components=1 -C "$PREFIX/bin" "k6-v${K6_VERSION}-linux-${ARCH}/k6"
+) &
+
+(
   # whisper-cli (needs cmake, gcc — must be available in PATH)
   curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
     | tar -xz -C /tmp
