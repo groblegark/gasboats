@@ -146,6 +146,21 @@ type Config struct {
 	// This is a volume mount (not SecretEnv), so it cannot be handled by config beads.
 	ClaudeOAuthSecret string
 
+	// --- S3 Session Persistence ---
+
+	// CoopS3Bucket is the S3 bucket for coop session artifact persistence
+	// (env: COOP_S3_BUCKET). When set, agent pods upload transcripts,
+	// recordings, and session logs to S3 for cross-pod recall.
+	CoopS3Bucket string
+
+	// CoopS3Prefix is the S3 key prefix for session artifacts (env: COOP_S3_PREFIX).
+	// Default (in coop): "coop/sessions".
+	CoopS3Prefix string
+
+	// CoopS3Region is the AWS region for the S3 bucket (env: COOP_S3_REGION).
+	// When empty, coop uses the default AWS region chain.
+	CoopS3Region string
+
 	// --- Coopmux ---
 
 	// CoopmuxURL is the URL of the coopmux service (env: COOPMUX_URL).
@@ -305,6 +320,11 @@ func Parse() *Config {
 
 		// Secrets & Credentials (only controller-level; per-project secrets via config beads)
 		ClaudeOAuthSecret: os.Getenv("CLAUDE_OAUTH_SECRET"),
+
+		// S3 Session Persistence
+		CoopS3Bucket: os.Getenv("COOP_S3_BUCKET"),
+		CoopS3Prefix: os.Getenv("COOP_S3_PREFIX"),
+		CoopS3Region: os.Getenv("COOP_S3_REGION"),
 
 		// Coopmux
 		CoopmuxURL:         os.Getenv("COOPMUX_URL"),

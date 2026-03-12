@@ -495,3 +495,45 @@ func TestApplyCommonConfig_TeamsPartialResourceOverride(t *testing.T) {
 		t.Errorf("expected default cpu request %s, got %s", podmanager.DefaultCPURequest, cpuReq.String())
 	}
 }
+
+func TestApplyCommonConfig_S3EnvVars(t *testing.T) {
+	cfg := &config.Config{
+		CoopS3Bucket: "gasboat-sessions",
+		CoopS3Prefix: "prod/sessions",
+		CoopS3Region: "us-west-2",
+	}
+	spec := &podmanager.AgentPodSpec{
+		Project: "testproj",
+		Env:     map[string]string{},
+	}
+	applyCommonConfig(cfg, spec)
+
+	if spec.Env["COOP_S3_BUCKET"] != "gasboat-sessions" {
+		t.Errorf("COOP_S3_BUCKET = %q, want gasboat-sessions", spec.Env["COOP_S3_BUCKET"])
+	}
+	if spec.Env["COOP_S3_PREFIX"] != "prod/sessions" {
+		t.Errorf("COOP_S3_PREFIX = %q, want prod/sessions", spec.Env["COOP_S3_PREFIX"])
+	}
+	if spec.Env["COOP_S3_REGION"] != "us-west-2" {
+		t.Errorf("COOP_S3_REGION = %q, want us-west-2", spec.Env["COOP_S3_REGION"])
+	}
+}
+
+func TestApplyCommonConfig_S3EnvVars_Empty(t *testing.T) {
+	cfg := &config.Config{}
+	spec := &podmanager.AgentPodSpec{
+		Project: "testproj",
+		Env:     map[string]string{},
+	}
+	applyCommonConfig(cfg, spec)
+
+	if _, ok := spec.Env["COOP_S3_BUCKET"]; ok {
+		t.Error("COOP_S3_BUCKET should not be set when CoopS3Bucket is empty")
+	}
+	if _, ok := spec.Env["COOP_S3_PREFIX"]; ok {
+		t.Error("COOP_S3_PREFIX should not be set when CoopS3Prefix is empty")
+	}
+	if _, ok := spec.Env["COOP_S3_REGION"]; ok {
+		t.Error("COOP_S3_REGION should not be set when CoopS3Region is empty")
+	}
+}

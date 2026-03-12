@@ -356,6 +356,17 @@ func applyCommonConfig(cfg *config.Config, spec *podmanager.AgentPodSpec) {
 		}
 	}
 
+	// Wire S3 config for session artifact persistence (transcripts, recordings, session logs).
+	if cfg.CoopS3Bucket != "" {
+		spec.Env["COOP_S3_BUCKET"] = cfg.CoopS3Bucket
+	}
+	if cfg.CoopS3Prefix != "" {
+		spec.Env["COOP_S3_PREFIX"] = cfg.CoopS3Prefix
+	}
+	if cfg.CoopS3Region != "" {
+		spec.Env["COOP_S3_REGION"] = cfg.CoopS3Region
+	}
+
 	// Wire NATS config to all agents for beads decisions, coop events, and bus emit.
 	if cfg.NatsURL != "" {
 		spec.Env["BEADS_NATS_URL"] = cfg.NatsURL
