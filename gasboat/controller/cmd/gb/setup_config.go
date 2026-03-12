@@ -86,6 +86,7 @@ func writeMCPConfig(workspace string, config map[string]any) error {
 	// to guarantee browser availability.
 	fixPlaywrightBrowser(existingServers)
 	fixPlaywrightEnv(existingServers)
+	fixPlaywrightViewport(existingServers)
 
 	existing["mcpServers"] = existingServers
 
@@ -133,7 +134,7 @@ func defaultMCPConfig() map[string]any {
 		"mcpServers": map[string]any{
 			"playwright": map[string]any{
 				"command": "playwright-mcp",
-				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox"},
+				"args":    []any{"--browser", "chromium", "--headless", "--no-sandbox", "--viewport-size", "1280,720"},
 				"env": map[string]any{
 					"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
 				},
@@ -193,6 +194,31 @@ func fixPlaywrightEnv(servers map[string]any) {
 		env["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
 		fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\n")
 	}
+}
+
+// fixPlaywrightViewport ensures the playwright MCP server config includes
+// a --viewport-size flag. Without it, headless Chromium starts with a null
+// viewport, causing screenshots to be 0x0 or blank on heavy SPAs.
+func fixPlaywrightViewport(servers map[string]any) {
+	pw, ok := servers["playwright"]
+	if !ok {
+		return
+	}
+	cfg, ok := pw.(map[string]any)
+	if !ok {
+		return
+	}
+	args, ok := cfg["args"].([]any)
+	if !ok {
+		return
+	}
+	for _, a := range args {
+		if s, ok := a.(string); ok && s == "--viewport-size" {
+			return // already has --viewport-size flag
+		}
+	}
+	cfg["args"] = append(args, "--viewport-size", "1280,720")
+	fmt.Fprintf(os.Stderr, "[setup] playwright MCP: added --viewport-size 1280,720\n")
 }
 
 // appendDetectedPlugins auto-detects installed LSP servers and adds them
