@@ -33,16 +33,17 @@ func New(daemon *beadsapi.Client, logger *slog.Logger) *Scheduler {
 
 // Schedule represents a parsed schedule bead.
 type Schedule struct {
-	ID          string
-	Title       string
-	Cron        string
-	Project     string
-	Role        string
-	Prompt      string
-	Enabled     bool
-	Timezone    string
-	LastRun     time.Time
-	LastAgentID string
+	ID           string
+	Title        string
+	Cron         string
+	Project      string
+	Role         string
+	Prompt       string
+	Enabled      bool
+	Timezone     string
+	SlackChannel string // optional override: Slack channel for notifications
+	LastRun      time.Time
+	LastAgentID  string
 
 	// Guard rails.
 	MaxConcurrent       int           // max concurrent agents (default 2)
@@ -409,6 +410,7 @@ func (s *Scheduler) listSchedules(ctx context.Context) ([]Schedule, error) {
 			Prompt:              b.Fields["prompt"],
 			Enabled:             enabled,
 			Timezone:            b.Fields["timezone"],
+			SlackChannel:        b.Fields["slack_channel"],
 			LastRun:             lastRun,
 			LastAgentID:         b.Fields["last_agent_id"],
 			MaxConcurrent:       parseIntField(b.Fields["max_concurrent"], defaultMaxConcurrent),
@@ -463,6 +465,9 @@ func (s *Scheduler) spawnScheduledAgent(ctx context.Context, sched Schedule) (st
 		"schedule_id":    sched.ID,
 		"schedule_title": sched.Title,
 		"schedule_cron":  sched.Cron,
+	}
+	if sched.SlackChannel != "" {
+		schedFields["schedule_slack_channel"] = sched.SlackChannel
 	}
 	beadID, err := s.daemon.SpawnAgent(ctx, agentName, project, taskID, role, prompt, schedFields)
 	if err != nil {

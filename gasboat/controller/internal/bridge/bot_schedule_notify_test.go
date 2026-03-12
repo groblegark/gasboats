@@ -103,6 +103,69 @@ func TestNotifyAgentSpawn_ScheduledAgent_PostsScheduleNotification(t *testing.T)
 	}
 }
 
+func TestNotifyAgentSpawn_ScheduledAgent_UsesScheduleSlackChannel(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.beads["sched-agent-ch"] = &beadsapi.BeadDetail{
+		ID: "sched-agent-ch", Type: "agent", Status: "open",
+		Title: "sched-ch-1234", Fields: map[string]string{
+			"agent":                  "sched-ch-1234",
+			"schedule_id":            "kd-sched-ch",
+			"schedule_title":         "Weekly Report",
+			"schedule_cron":          "0 9 * * 1",
+			"schedule_slack_channel": "C_REPORTS",
+		},
+	}
+
+	var mu sync.Mutex
+	var postedChannels []string
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat.postMessage" {
+			_ = r.ParseForm()
+			mu.Lock()
+			postedChannels = append(postedChannels, r.FormValue("channel"))
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C_REPORTS", "ts": "1234.5678"})
+	}))
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+	bot.channel = "C_DEFAULT" // default channel — should NOT be used
+
+	bot.NotifyAgentSpawn(context.Background(), BeadEvent{
+		ID:       "sched-agent-ch",
+		Type:     "agent",
+		Title:    "sched-ch-1234",
+		Assignee: "sched-ch-1234",
+		Fields: map[string]string{
+			"agent":                  "sched-ch-1234",
+			"schedule_id":            "kd-sched-ch",
+			"schedule_title":         "Weekly Report",
+			"schedule_cron":          "0 9 * * 1",
+			"schedule_slack_channel": "C_REPORTS",
+		},
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// All messages should go to C_REPORTS, not C_DEFAULT.
+	for _, ch := range postedChannels {
+		if ch != "C_REPORTS" {
+			t.Errorf("expected all posts to C_REPORTS, got channel %q", ch)
+		}
+	}
+	if len(postedChannels) == 0 {
+		t.Error("expected at least one message to be posted")
+	}
+
+	// Verify spawn channel was cached for future notifications.
+	if got := bot.agentSpawnChannel["sched-ch-1234"]; got != "C_REPORTS" {
+		t.Errorf("expected agentSpawnChannel=C_REPORTS, got %q", got)
+	}
+}
+
 func TestNotifyAgentSpawn_NonScheduled_NoScheduleFields(t *testing.T) {
 	daemon := newMockDaemon()
 	daemon.beads["normal-agent"] = &beadsapi.BeadDetail{

@@ -252,6 +252,7 @@ func configs() map[string]any {
 				{Name: "prompt", Type: "string", Required: true},
 				{Name: "enabled", Type: "boolean"},
 				{Name: "timezone", Type: "string"},
+				{Name: "slack_channel", Type: "string"},
 				{Name: "last_run", Type: "string"},
 				{Name: "last_agent_id", Type: "string"},
 			},
