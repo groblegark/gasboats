@@ -165,7 +165,7 @@ crane export ghcr.io/groblegark/gasboats/agent:<tag> - | tar -tf - | grep <binar
 docker run --rm ghcr.io/groblegark/gasboats/agent:<tag> which <tool-name>
 ```
 
-Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`, `psql`
+Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`, `psql`, `k6`
 
 ### Common Pitfalls
 
