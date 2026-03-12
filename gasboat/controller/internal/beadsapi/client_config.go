@@ -8,16 +8,17 @@ import (
 	"net/url"
 )
 
-// ConfigEntry represents a config key/value from the daemon.
+// ConfigEntry represents a config key/value from the daemon's legacy KV store.
 type ConfigEntry struct {
 	Key   string          `json:"key"`
 	Value json.RawMessage `json:"value"`
 }
 
-// ListConfigs returns all config entries in the given namespace.
+// ListConfigs returns all config entries in the given namespace from the
+// legacy KV store.
 //
 // Deprecated: KV config is superseded by label-based config beads.
-// Only used by "gb config migrate" to scan legacy entries.
+// Retained temporarily for gb config migrate.
 func (c *Client) ListConfigs(ctx context.Context, namespace string) ([]ConfigEntry, error) {
 	q := url.Values{}
 	if namespace != "" {
