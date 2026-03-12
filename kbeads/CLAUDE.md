@@ -4,7 +4,7 @@ Beads is an event-driven work-tracking system. It manages hierarchical work item
 
 ## kd vs gb
 
-kd handles **data operations**: bead CRUD (create, show, list, close), deps, labels, comments, views, jacks, config, remotes, and `kd serve`. Agent **orchestration** commands (agent lifecycle, decisions, gates, hooks, bus emit, mail, prime, yield, ready, setup, advice, news) have moved to `gb` (gasboat CLI). Running deprecated kd commands prints a notice pointing to gb.
+kd handles **data operations**: bead CRUD (create, show, list, close), deps, labels, comments, views, jacks, remotes, and `kd serve`. Agent **orchestration** commands (agent lifecycle, decisions, gates, hooks, bus emit, mail, prime, yield, ready, setup, advice, news) have moved to `gb` (gasboat CLI). Running deprecated kd commands prints a notice pointing to gb.
 
 ## Key concepts
 
@@ -14,7 +14,7 @@ kd handles **data operations**: bead CRUD (create, show, list, close), deps, lab
 - **Store** — persistence interface (`internal/store/store.go`) with a PostgreSQL implementation. All mutations are wrapped in transactions and recorded as events.
 - **Events** — every mutation records an event row in Postgres and publishes to an event bus via the `Publisher` interface (`internal/events`). Publishing is optional; a no-op publisher is used when no bus is configured.
 - **IDs** — nanoid format, prefixed `kd-` (see `internal/idgen`).
-- **Type configuration** — bead types are extensible. Built-in types are defined in `internal/server/config.go`; custom types are registered via `SetConfig` with key `type:<name>`. Config is defined by `TypeConfig` / `FieldDef` in `internal/model/type_config.go`. Legacy type names `template` and `bundle` are aliased to `formula` and `molecule` at the API layer (see `model.TypeAliases`).
+- **Type configuration** — bead types are extensible. Built-in types are defined in `internal/server/config.go` as the `builtinConfigs` map. Config is defined by `TypeConfig` / `FieldDef` in `internal/model/type_config.go`. Legacy type names `template` and `bundle` are aliased to `formula` and `molecule` at the API layer (see `model.TypeAliases`).
 
 ## Directory structure
 

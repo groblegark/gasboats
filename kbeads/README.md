@@ -32,10 +32,9 @@ kd dep kd-abc123 add kd-def456
 kd search "login"
 ```
 
-Custom types can be registered at runtime:
+Built-in types (task, bug, feature, epic, decision, etc.) are defined in `internal/server/config.go`. Example:
 
 ```sh
-kd config create type:decision '{"kind":"issue","fields":[{"name":"outcome","type":"enum","values":["approved","rejected","pending"],"required":true}]}'
 kd create "Approve Q1 roadmap" --type decision --fields '{"outcome":"pending"}'
 ```
 

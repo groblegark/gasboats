@@ -11,11 +11,9 @@ import (
 )
 
 // HandlerConfigPrefix is the config key prefix for persisted external handlers.
-// Config table entries with this prefix are loaded as external handlers.
 const HandlerConfigPrefix = "bus.handler."
 
 // ExternalHandlerConfig is the serializable configuration for an external handler.
-// Stored in the config table as JSON under keys like "bus.handler.<id>".
 type ExternalHandlerConfig struct {
 	ID       string   `json:"id"`
 	Command  string   `json:"command"`           // Shell command to run
@@ -113,7 +111,7 @@ func (h *ExternalHandler) Handle(ctx context.Context, event *Event, result *Resu
 	return nil
 }
 
-// LoadPersistedHandlers loads external handlers from config table entries
+// LoadPersistedHandlers loads external handlers from a config map
 // with the "bus.handler." prefix. Each value is a JSON-encoded ExternalHandlerConfig.
 // Returns the number of handlers loaded.
 func (b *Bus) LoadPersistedHandlers(configs map[string]string) int {
