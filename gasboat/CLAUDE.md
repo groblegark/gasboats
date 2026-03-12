@@ -155,13 +155,14 @@ crane export ghcr.io/groblegark/gasboats/agent:<tag> - | tar -tf - | grep <binar
 docker run --rm ghcr.io/groblegark/gasboats/agent:<tag> which <tool-name>
 ```
 
-Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`
+Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`, `psql`
 
 ### Common Pitfalls
 
 - **Dockerfile and RWX CI out of sync**: Adding a tool to one but not the other. Always update both.
 - **Cross-task dependencies in RWX**: Each `agent-install-*` task runs in a fresh container. If task B needs cmake, install cmake in task B — don't rely on it being in `agent-install-syspackages`.
 - **dpkg copy loop**: When adding apt packages to `agent-install-syspackages`, also add the package name to the `for pkg in ...` dpkg loop AND add the binary to the `for bin in ...` ldd loop. Missing these causes shared library errors at runtime.
+- **apt metapackages**: Some apt packages (e.g., `postgresql-client`) are metapackages that depend on versioned packages (e.g., `postgresql-client-16`). The metapackage owns no binaries — `dpkg -L` returns only docs. Always add the **versioned** package to the dpkg copy loop, not just the metapackage.
 - **Go template `default` with empty strings**: Helm's `default` function does NOT treat empty string as falsy. Use `{{ if .Values.x }}{{ .Values.x }}{{ else }}{{ .Chart.AppVersion }}{{ end }}` instead of `{{ .Values.x | default .Chart.AppVersion }}`.
 
 ### All Images Built From Monorepo Source
