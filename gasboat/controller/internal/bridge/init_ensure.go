@@ -14,9 +14,11 @@ import (
 // into the beads daemon.  It is safe to call on every startup; the daemon
 // treats SetConfig as an upsert.
 //
-// For config:* keys, it also creates/updates actual config beads so that
-// gb commands (nudge-prompt, prime, setup) can resolve them via
-// ResolveConfigBeads.
+// - type:*, view:*, context:* keys are written to the KV store (used by the
+//   daemon for field validation and view rendering).
+// - config:* keys are written ONLY as config beads (resolved via
+//   ResolveConfigBeads by gb commands like prime, setup, nudge-prompt).
+//   These are not written to KV because nothing reads them from there.
 func EnsureConfigs(ctx context.Context, setter ConfigSetter, logger *slog.Logger) error {
 	for key, value := range configs() {
 		valueJSON, err := json.Marshal(value)
@@ -24,16 +26,16 @@ func EnsureConfigs(ctx context.Context, setter ConfigSetter, logger *slog.Logger
 			return fmt.Errorf("marshalling config %s: %w", key, err)
 		}
 
-		// Write to KV store (used by daemon for type/view/context).
-		if err := setter.SetConfig(ctx, key, valueJSON); err != nil {
-			return fmt.Errorf("setting config %s: %w", key, err)
-		}
-
-		// For config:* keys, also upsert a config bead so that
-		// ResolveConfigBeads can find them.
 		if strings.HasPrefix(key, "config:") {
+			// config:* entries are consumed via config beads, not KV.
 			if err := ensureConfigBead(ctx, setter, key, valueJSON, logger); err != nil {
 				logger.Warn("failed to ensure config bead", "key", key, "error", err)
+			}
+		} else {
+			// type:*, view:*, context:* entries go to KV store
+			// (used by daemon for field validation and view rendering).
+			if err := setter.SetConfig(ctx, key, valueJSON); err != nil {
+				return fmt.Errorf("setting config %s: %w", key, err)
 			}
 		}
 

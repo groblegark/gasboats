@@ -47,19 +47,30 @@ func (m *mockConfigSetter) UpdateBeadDescription(_ context.Context, beadID, desc
 	return nil
 }
 
+// findConfigBeadDescription finds a config bead by title and labels and returns
+// its description. Calls t.Fatal if not found.
+func findConfigBeadDescription(t *testing.T, beads []*beadsapi.BeadDetail, title string, labels []string) string {
+	t.Helper()
+	for _, b := range beads {
+		if b.Title == title && labelsMatch(b.Labels, labels) {
+			return b.Description
+		}
+	}
+	t.Fatalf("expected config bead with title=%q labels=%v", title, labels)
+	return ""
+}
+
 func TestEnsureConfigs_SeedsNudgePrompts(t *testing.T) {
 	setter := &mockConfigSetter{configs: make(map[string][]byte)}
 	if err := EnsureConfigs(context.Background(), setter, slog.Default()); err != nil {
 		t.Fatalf("EnsureConfigs: %v", err)
 	}
 
-	raw, ok := setter.configs["config:nudge-prompts:global"]
-	if !ok {
-		t.Fatal("expected config:nudge-prompts:global to be seeded")
-	}
+	// config:* entries are written as config beads, not to KV.
+	raw := findConfigBeadDescription(t, setter.beads, "nudge-prompts", []string{"global"})
 
 	var prompts map[string]string
-	if err := json.Unmarshal(raw, &prompts); err != nil {
+	if err := json.Unmarshal([]byte(raw), &prompts); err != nil {
 		t.Fatalf("unmarshal nudge-prompts: %v", err)
 	}
 
@@ -89,13 +100,11 @@ func TestEnsureConfigs_SeedsClaudeInstructions(t *testing.T) {
 		t.Fatalf("EnsureConfigs: %v", err)
 	}
 
-	raw, ok := setter.configs["config:claude-instructions:global"]
-	if !ok {
-		t.Fatal("expected config:claude-instructions:global to be seeded")
-	}
+	// config:* entries are written as config beads, not to KV.
+	raw := findConfigBeadDescription(t, setter.beads, "claude-instructions", []string{"global"})
 
 	var sections map[string]string
-	if err := json.Unmarshal(raw, &sections); err != nil {
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("unmarshal claude-instructions: %v", err)
 	}
 
@@ -122,40 +131,36 @@ func TestEnsureConfigs_SeedsRoleOverrides(t *testing.T) {
 		t.Fatalf("EnsureConfigs: %v", err)
 	}
 
+	// config:* entries are written as config beads, not to KV.
 	for _, role := range []string{"thread", "polecat"} {
-		key := "config:claude-instructions:role:" + role
-		raw, ok := setter.configs[key]
-		if !ok {
-			t.Errorf("expected %s to be seeded", key)
-			continue
-		}
+		raw := findConfigBeadDescription(t, setter.beads, "claude-instructions", []string{"role:" + role})
 
 		var sections map[string]string
-		if err := json.Unmarshal(raw, &sections); err != nil {
-			t.Errorf("unmarshal %s: %v", key, err)
+		if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+			t.Errorf("unmarshal role:%s: %v", role, err)
 			continue
 		}
 
 		if sections["commands"] == "" {
-			t.Errorf("%s missing commands section", key)
+			t.Errorf("role:%s missing commands section", role)
 		}
 		if sections["lifecycle"] == "" {
-			t.Errorf("%s missing lifecycle section", key)
+			t.Errorf("role:%s missing lifecycle section", role)
 		}
 	}
 
 	// Thread lifecycle should mention "stay alive" / not gb done.
-	raw := setter.configs["config:claude-instructions:role:thread"]
+	raw := findConfigBeadDescription(t, setter.beads, "claude-instructions", []string{"role:thread"})
 	var threadSections map[string]string
-	_ = json.Unmarshal(raw, &threadSections)
+	_ = json.Unmarshal([]byte(raw), &threadSections)
 	if !strings.Contains(threadSections["lifecycle"], "stay alive") {
 		t.Error("thread lifecycle should mention staying alive")
 	}
 
 	// Polecat lifecycle should mention single-task.
-	raw = setter.configs["config:claude-instructions:role:polecat"]
+	raw = findConfigBeadDescription(t, setter.beads, "claude-instructions", []string{"role:polecat"})
 	var polecatSections map[string]string
-	_ = json.Unmarshal(raw, &polecatSections)
+	_ = json.Unmarshal([]byte(raw), &polecatSections)
 	if !strings.Contains(polecatSections["lifecycle"], "single-task") {
 		t.Error("polecat lifecycle should mention single-task")
 	}
