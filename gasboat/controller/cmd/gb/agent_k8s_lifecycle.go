@@ -40,7 +40,7 @@ func autoBypassStartup(ctx context.Context, coopPort int) {
 			continue
 		}
 
-		agentState := state["state"].(string)
+		agentState, _ := state["state"].(string)
 		if agentState == "idle" || agentState == "working" {
 			return // past startup
 		}
@@ -361,7 +361,7 @@ func getAgentState(client *http.Client, base string) (map[string]any, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
 		return nil, err
 	}
-	if _, ok := state["state"]; !ok {
+	if v, ok := state["state"]; !ok || v == nil {
 		state["state"] = ""
 	}
 	return state, nil
