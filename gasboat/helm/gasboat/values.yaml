@@ -215,7 +215,7 @@ agents:
     tokenSecret: ""
     # Comma-separated Slack user IDs allowed to trigger autodestruct via the
     # bridge's Slack command. Passed as AUTODESTRUCT_ALLOWED_USERS env var.
-    allowedSlackUsers: ""
+    allowedSlackUsers: "U07K1RLQAKF"
 
   # --- Secrets & credentials ---
   #
