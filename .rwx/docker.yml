@@ -744,14 +744,18 @@ tasks:
           cp -a "$f" "$OUT$f" 2>/dev/null || true
         done
       done
-      # Transitive deps via ldd on key shared libraries
+      # Transitive deps via ldd on key shared libraries.
+      # Use cp -L (dereference symlinks) so we copy the actual .so file, not a
+      # symlink whose target (e.g. libgssapi_krb5.so.2.2) may not be in this layer.
+      # Without -L, dangling symlinks overwrite the real file from syspackages
+      # during assembly, breaking curl (and thus entrypoint nudges).
       for bin in /usr/lib/x86_64-linux-gnu/libcairo.so* /usr/lib/x86_64-linux-gnu/libpango*.so* \
           /usr/lib/x86_64-linux-gnu/libgdk*.so* /usr/lib/x86_64-linux-gnu/libgtk*.so* \
           /usr/lib/x86_64-linux-gnu/libnss3.so* /usr/lib/x86_64-linux-gnu/libcups.so*; do
         [ -f "$bin" ] || continue
         ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
           [ -e "$lib" ] || continue
-          mkdir -p "$OUT$(dirname "$lib")" && cp -a "$lib" "$OUT${lib}" 2>/dev/null || true
+          mkdir -p "$OUT$(dirname "$lib")" && cp -L "$lib" "$OUT${lib}" 2>/dev/null || true
         done || true
       done
 
@@ -778,13 +782,14 @@ tasks:
       done || true
 
       # Final ldd sweep: resolve ALL shared libs needed by installed browser binaries.
+      # Use cp -L to dereference symlinks (same rationale as the transitive deps sweep).
       for bin in $(find $OUT/ms-playwright -name chrome -type f -executable 2>/dev/null) \
                  /opt/google/chrome/chrome; do
         [ -f "$bin" ] || continue
         ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
           [ -e "$lib" ] || continue
           [ -e "$OUT$lib" ] && continue
-          mkdir -p "$OUT$(dirname "$lib")" && cp -a "$lib" "$OUT${lib}" 2>/dev/null || true
+          mkdir -p "$OUT$(dirname "$lib")" && cp -L "$lib" "$OUT${lib}" 2>/dev/null || true
         done || true
       done
 
