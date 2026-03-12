@@ -59,6 +59,17 @@ func (b *Bot) pruneStaleAgentCards(ctx context.Context) {
 	}
 	b.mu.Unlock()
 
+	// Compact stale state entries alongside the card prune to prevent
+	// unbounded growth of decision/chat message refs in the state file.
+	if b.state != nil {
+		removed, err := b.state.CompactStaleEntries(active)
+		if err != nil {
+			b.logger.Warn("prune: state compaction failed", "error", err)
+		} else if removed > 0 {
+			b.logger.Info("prune: compacted stale state entries", "removed", removed)
+		}
+	}
+
 	if len(stale) == 0 {
 		b.logger.Info("prune agent cards: all cards are current", "total", cardCount)
 		return

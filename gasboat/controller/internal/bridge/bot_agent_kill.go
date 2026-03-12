@@ -90,6 +90,11 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentName, triggerText string) {
 	agentName = extractAgentName(agentName)
 
+	// Snapshot the listen-thread flag before it gets cleaned up by killAgent
+	// (which calls RemoveThreadAgentByAgent, clearing both thread mapping and
+	// listen flag). We restore it after re-establishing the thread binding.
+	wasListenThread := b.state != nil && b.state.IsListenThread(channel, threadTS)
+
 	// Infer project from channel (same logic as handleThreadSpawn).
 	project := b.projectFromChannel(ctx, channel)
 	if project == "" && b.router != nil {
@@ -148,13 +153,17 @@ func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentNa
 		return
 	}
 
-	// Re-establish thread→agent mapping.
+	// Re-establish thread→agent mapping and restore listen-thread flag.
 	if b.state != nil {
 		_ = b.state.SetThreadAgent(channel, threadTS, agentName)
+		if wasListenThread {
+			_ = b.state.SetListenThread(channel, threadTS)
+		}
 	}
 
 	b.logger.Info("respawned thread agent with session resume",
-		"agent", agentName, "bead", beadID, "channel", channel, "thread_ts", threadTS)
+		"agent", agentName, "bead", beadID, "channel", channel, "thread_ts", threadTS,
+		"listen", wasListenThread)
 
 	// Post confirmation in thread.
 	if b.api != nil {
@@ -354,6 +363,9 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 		}
 		project := bead.Fields["project"]
 
+		// Snapshot the listen-thread flag before killAgent clears it.
+		wasListenThread := b.state != nil && b.state.IsListenThread(channelID, threadTS)
+
 		// Kill the agent (graceful shutdown + close bead + clean up state).
 		if err := b.killAgent(bgCtx, agentName, false); err != nil {
 			b.logger.Error("restart-thread-agent: kill failed", "agent", agentName, "error", err)
@@ -402,13 +414,17 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 			return
 		}
 
-		// Re-establish thread→agent mapping.
+		// Re-establish thread→agent mapping and restore listen-thread flag.
 		if b.state != nil {
 			_ = b.state.SetThreadAgent(channelID, threadTS, agentName)
+			if wasListenThread {
+				_ = b.state.SetListenThread(channelID, threadTS)
+			}
 		}
 
 		b.logger.Info("restarted thread agent", "agent", agentName, "new_bead", newBeadID,
-			"user", userID, "channel", channelID, "thread_ts", threadTS)
+			"user", userID, "channel", channelID, "thread_ts", threadTS,
+			"listen", wasListenThread)
 
 		if b.api != nil {
 			msg := fmt.Sprintf(":arrows_counterclockwise: Agent *%s* restarted with session resume. (tracking: `%s`)", agentName, newBeadID)
