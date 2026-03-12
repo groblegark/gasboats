@@ -103,7 +103,17 @@ func injectInitialPrompt(ctx context.Context, coopPort int, role string) {
 
 	base := fmt.Sprintf("http://localhost:%d/api/v1", coopPort)
 	client := &http.Client{Timeout: 3 * time.Second}
-	nudge := "Check `gb ready` for your workflow steps and begin working."
+
+	// Resolve the nudge prompt from config beads using the same logic as
+	// `gb nudge-prompt`. This replaces the old hardcoded fallback that
+	// ignored BOAT_PROMPT and other env-driven prompt templates.
+	promptType := detectNudgeType()
+	vars := buildNudgeVars()
+	nudge := resolveNudgeFromConfig(promptType, vars)
+	if nudge == "" {
+		fmt.Printf("[gb agent start] WARNING: no nudge-prompts config bead found for type %q, using fallback\n", promptType)
+		nudge = "Check `gb ready` for your workflow steps and begin working."
+	}
 
 	for i := 0; i < 60; i++ {
 		select {
