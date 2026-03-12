@@ -1,7 +1,8 @@
 # Cache key for agent-install-playwright task.
 # Touch this file to force a rebuild of Playwright + Chromium + Chrome only.
-cache-epoch=5
+cache-epoch=6
 playwright=1.58.2
 # epoch 3: add Chrome for Testing browser, fix system deps, ldd sweep
 # epoch 4: install Google Chrome Stable via apt, fix usrmerge symlinks in push-agent
 # epoch 5: install MCP's own chromium revision (npx resolves global playwright, not MCP's bundled one)
+# epoch 6: add fonts-noto-core for Playwright text rendering

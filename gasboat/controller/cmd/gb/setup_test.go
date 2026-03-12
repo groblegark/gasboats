@@ -309,9 +309,11 @@ func TestWriteMCPConfig_DoesNotOverrideExistingServer(t *testing.T) {
 	args := pw["args"].([]any)
 	// Existing server is preserved (not overwritten by new config).
 	// fixPlaywrightBrowser adds --browser chromium since the existing
-	// config doesn't specify --browser.
-	if len(args) != 3 || args[0] != "--browser" || args[1] != "chromium" || args[2] != "--custom" {
-		t.Errorf("expected [--browser chromium --custom], got args=%v", args)
+	// config doesn't specify --browser. fixPlaywrightViewport adds
+	// --viewport-size 1280,720.
+	if len(args) != 5 || args[0] != "--browser" || args[1] != "chromium" || args[2] != "--custom" ||
+		args[3] != "--viewport-size" || args[4] != "1280,720" {
+		t.Errorf("expected [--browser chromium --custom --viewport-size 1280,720], got args=%v", args)
 	}
 	// fixPlaywrightEnv adds PLAYWRIGHT_BROWSERS_PATH.
 	env, ok := pw["env"].(map[string]any)
@@ -762,6 +764,43 @@ func TestFixPlaywrightEnv_NoPlaywright(t *testing.T) {
 
 	if _, ok := servers["playwright"]; ok {
 		t.Error("should not create playwright entry")
+	}
+}
+
+func TestFixPlaywrightViewport_AddsWhenMissing(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"args":    []any{"--browser", "chromium", "--headless"},
+		},
+	}
+
+	fixPlaywrightViewport(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	args := cfg["args"].([]any)
+	if len(args) != 5 {
+		t.Fatalf("expected 5 args, got %d: %v", len(args), args)
+	}
+	if args[3] != "--viewport-size" || args[4] != "1280,720" {
+		t.Errorf("expected --viewport-size 1280,720 appended, got %v %v", args[3], args[4])
+	}
+}
+
+func TestFixPlaywrightViewport_SkipsWhenPresent(t *testing.T) {
+	servers := map[string]any{
+		"playwright": map[string]any{
+			"command": "playwright-mcp",
+			"args":    []any{"--viewport-size", "1920,1080"},
+		},
+	}
+
+	fixPlaywrightViewport(servers)
+
+	cfg := servers["playwright"].(map[string]any)
+	args := cfg["args"].([]any)
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args (unchanged), got %d: %v", len(args), args)
 	}
 }
 
