@@ -295,27 +295,6 @@ func TestPrintBeadTable(t *testing.T) {
 	}
 }
 
-// --- printConfigJSON ---
-
-func TestPrintConfigJSON(t *testing.T) {
-	c := &model.Config{
-		Key:       "test.key",
-		Value:     []byte(`{"enabled":true}`),
-		CreatedAt: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
-	}
-	out := captureStdout(t, func() {
-		printConfigJSON(c)
-	})
-	if !strings.Contains(out, "test.key") {
-		t.Errorf("output missing key, got:\n%s", out)
-	}
-	if !strings.Contains(out, "enabled") {
-		t.Errorf("output missing value, got:\n%s", out)
-	}
-	if !strings.Contains(out, "2025-06-01") {
-		t.Errorf("output missing created_at, got:\n%s", out)
-	}
-}
 
 // --- printComments ---
 

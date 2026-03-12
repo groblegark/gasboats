@@ -108,31 +108,6 @@ func TestDecisionTypeRegistered(t *testing.T) {
 	}
 }
 
-// TestDecisionTypeConfig verifies that GET /v1/configs/type:decision returns
-// the builtin config with kind=data.
-func TestDecisionTypeConfig(t *testing.T) {
-	_, _, h := newTestServer()
-	rec := doJSON(t, h, "GET", "/v1/configs/type:decision", nil)
-	requireStatus(t, rec, 200)
-
-	var cfg struct {
-		Key   string          `json:"key"`
-		Value json.RawMessage `json:"value"`
-	}
-	decodeJSON(t, rec, &cfg)
-	if cfg.Key != "type:decision" {
-		t.Fatalf("expected key=type:decision, got %q", cfg.Key)
-	}
-
-	var tc map[string]any
-	if err := json.Unmarshal(cfg.Value, &tc); err != nil {
-		t.Fatalf("failed to decode type config value: %v", err)
-	}
-	if tc["kind"] != "data" {
-		t.Fatalf("expected kind=data, got %v", tc["kind"])
-	}
-}
-
 // ── field merge on update ──────────────────────────────────────────────────
 
 // TestUpdateDecisionFieldsMerged verifies that PATCH /v1/beads/{id} merges

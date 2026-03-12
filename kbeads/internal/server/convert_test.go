@@ -20,9 +20,6 @@ func TestConversionHelpers_Nil(t *testing.T) {
 	if eventToProto(nil) != nil {
 		t.Error("eventToProto(nil) should be nil")
 	}
-	if configToProto(nil) != nil {
-		t.Error("configToProto(nil) should be nil")
-	}
 	if protoTimestamp(nil) != nil {
 		t.Error("protoTimestamp(nil) should be nil")
 	}

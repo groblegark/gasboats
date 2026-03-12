@@ -3,7 +3,6 @@ package beads.v1;
 option go_package = "github.com/groblegark/kbeads/gen/beads/v1;beadsv1";
 
 import "beads/v1/beads.proto";
-import "beads/v1/config.proto";
 
 // HealthRequest is an empty request for the health check.
 message HealthRequest {}
@@ -30,9 +29,5 @@ service BeadsService {
   rpc AddComment(AddCommentRequest) returns (AddCommentResponse);
   rpc GetComments(GetCommentsRequest) returns (GetCommentsResponse);
   rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
-  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
-  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
-  rpc ListConfigs(ListConfigsRequest) returns (ListConfigsResponse);
-  rpc DeleteConfig(DeleteConfigRequest) returns (DeleteConfigResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
 }

@@ -27,10 +27,6 @@ func (s *BeadsServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		s.handleGraph(w, r)
 	case "Stats":
 		s.connectStats(w, r)
-	case "GetConfig":
-		s.connectGetConfig(w, r)
-	case "ConfigList":
-		s.connectListConfigs(w, r)
 	case "Blocked":
 		s.connectBlocked(w, r)
 	case "Create":
@@ -98,28 +94,6 @@ func (s *BeadsServer) connectList(w http.ResponseWriter, r *http.Request) {
 func (s *BeadsServer) connectStats(w http.ResponseWriter, r *http.Request) {
 	r.Method = http.MethodGet
 	s.handleGetStats(w, r)
-}
-
-// connectGetConfig translates Connect GetConfig.
-func (s *BeadsServer) connectGetConfig(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Key string `json:"key"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Key != "" {
-		r.SetPathValue("key", body.Key)
-		r.Method = http.MethodGet
-		s.handleGetConfig(w, r)
-	} else {
-		r.Method = http.MethodGet
-		s.handleListConfigs(w, r)
-	}
-}
-
-// connectListConfigs translates Connect ConfigList.
-func (s *BeadsServer) connectListConfigs(w http.ResponseWriter, r *http.Request) {
-	r.Method = http.MethodGet
-	s.handleListConfigs(w, r)
 }
 
 // connectBlocked translates Connect Blocked.

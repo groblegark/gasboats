@@ -155,31 +155,6 @@ func TestGRPCErrorCodes(t *testing.T) {
 			return err
 		}, codes.InvalidArgument},
 
-		// Configs
-		{"SetConfig/MissingKey", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.SetConfig(ctx, &beadsv1.SetConfigRequest{Value: []byte(`{}`)})
-			return err
-		}, codes.InvalidArgument},
-		{"GetConfig/MissingKey", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.GetConfig(ctx, &beadsv1.GetConfigRequest{})
-			return err
-		}, codes.InvalidArgument},
-		{"GetConfig/NotFound", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.GetConfig(ctx, &beadsv1.GetConfigRequest{Key: "view:nonexistent"})
-			return err
-		}, codes.NotFound},
-		{"ListConfigs/MissingNamespace", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.ListConfigs(ctx, &beadsv1.ListConfigsRequest{})
-			return err
-		}, codes.InvalidArgument},
-		{"DeleteConfig/MissingKey", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.DeleteConfig(ctx, &beadsv1.DeleteConfigRequest{})
-			return err
-		}, codes.InvalidArgument},
-		{"DeleteConfig/NotFound", func(s *BeadsServer, ctx context.Context) error {
-			_, err := s.DeleteConfig(ctx, &beadsv1.DeleteConfigRequest{Key: "view:nonexistent"})
-			return err
-		}, codes.NotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, _, ctx := testCtx(t)

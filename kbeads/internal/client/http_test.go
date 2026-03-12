@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -55,164 +54,6 @@ func newTestClient(h http.Handler) (*HTTPClient, *httptest.Server) {
 	srv := httptest.NewServer(h)
 	c := NewHTTPClient(srv.URL, "")
 	return c, srv
-}
-
-// --- SetConfig ---
-
-func TestHTTPClient_SetConfig(t *testing.T) {
-	h := &testHandler{
-		responseBody: `{
-			"key": "view:inbox",
-			"value": {"columns": ["title", "status"]},
-			"created_at": "2026-01-15T10:00:00Z",
-			"updated_at": "2026-01-15T10:00:00Z"
-		}`,
-	}
-	c, srv := newTestClient(h)
-	defer srv.Close()
-
-	val := json.RawMessage(`{"columns": ["title", "status"]}`)
-	cfg, err := c.SetConfig(context.Background(), "view:inbox", val)
-	if err != nil {
-		t.Fatalf("SetConfig() error = %v", err)
-	}
-
-	if h.method != http.MethodPut {
-		t.Errorf("method = %q, want PUT", h.method)
-	}
-	if h.path != "/v1/configs/view:inbox" {
-		t.Errorf("path = %q, want /v1/configs/view:inbox", h.path)
-	}
-
-	var reqBody map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(h.body), &reqBody); err != nil {
-		t.Fatalf("unmarshaling request body: %v", err)
-	}
-	var gotVal, wantVal interface{}
-	if err := json.Unmarshal(reqBody["value"], &gotVal); err != nil {
-		t.Fatalf("unmarshaling request value: %v", err)
-	}
-	if err := json.Unmarshal([]byte(`{"columns": ["title", "status"]}`), &wantVal); err != nil {
-		t.Fatalf("unmarshaling expected value: %v", err)
-	}
-	gotJSON, _ := json.Marshal(gotVal)
-	wantJSON, _ := json.Marshal(wantVal)
-	if string(gotJSON) != string(wantJSON) {
-		t.Errorf("request body value = %s, want %s", gotJSON, wantJSON)
-	}
-
-	if cfg.Key != "view:inbox" {
-		t.Errorf("cfg.Key = %q, want 'view:inbox'", cfg.Key)
-	}
-	if cfg.Value == nil {
-		t.Error("cfg.Value is nil, want non-nil")
-	}
-}
-
-// --- GetConfig ---
-
-func TestHTTPClient_GetConfig(t *testing.T) {
-	h := &testHandler{
-		responseBody: `{
-			"key": "type:decision",
-			"value": {"fields": [{"name": "status", "type": "enum"}]},
-			"created_at": "2026-01-15T10:00:00Z",
-			"updated_at": "2026-01-16T10:00:00Z"
-		}`,
-	}
-	c, srv := newTestClient(h)
-	defer srv.Close()
-
-	cfg, err := c.GetConfig(context.Background(), "type:decision")
-	if err != nil {
-		t.Fatalf("GetConfig() error = %v", err)
-	}
-
-	if h.method != http.MethodGet {
-		t.Errorf("method = %q, want GET", h.method)
-	}
-	if h.path != "/v1/configs/type:decision" {
-		t.Errorf("path = %q, want /v1/configs/type:decision", h.path)
-	}
-
-	if cfg.Key != "type:decision" {
-		t.Errorf("cfg.Key = %q, want 'type:decision'", cfg.Key)
-	}
-}
-
-// --- ListConfigs ---
-
-func TestHTTPClient_ListConfigs(t *testing.T) {
-	h := &testHandler{
-		responseBody: `{
-			"configs": [
-				{"key": "view:inbox", "value": {}, "created_at": "2026-01-15T10:00:00Z", "updated_at": "2026-01-15T10:00:00Z"},
-				{"key": "view:board", "value": {}, "created_at": "2026-01-15T10:00:00Z", "updated_at": "2026-01-15T10:00:00Z"}
-			]
-		}`,
-	}
-	c, srv := newTestClient(h)
-	defer srv.Close()
-
-	configs, err := c.ListConfigs(context.Background(), "view")
-	if err != nil {
-		t.Fatalf("ListConfigs() error = %v", err)
-	}
-
-	if h.method != http.MethodGet {
-		t.Errorf("method = %q, want GET", h.method)
-	}
-	if h.path != "/v1/configs" {
-		t.Errorf("path = %q, want /v1/configs", h.path)
-	}
-	if !strings.Contains(h.query, "namespace=view") {
-		t.Errorf("query %q missing namespace=view", h.query)
-	}
-
-	if len(configs) != 2 {
-		t.Fatalf("len(configs) = %d, want 2", len(configs))
-	}
-	if configs[0].Key != "view:inbox" {
-		t.Errorf("configs[0].Key = %q, want 'view:inbox'", configs[0].Key)
-	}
-}
-
-func TestHTTPClient_ListConfigs_Empty(t *testing.T) {
-	h := &testHandler{
-		responseBody: `{"configs": []}`,
-	}
-	c, srv := newTestClient(h)
-	defer srv.Close()
-
-	configs, err := c.ListConfigs(context.Background(), "nonexistent")
-	if err != nil {
-		t.Fatalf("ListConfigs() error = %v", err)
-	}
-	if len(configs) != 0 {
-		t.Errorf("len(configs) = %d, want 0", len(configs))
-	}
-}
-
-// --- DeleteConfig ---
-
-func TestHTTPClient_DeleteConfig(t *testing.T) {
-	h := &testHandler{
-		statusCode: http.StatusNoContent,
-	}
-	c, srv := newTestClient(h)
-	defer srv.Close()
-
-	err := c.DeleteConfig(context.Background(), "view:inbox")
-	if err != nil {
-		t.Fatalf("DeleteConfig() error = %v", err)
-	}
-
-	if h.method != http.MethodDelete {
-		t.Errorf("method = %q, want DELETE", h.method)
-	}
-	if h.path != "/v1/configs/view:inbox" {
-		t.Errorf("path = %q, want /v1/configs/view:inbox", h.path)
-	}
 }
 
 // --- Health ---
@@ -406,11 +247,6 @@ func TestHTTPClient_204NoContent(t *testing.T) {
 	err := c.DeleteBead(context.Background(), "bead-del")
 	if err != nil {
 		t.Fatalf("DeleteBead() with 204 error = %v", err)
-	}
-
-	err = c.DeleteConfig(context.Background(), "some:key")
-	if err != nil {
-		t.Fatalf("DeleteConfig() with 204 error = %v", err)
 	}
 
 	err = c.RemoveLabel(context.Background(), "bead-x", "label")

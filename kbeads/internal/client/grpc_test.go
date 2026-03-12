@@ -402,56 +402,6 @@ func TestProtoEventToModel_EmptyPayload(t *testing.T) {
 	}
 }
 
-// --- protoConfigToModel ---
-
-func TestProtoConfigToModel(t *testing.T) {
-	created := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
-	updated := time.Date(2026, 1, 16, 14, 0, 0, 0, time.UTC)
-	pb := &beadsv1.Config{
-		Key:       "view:inbox",
-		Value:     []byte(`{"columns": ["title"]}`),
-		CreatedAt: timestamppb.New(created),
-		UpdatedAt: timestamppb.New(updated),
-	}
-
-	c := protoConfigToModel(pb)
-
-	if c.Key != "view:inbox" {
-		t.Errorf("Key = %q, want 'view:inbox'", c.Key)
-	}
-	if c.Value == nil {
-		t.Fatal("Value is nil, want non-nil")
-	}
-	if !c.CreatedAt.Equal(created) {
-		t.Errorf("CreatedAt = %v, want %v", c.CreatedAt, created)
-	}
-	if !c.UpdatedAt.Equal(updated) {
-		t.Errorf("UpdatedAt = %v, want %v", c.UpdatedAt, updated)
-	}
-}
-
-func TestProtoConfigToModel_Nil(t *testing.T) {
-	c := protoConfigToModel(nil)
-	if c != nil {
-		t.Errorf("protoConfigToModel(nil) = %v, want nil", c)
-	}
-}
-
-func TestProtoConfigToModel_NilTimestamps(t *testing.T) {
-	pb := &beadsv1.Config{
-		Key:   "test:key",
-		Value: []byte(`"hello"`),
-	}
-
-	c := protoConfigToModel(pb)
-	if c.CreatedAt != (time.Time{}) {
-		t.Errorf("CreatedAt = %v, want zero time", c.CreatedAt)
-	}
-	if c.UpdatedAt != (time.Time{}) {
-		t.Errorf("UpdatedAt = %v, want zero time", c.UpdatedAt)
-	}
-}
-
 // --- Interface compliance ---
 
 func TestGRPCClient_ImplementsBeadsClient(t *testing.T) {

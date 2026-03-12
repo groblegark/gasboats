@@ -101,19 +101,6 @@ func eventToProto(e *model.Event) *beadsv1.Event {
 	}
 }
 
-// configToProto converts a model.Config to a proto Config message.
-func configToProto(c *model.Config) *beadsv1.Config {
-	if c == nil {
-		return nil
-	}
-	return &beadsv1.Config{
-		Key:       c.Key,
-		Value:     []byte(c.Value),
-		CreatedAt: timestamppb.New(c.CreatedAt),
-		UpdatedAt: timestamppb.New(c.UpdatedAt),
-	}
-}
-
 // protoTimestamp converts an optional proto Timestamp to a *time.Time.
 // Returns nil when the input is nil.
 func protoTimestamp(ts *timestamppb.Timestamp) *time.Time {
