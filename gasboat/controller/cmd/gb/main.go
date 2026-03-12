@@ -107,6 +107,7 @@ func init() {
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(spawnCmd)
 	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(initAgentCmd)
 
 	// Orchestration
 	rootCmd.AddCommand(gateCmd)

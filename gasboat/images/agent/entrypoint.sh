@@ -418,407 +418,27 @@ fi
 # Coop log level (overridable via pod env).
 export COOP_LOG_LEVEL="${COOP_LOG_LEVEL:-info}"
 
-# ── Auto-bypass startup prompts ────────────────────────────────────────
-auto_bypass_startup() {
-    false_positive_count=0
-    # Increased from 30 to 60 iterations (120s) to handle large session replays.
-    for i in $(seq 1 60); do
-        sleep 2
-        state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null) || continue
-        agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
-        prompt_type=$(echo "${state}" | jq -r '.prompt.type // empty' 2>/dev/null)
-        subtype=$(echo "${state}" | jq -r '.prompt.subtype // empty' 2>/dev/null)
-
-        # Handle interactive prompts while agent is in "starting" state.
-        if [ "${agent_state}" = "starting" ]; then
-            screen=$(curl -sf http://localhost:8080/api/v1/screen/text 2>/dev/null)
-
-            # Handle "Resume Session" picker — press Enter to resume the most recent session.
-            # Previously pressed Escape which caused a new .jsonl to accumulate on the PVC.
-            # Case-insensitive match to handle potential text changes across Claude versions.
-            if echo "${screen}" | grep -qi "resume.*session\|Resume Session"; then
-                echo "[entrypoint] Detected resume session picker, selecting resume"
-                curl -sf -X POST http://localhost:8080/api/v1/input/keys \
-                    -H 'Content-Type: application/json' \
-                    -d '{"keys":["Return"]}' 2>&1 || true
-                sleep 3
-                continue
-            fi
-        fi
-
-        # Handle "Detected a custom API key" prompt — can appear as state
-        # "starting" or "prompt" (type=permission, subtype=trust).
-        # Normally avoided by unsetting ANTHROPIC_API_KEY when OAuth is
-        # present, but kept as a safety net.
-        if [ "${agent_state}" = "starting" ] || [ "${prompt_type}" = "permission" ]; then
-            screen=$(curl -sf http://localhost:8080/api/v1/screen/text 2>/dev/null)
-            if echo "${screen}" | grep -q "Detected a custom API key"; then
-                echo "[entrypoint] Detected API key prompt, selecting 'Yes' to use it"
-                curl -sf -X POST http://localhost:8080/api/v1/input/keys \
-                    -H 'Content-Type: application/json' \
-                    -d '{"keys":["Up","Return"]}' 2>&1 || true
-                sleep 3
-                continue
-            fi
-            # Handle "trust this folder" permission prompt.
-            if echo "${screen}" | grep -q "trust this folder"; then
-                echo "[entrypoint] Auto-accepting trust folder prompt"
-                curl -sf -X POST http://localhost:8080/api/v1/agent/respond \
-                    -H 'Content-Type: application/json' \
-                    -d '{"option":0}' 2>&1 || true
-                sleep 3
-                continue
-            fi
-        fi
-
-        if [ "${prompt_type}" = "setup" ]; then
-            screen=$(curl -sf http://localhost:8080/api/v1/screen 2>/dev/null)
-            if echo "${screen}" | grep -q "No, exit"; then
-                echo "[entrypoint] Auto-accepting setup prompt (subtype: ${subtype})"
-                curl -sf -X POST http://localhost:8080/api/v1/agent/respond \
-                    -H 'Content-Type: application/json' \
-                    -d '{"option":2}' 2>&1 || true
-                false_positive_count=0
-                sleep 5
-                continue
-            else
-                false_positive_count=$((false_positive_count + 1))
-                if [ "${false_positive_count}" -ge 5 ]; then
-                    echo "[entrypoint] Skipping false-positive setup prompt (no dialog after ${false_positive_count} checks)"
-                    return 0
-                fi
-                continue
-            fi
-        fi
-        # If agent is past setup prompts, we're done
-        agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
-        if [ "${agent_state}" = "idle" ] || [ "${agent_state}" = "working" ]; then
-            return 0
-        fi
-    done
-    echo "[entrypoint] WARNING: auto-bypass timed out after 120s"
-}
-
-# ── Inject initial work prompt ────────────────────────────────────────
-
-# ── Standby: wait for pool assignment (prewarmed agents) ─────────────
-# When BOAT_STANDBY=true, Claude is already running and idle. This
-# function polls agent_state until the pool manager changes it from
-# "prewarmed" to "assigning", then hydrates thread/task env vars so
-# the subsequent inject_initial_prompt sends the correct work prompt.
-standby_wait_for_assignment() {
-    # Signal monitor_agent_idle to skip state updates so the pool manager
-    # controls the prewarmed→assigning transition.
-    touch /tmp/standby_active
-
-    echo "[entrypoint] Standby mode: Claude is idle, waiting for assignment (bead: ${BOAT_AGENT_BEAD_ID})"
-    local poll_interval="${BOAT_STANDBY_POLL:-5}"
-    local max_wait="${BOAT_STANDBY_MAX_TTL:-86400}"
-    local elapsed=0
-
-    while true; do
-        if [ "${elapsed}" -ge "${max_wait}" ]; then
-            echo "[entrypoint] Standby safety-net TTL (${max_wait}s) exceeded, shutting down"
-            rm -f /tmp/standby_active
-            touch /tmp/standby_expired
-            curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
-            return 1
-        fi
-
-        # Check agent_state via kd (faster than raw curl + jq).
-        local current_state
-        if command -v kd &>/dev/null; then
-            current_state=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null \
-                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
-        else
-            current_state=$(curl -sf "${BEADS_HTTP_ADDR:-http://localhost:8080}/v1/beads/${BOAT_AGENT_BEAD_ID}" 2>/dev/null \
-                | jq -r '.fields.agent_state // "prewarmed"' 2>/dev/null) || current_state="prewarmed"
-        fi
-
-        if [ "${current_state}" != "prewarmed" ]; then
-            echo "[entrypoint] Assignment received (state: ${current_state}), exiting standby"
-
-            # Hydrate env vars from the assigned bead's fields so the nudge
-            # includes thread context (channel, thread_ts, description).
-            if command -v kd &>/dev/null; then
-                local bead_json
-                bead_json=$(kd show "${BOAT_AGENT_BEAD_ID}" --json 2>/dev/null) || true
-                if [ -n "${bead_json}" ]; then
-                    local assigned_channel assigned_thread_ts assigned_project assigned_task_id
-                    assigned_channel=$(echo "${bead_json}" | jq -r '.fields.slack_thread_channel // empty' 2>/dev/null)
-                    assigned_thread_ts=$(echo "${bead_json}" | jq -r '.fields.slack_thread_ts // empty' 2>/dev/null)
-                    assigned_project=$(echo "${bead_json}" | jq -r '.fields.project // empty' 2>/dev/null)
-                    if [ -n "${assigned_channel}" ]; then
-                        export SLACK_THREAD_CHANNEL="${assigned_channel}"
-                        echo "[entrypoint] Hydrated SLACK_THREAD_CHANNEL=${assigned_channel}"
-                    fi
-                    if [ -n "${assigned_thread_ts}" ]; then
-                        export SLACK_THREAD_TS="${assigned_thread_ts}"
-                        echo "[entrypoint] Hydrated SLACK_THREAD_TS=${assigned_thread_ts}"
-                    fi
-                    if [ -n "${assigned_project}" ] && [ -z "${PROJECT:-}" ]; then
-                        export PROJECT="${assigned_project}"
-                        echo "[entrypoint] Hydrated PROJECT=${assigned_project}"
-                    fi
-                    assigned_task_id=$(echo "${bead_json}" | jq -r '.fields.task_id // empty' 2>/dev/null)
-                    if [ -n "${assigned_task_id}" ]; then
-                        export BOAT_TASK_ID="${assigned_task_id}"
-                        echo "[entrypoint] Hydrated BOAT_TASK_ID=${assigned_task_id}"
-                    fi
-                fi
-            fi
-
-            rm -f /tmp/standby_active
-            return 0
-        fi
-
-        sleep "${poll_interval}"
-        elapsed=$((elapsed + poll_interval))
-    done
-}
-
-inject_initial_prompt() {
-    # Wait for agent to be past setup and idle
-    for i in $(seq 1 60); do
-        sleep 2
-        state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null) || continue
-        agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
-        if [ "${agent_state}" = "idle" ]; then
-            break
-        fi
-        # If agent is already working (hook triggered it), no nudge needed
-        if [ "${agent_state}" = "working" ]; then
-            echo "[entrypoint] Agent already working, skipping initial prompt"
-            return 0
-        fi
-    done
-
-    # Resolve nudge prompt from config beads via gb nudge-prompt.
-    # Task resolution from agent bead dependencies is handled inside gb nudge-prompt.
-    local nudge_msg
-    if command -v gb &>/dev/null; then
-        nudge_msg=$(gb nudge-prompt 2>/dev/null) || nudge_msg=""
-    fi
-
-    if [ -z "${nudge_msg}" ]; then
-        echo "[entrypoint] WARNING: gb nudge-prompt failed — no nudge-prompts config beads found"
-        nudge_msg="Run gb ready to find work."
-    fi
-
-    echo "[entrypoint] Injecting initial work prompt (role: ${ROLE})"
-    response=$(curl -sf -X POST http://localhost:8080/api/v1/agent/nudge \
-        -H 'Content-Type: application/json' \
-        -d "{\"message\": \"${nudge_msg}\"}" 2>&1) || {
-        echo "[entrypoint] WARNING: nudge failed: ${response}"
-        return 0
-    }
-
-    delivered=$(echo "${response}" | jq -r '.delivered // false' 2>/dev/null)
-    if [ "${delivered}" = "true" ]; then
-        echo "[entrypoint] Initial prompt delivered successfully"
-    else
-        reason=$(echo "${response}" | jq -r '.reason // "unknown"' 2>/dev/null)
-        echo "[entrypoint] WARNING: nudge not delivered: ${reason}"
-    fi
-}
-
-# ── OAuth credential refresh ────────────────────────────────────────────
-OAUTH_TOKEN_URL="https://platform.claude.com/v1/oauth/token"
-OAUTH_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-CREDS_FILE="${CLAUDE_STATE}/.credentials.json"
-
-refresh_credentials() {
-    # Skip refresh in mock mode — claudeless doesn't use OAuth.
-    if [ "${MOCK_MODE}" = "1" ]; then
-        echo "[entrypoint] Mock mode — skipping OAuth refresh loop"
-        return 0
-    fi
-    # Skip refresh entirely when using API key mode — no OAuth credentials to refresh.
-    if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ ! -f "${CREDS_FILE}" ]; then
-        echo "[entrypoint] API key mode — skipping OAuth refresh loop"
-        return 0
-    fi
-    sleep 30  # Let Claude start first
-    local consecutive_failures=0
-    local max_failures=5
-    while true; do
-        sleep 300  # Check every 5 minutes
-
-        if [ ! -f "${CREDS_FILE}" ]; then
-            continue
-        fi
-
-        expires_at=$(jq -r '.claudeAiOauth.expiresAt // 0' "${CREDS_FILE}" 2>/dev/null)
-        refresh_token=$(jq -r '.claudeAiOauth.refreshToken // empty' "${CREDS_FILE}" 2>/dev/null)
-
-        if [ -z "${refresh_token}" ] || [ "${expires_at}" = "0" ]; then
-            continue
-        fi
-
-        # Coop-provisioned credentials use a sentinel expiresAt (>= 10^12 ms).
-        # Skip refresh — these are managed by coop profiles.
-        if [ "${expires_at}" -ge 9999999999000 ] 2>/dev/null; then
-            consecutive_failures=0
-            continue
-        fi
-
-        # Check if within 1 hour of expiry (3600000ms)
-        now_ms=$(date +%s)000
-        remaining_ms=$((expires_at - now_ms))
-        if [ "${remaining_ms}" -gt 3600000 ]; then
-            consecutive_failures=0
-            continue
-        fi
-
-        echo "[entrypoint] OAuth token expires in $((remaining_ms / 60000))m, refreshing..."
-
-        response=$(curl -sf "${OAUTH_TOKEN_URL}" \
-            -H 'Content-Type: application/json' \
-            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${refresh_token}\",\"client_id\":\"${OAUTH_CLIENT_ID}\"}" 2>/dev/null) || {
-            consecutive_failures=$((consecutive_failures + 1))
-            echo "[entrypoint] WARNING: OAuth refresh request failed (attempt ${consecutive_failures}/${max_failures})"
-            if [ "${consecutive_failures}" -ge "${max_failures}" ]; then
-                agent_state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null | jq -r '.state // empty' 2>/dev/null)
-                if [ "${agent_state}" = "working" ] || [ "${agent_state}" = "idle" ]; then
-                    echo "[entrypoint] WARNING: OAuth refresh failing but agent is ${agent_state}, not terminating"
-                    consecutive_failures=0
-                    continue
-                fi
-                echo "[entrypoint] FATAL: OAuth refresh failed ${max_failures} consecutive times, terminating pod"
-                kill -TERM $$ 2>/dev/null || kill -TERM 1 2>/dev/null
-                exit 1
-            fi
-            continue
-        }
-
-        new_access_token=$(echo "${response}" | jq -r '.access_token // empty' 2>/dev/null)
-        new_refresh_token=$(echo "${response}" | jq -r '.refresh_token // empty' 2>/dev/null)
-        expires_in=$(echo "${response}" | jq -r '.expires_in // 0' 2>/dev/null)
-
-        if [ -z "${new_access_token}" ] || [ -z "${new_refresh_token}" ]; then
-            consecutive_failures=$((consecutive_failures + 1))
-            echo "[entrypoint] WARNING: OAuth refresh returned invalid response (attempt ${consecutive_failures}/${max_failures})"
-            if [ "${consecutive_failures}" -ge "${max_failures}" ]; then
-                agent_state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null | jq -r '.state // empty' 2>/dev/null)
-                if [ "${agent_state}" = "working" ] || [ "${agent_state}" = "idle" ]; then
-                    echo "[entrypoint] WARNING: OAuth refresh failing but agent is ${agent_state}, not terminating"
-                    consecutive_failures=0
-                    continue
-                fi
-                echo "[entrypoint] FATAL: OAuth refresh failed ${max_failures} consecutive times, terminating pod"
-                kill -TERM $$ 2>/dev/null || kill -TERM 1 2>/dev/null
-                exit 1
-            fi
-            continue
-        fi
-
-        consecutive_failures=0
-        new_expires_at=$(( $(date +%s) * 1000 + expires_in * 1000 ))
-
-        jq --arg at "${new_access_token}" \
-           --arg rt "${new_refresh_token}" \
-           --argjson ea "${new_expires_at}" \
-           '.claudeAiOauth.accessToken = $at | .claudeAiOauth.refreshToken = $rt | .claudeAiOauth.expiresAt = $ea' \
-           "${CREDS_FILE}" > "${CREDS_FILE}.tmp" && mv "${CREDS_FILE}.tmp" "${CREDS_FILE}"
-
-        echo "[entrypoint] OAuth credentials refreshed (expires in $((expires_in / 3600))h)"
-    done
-}
-
-# ── Monitor agent exit and shut down coop ──────────────────────────────
-monitor_agent_idle() {
-    [ -z "${KD_AGENT_ID:-}" ] && return 0
-    command -v kd &>/dev/null || return 0
-    local prev_state=""
-    sleep 15
-    while true; do
-        sleep 10
-        state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null) || break
-        agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
-        if [ "${agent_state}" != "${prev_state}" ] && [ -n "${agent_state}" ]; then
-            # Skip state updates while in standby — the pool manager controls
-            # the prewarmed→assigning transition. Writing "idle" here would
-            # remove the agent from the prewarmed pool prematurely.
-            if [ ! -f /tmp/standby_active ]; then
-                case "${agent_state}" in
-                    idle|working)
-                        kd update "${KD_AGENT_ID}" -f agent_state="${agent_state}" 2>/dev/null || true
-                        ;;
-                esac
-            fi
-            prev_state="${agent_state}"
-        fi
-        # Stop polling once the agent exits.
-        [ "${agent_state}" = "exited" ] && break
-    done
-}
-
-monitor_agent_exit() {
-    sleep 10
-    while true; do
-        sleep 5
-        state=$(curl -sf http://localhost:8080/api/v1/agent 2>/dev/null) || break
-        agent_state=$(echo "${state}" | jq -r '.state // empty' 2>/dev/null)
-        error_category=$(echo "${state}" | jq -r '.error_category // empty' 2>/dev/null)
-        if [ "${agent_state}" = "exited" ]; then
-            echo "[entrypoint] Agent exited, requesting coop shutdown"
-            curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
-            return 0
-        fi
-        # Detect rate-limited state and park the pod.
-        error_cat=$(echo "${state}" | jq -r '.error_category // empty' 2>/dev/null)
-        if [ "${error_cat}" = "rate_limited" ]; then
-            echo "[entrypoint] Agent rate-limited, dismissing prompt"
-            # Send Enter to select "Stop and wait" from /rate-limit-options.
-            curl -sf -X POST http://localhost:8080/api/v1/input/keys \
-                -H 'Content-Type: application/json' \
-                -d '{"keys":["Return"]}' 2>/dev/null || true
-            last_msg=$(echo "${state}" | jq -r '.last_message // empty' 2>/dev/null)
-            echo "[entrypoint] Rate limit info: ${last_msg}"
-            # Report rate_limited status to the agent bead.
-            if [ -n "${KD_AGENT_ID:-}" ] && command -v kd &>/dev/null; then
-                kd update "${KD_AGENT_ID}" -f agent_state=rate_limited 2>/dev/null || true
-            fi
-            # Write sentinel so the restart loop knows to sleep until reset.
-            echo "${last_msg}" > /tmp/rate_limit_reset
-            sleep 2
-            echo "[entrypoint] Requesting coop shutdown (rate-limited)"
-            curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
-            return 0
-        fi
-    done
-}
-
 # ── Signal forwarding ─────────────────────────────────────────────────────
+# gb init handles the coop API calls (Escape + shutdown). The entrypoint
+# only needs to forward SIGTERM to the coop process for hard-kill fallback.
 COOP_PID=""
+GB_INIT_PID=""
 forward_signal() {
-    if [ -n "${COOP_PID}" ]; then
-        echo "[entrypoint] Graceful shutdown: interrupting Claude before forwarding $1"
-        # Send Escape to interrupt Claude mid-generation.
-        curl -sf -X POST http://localhost:8080/api/v1/input/keys \
-            -H 'Content-Type: application/json' \
-            -d '{"keys":["Escape"]}' 2>/dev/null || true
-        sleep 2
-        # Request graceful coop shutdown via API.
-        curl -sf -X POST http://localhost:8080/api/v1/shutdown 2>/dev/null || true
-        sleep 3
-        # If coop is still running, send SIGTERM.
-        if kill -0 "${COOP_PID}" 2>/dev/null; then
-            echo "[entrypoint] Forwarding $1 to coop (pid ${COOP_PID})"
-            kill -"$1" "${COOP_PID}" 2>/dev/null || true
-        fi
+    if [ -n "${GB_INIT_PID}" ]; then
+        # gb init handles graceful shutdown via coop API (Escape + shutdown).
+        # Give it time to complete, then fall back to SIGTERM on coop PID.
+        kill -"$1" "${GB_INIT_PID}" 2>/dev/null || true
+        sleep 5
+    fi
+    if [ -n "${COOP_PID}" ] && kill -0 "${COOP_PID}" 2>/dev/null; then
+        echo "[entrypoint] Forwarding $1 to coop (pid ${COOP_PID})"
+        kill -"$1" "${COOP_PID}" 2>/dev/null || true
         wait "${COOP_PID}" 2>/dev/null || true
     fi
     exit 0
 }
 trap 'forward_signal TERM' TERM
 trap 'forward_signal INT' INT
-
-# Start credential refresh in background (survives coop restarts).
-# Skip for mock agent commands — claudeless needs no OAuth credentials.
-if [ "${MOCK_MODE}" != "1" ]; then
-    refresh_credentials &
-fi
 
 # Clean up stale standby flags from previous runs.
 rm -f /tmp/standby_active /tmp/standby_expired /tmp/standby_done
@@ -867,24 +487,27 @@ while true; do
 
     start_time=$(date +%s)
 
-    # Build the injection chain: bypass prompts → [standby wait] → inject prompt.
-    # For prewarmed agents on first start, Claude idles in standby until the
-    # pool manager assigns work — then the work prompt is injected instantly.
+    # Build gb init flags.
+    GB_INIT_FLAGS=""
     if [ "${BOAT_STANDBY:-}" = "true" ] && [ -n "${BOAT_AGENT_BEAD_ID:-}" ] && [ ! -f /tmp/standby_done ]; then
-        INJECT_CHAIN="auto_bypass_startup && standby_wait_for_assignment && inject_initial_prompt; touch /tmp/standby_done"
-    else
-        INJECT_CHAIN="auto_bypass_startup && inject_initial_prompt"
+        GB_INIT_FLAGS="--standby"
+    fi
+    if [ "${MOCK_MODE}" = "1" ]; then
+        GB_INIT_FLAGS="${GB_INIT_FLAGS} --mock"
     fi
 
     if [ -n "${RESUME_FLAG}" ]; then
         echo "[entrypoint] Starting coop + ${AGENT_CMD%% *} (${ROLE}/${AGENT}) with resume"
         ${COOP_CMD} ${RESUME_FLAG} -- ${AGENT_CMD} &
         COOP_PID=$!
-        (eval "${INJECT_CHAIN}") &
-        monitor_agent_exit &
-        monitor_agent_idle &
+        gb init ${GB_INIT_FLAGS} &
+        GB_INIT_PID=$!
         wait "${COOP_PID}" 2>/dev/null && exit_code=0 || exit_code=$?
         COOP_PID=""
+        # Stop gb init when coop exits.
+        kill "${GB_INIT_PID}" 2>/dev/null || true
+        wait "${GB_INIT_PID}" 2>/dev/null || true
+        GB_INIT_PID=""
 
         if [ "${exit_code}" -ne 0 ] && [ -n "${LATEST_LOG}" ] && [ -f "${LATEST_LOG}" ]; then
             echo "[entrypoint] Resume failed (exit ${exit_code}), retiring stale session log"
@@ -895,11 +518,19 @@ while true; do
         echo "[entrypoint] Starting coop + ${AGENT_CMD%% *} (${ROLE}/${AGENT})"
         ${COOP_CMD} -- ${AGENT_CMD} &
         COOP_PID=$!
-        (eval "${INJECT_CHAIN}") &
-        monitor_agent_exit &
-        monitor_agent_idle &
+        gb init ${GB_INIT_FLAGS} &
+        GB_INIT_PID=$!
         wait "${COOP_PID}" 2>/dev/null && exit_code=0 || exit_code=$?
         COOP_PID=""
+        # Stop gb init when coop exits.
+        kill "${GB_INIT_PID}" 2>/dev/null || true
+        wait "${GB_INIT_PID}" 2>/dev/null || true
+        GB_INIT_PID=""
+    fi
+
+    # Mark standby done after first successful gb init cycle.
+    if [ "${BOAT_STANDBY:-}" = "true" ] && [ ! -f /tmp/standby_done ]; then
+        touch /tmp/standby_done
     fi
 
     elapsed=$(( $(date +%s) - start_time ))
