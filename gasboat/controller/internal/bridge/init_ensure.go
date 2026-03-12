@@ -10,15 +10,9 @@ import (
 	"gasboat/controller/internal/beadsapi"
 )
 
-// EnsureConfigs upserts all gasboat-managed type, view, and context configs
-// into the beads daemon.  It is safe to call on every startup; the daemon
-// treats SetConfig as an upsert.
-//
-// - type:*, view:*, context:* keys are written to the KV store (used by the
-//   daemon for field validation and view rendering).
-// - config:* keys are written ONLY as config beads (resolved via
-//   ResolveConfigBeads by gb commands like prime, setup, nudge-prompt).
-//   These are not written to KV because nothing reads them from there.
+// EnsureConfigs upserts all gasboat-managed type, view, context, and config
+// entries as config beads in the beads daemon. It is safe to call on every
+// startup; existing beads with matching (title, labels) are updated in place.
 func EnsureConfigs(ctx context.Context, setter ConfigSetter, logger *slog.Logger) error {
 	for key, value := range configs() {
 		valueJSON, err := json.Marshal(value)
@@ -26,49 +20,63 @@ func EnsureConfigs(ctx context.Context, setter ConfigSetter, logger *slog.Logger
 			return fmt.Errorf("marshalling config %s: %w", key, err)
 		}
 
-		if strings.HasPrefix(key, "config:") {
-			// config:* entries are consumed via config beads, not KV.
-			if err := ensureConfigBead(ctx, setter, key, valueJSON, logger); err != nil {
-				logger.Warn("failed to ensure config bead", "key", key, "error", err)
-			}
-		} else {
-			// type:*, view:*, context:* entries go to KV store
-			// (used by daemon for field validation and view rendering).
-			if err := setter.SetConfig(ctx, key, valueJSON); err != nil {
-				return fmt.Errorf("setting config %s: %w", key, err)
-			}
+		if err := ensureConfigBead(ctx, setter, key, valueJSON, logger); err != nil {
+			logger.Warn("failed to ensure config bead", "key", key, "error", err)
 		}
 
-		logger.Info("ensured beads config", "key", key)
+		logger.Info("ensured config bead", "key", key)
 	}
 
 	return nil
 }
 
-// parseConfigKey extracts the category and labels from a config key.
-// Format: "config:<category>:<scope>" where scope is "global" or "role:<name>".
-// Examples:
+// roleKeyedNamespaces are key prefixes where the suffix represents a role
+// (or "global"). Other namespaces (type, view) use the full key as a
+// global-scoped title.
+var roleKeyedNamespaces = map[string]bool{
+	"context": true,
+}
+
+// parseEntryKey converts a config entry key into (title, labels) for
+// config bead storage.
 //
-//	"config:nudge-prompts:global"           → ("nudge-prompts", ["global"])
+// Key patterns:
+//
+//	"config:nudge-prompts:global"            → ("nudge-prompts", ["global"])
 //	"config:claude-instructions:role:thread" → ("claude-instructions", ["role:thread"])
-func parseConfigKey(key string) (category string, labels []string) {
-	// Strip "config:" prefix.
-	rest := strings.TrimPrefix(key, "config:")
-
-	// Split on first ":" to get category.
-	idx := strings.Index(rest, ":")
-	if idx < 0 {
-		return rest, []string{"global"}
+//	"context:captain"                        → ("context", ["role:captain"])
+//	"type:agent"                             → ("type:agent", ["global"])
+//	"view:agents:active"                     → ("view:agents:active", ["global"])
+func parseEntryKey(key string) (title string, labels []string) {
+	// config:* keys: strip prefix, parse category:scope.
+	if strings.HasPrefix(key, "config:") {
+		rest := strings.TrimPrefix(key, "config:")
+		idx := strings.Index(rest, ":")
+		if idx < 0 {
+			return rest, []string{"global"}
+		}
+		return rest[:idx], []string{rest[idx+1:]}
 	}
-	category = rest[:idx]
-	scope := rest[idx+1:]
 
-	return category, []string{scope}
+	// Check for role-keyed namespaces (e.g. context:captain).
+	if idx := strings.Index(key, ":"); idx > 0 {
+		namespace := key[:idx]
+		if roleKeyedNamespaces[namespace] {
+			suffix := key[idx+1:]
+			if suffix == "global" {
+				return namespace, []string{"global"}
+			}
+			return namespace, []string{"role:" + suffix}
+		}
+	}
+
+	// Everything else (type:*, view:*): full key is title, always global.
+	return key, []string{"global"}
 }
 
 // ensureConfigBead creates or updates a config bead for the given config key.
 func ensureConfigBead(ctx context.Context, setter ConfigSetter, key string, valueJSON []byte, logger *slog.Logger) error {
-	category, labels := parseConfigKey(key)
+	category, labels := parseEntryKey(key)
 
 	// Search for an existing open config bead with matching title.
 	result, err := setter.ListBeadsFiltered(ctx, beadsapi.ListBeadsQuery{

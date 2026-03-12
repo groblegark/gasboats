@@ -9,10 +9,8 @@ import (
 	"gasboat/controller/internal/beadsapi"
 )
 
-// ConfigSetter can upsert a config key/value in the beads daemon
-// and create/update config beads for the label-based config system.
+// ConfigSetter can create/update config beads in the beads daemon.
 type ConfigSetter interface {
-	SetConfig(ctx context.Context, key string, value []byte) error
 	CreateBead(ctx context.Context, req beadsapi.CreateBeadRequest) (string, error)
 	ListBeadsFiltered(ctx context.Context, q beadsapi.ListBeadsQuery) (*beadsapi.ListBeadsResult, error)
 	UpdateBeadDescription(ctx context.Context, beadID, description string) error
