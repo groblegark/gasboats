@@ -1107,3 +1107,93 @@ tasks:
       echo "Pushed ${REPO}:${TAG}"
     env:
       REF_NAME: ${{ init.ref-name }}
+
+  # ── Agent image smoke test: verify critical binaries + libs ─────────
+  - key: smoke-agent
+    use: [push-agent, install-crane]
+    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
+    cache: false
+    timeout: 5m
+    run: |
+      set -e
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
+      REPO="ghcr.io/groblegark/gasboats/agent"
+      ROOT=/tmp/agent-root
+      LIBDIR=usr/lib/x86_64-linux-gnu  # multiarch lib path (amd64)
+
+      # Verify a binary's shared libs resolve inside the chroot.
+      # Skips statically-linked binaries (Go, Rust) where ldd prints
+      # "not a dynamic executable" to stderr.
+      assert_ldd_clean() {
+        local label="$1" binpath="$2"
+        missing=$(sudo chroot "$ROOT" ldd "$binpath" 2>/dev/null | grep "not found" || true)
+        if [ -n "$missing" ]; then
+          echo "FAIL: $label has missing libs: $missing"
+          exit 1
+        fi
+      }
+
+      # Extract image filesystem
+      mkdir -p "$ROOT"
+      crane export "${REPO}:${TAG}" - | sudo tar -xf - -C "$ROOT"
+      if [ ! -d "$ROOT/usr" ]; then
+        echo "FAIL: crane export produced empty or corrupt filesystem"
+        exit 1
+      fi
+
+      echo "=== Smoke test: shared library resolution ==="
+      for lib in libgssapi_krb5.so.2 libcurl.so.4 libssl.so.3 libnss3.so libnspr4.so; do
+        f="$ROOT/$LIBDIR/$lib"
+        if [ -L "$f" ]; then
+          target=$(readlink "$f")
+          if [ ! -e "$ROOT/$LIBDIR/$target" ]; then
+            echo "FAIL: dangling symlink $lib -> $target"
+            exit 1
+          fi
+        elif [ ! -f "$f" ]; then
+          echo "FAIL: missing $lib"
+          exit 1
+        fi
+        echo "  OK: $lib"
+      done
+
+      echo "=== Smoke test: critical binaries ==="
+      # Static binaries (Go/Rust) — existence check only, no ldd
+      STATIC_BINS="coop kd gb go"
+      for bin in curl git jq node claude coop kd gb go rustc python3 tmux; do
+        if [ -f "$ROOT/usr/local/bin/$bin" ] || [ -L "$ROOT/usr/local/bin/$bin" ]; then
+          found="/usr/local/bin/$bin"
+        elif [ -f "$ROOT/usr/bin/$bin" ] || [ -L "$ROOT/usr/bin/$bin" ]; then
+          found="/usr/bin/$bin"
+        else
+          echo "FAIL: $bin not found in /usr/local/bin or /usr/bin"
+          exit 1
+        fi
+        case " $STATIC_BINS " in
+          *" $bin "*) ;;  # skip ldd for statically-linked binaries
+          *) assert_ldd_clean "$bin" "$found" ;;
+        esac
+        echo "  OK: $bin"
+      done
+
+      echo "=== Smoke test: playwright browsers ==="
+      if [ ! -d "$ROOT/ms-playwright" ]; then
+        echo "FAIL: /ms-playwright directory missing"
+        exit 1
+      fi
+      chromium=$(find "$ROOT/ms-playwright" -name chrome -type f -executable 2>/dev/null | head -1)
+      if [ -z "$chromium" ]; then
+        echo "FAIL: no chromium binary in /ms-playwright"
+        exit 1
+      fi
+      assert_ldd_clean "chromium" "${chromium#$ROOT}"
+      echo "  OK: playwright chromium"
+
+      echo "=== Smoke test: entrypoint exists ==="
+      [ -x "$ROOT/entrypoint.sh" ] || { echo "FAIL: /entrypoint.sh not executable"; exit 1; }
+      echo "  OK: /entrypoint.sh"
+
+      echo "=== All smoke tests passed ==="
+    env:
+      REF_NAME: ${{ init.ref-name }}
