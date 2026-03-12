@@ -35,13 +35,13 @@ var contextCmd = &cobra.Command{
 		name := args[0]
 
 		// 1. Fetch the context config.
-		config, err := resolveConfigBead(context.Background(), "context:"+name)
+		ctxCfg, err := resolveConfigBead(context.Background(), "context:"+name)
 		if err != nil {
 			return fmt.Errorf("getting context config %q: %w", name, err)
 		}
 
 		var cc contextConfig
-		if err := json.Unmarshal(config.Value, &cc); err != nil {
+		if err := json.Unmarshal(ctxCfg.Value, &cc); err != nil {
 			return fmt.Errorf("parsing context config %q: %w", name, err)
 		}
 

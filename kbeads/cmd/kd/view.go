@@ -49,13 +49,13 @@ var viewCmd = &cobra.Command{
 		limitOverride, _ := cmd.Flags().GetInt("limit")
 
 		// 1. Fetch the view config.
-		config, err := resolveConfigBead(context.Background(), "view:"+name)
+		cfg, err := resolveConfigBead(context.Background(), "view:"+name)
 		if err != nil {
 			return fmt.Errorf("getting view config %q: %w", name, err)
 		}
 
 		var vc viewConfig
-		if err := json.Unmarshal(config.Value, &vc); err != nil {
+		if err := json.Unmarshal(cfg.Value, &vc); err != nil {
 			return fmt.Errorf("parsing view config %q: %w", name, err)
 		}
 
