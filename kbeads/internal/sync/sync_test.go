@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"sync/atomic"
@@ -30,7 +29,6 @@ func TestSchedulerStartStop(t *testing.T) {
 	ms := newMockStore()
 	now := time.Now().UTC()
 	ms.beads["kd-1"] = &model.Bead{ID: "kd-1", Kind: model.KindIssue, Type: model.TypeTask, Title: "T1", Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now}
-	ms.configs["view:inbox"] = &model.Config{Key: "view:inbox", Value: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
 
 	dest := &mockDestination{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -53,9 +51,9 @@ func TestSchedulerStartStop(t *testing.T) {
 	}
 
 	lines := nonEmptyLines(string(data))
-	// 1 header + 1 bead + 1 config = 3
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines, got %d", len(lines))
+	// 1 header + 1 bead = 2
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
 	}
 }
 

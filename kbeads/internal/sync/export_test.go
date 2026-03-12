@@ -27,7 +27,7 @@ func TestExportJSONL_Empty(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &h); err != nil {
 		t.Fatalf("unmarshal header: %v", err)
 	}
-	if h.Version != "1" || h.Type != "header" || h.BeadCount != 0 || h.ConfigCount != 0 {
+	if h.Version != "1" || h.Type != "header" || h.BeadCount != 0 {
 		t.Fatalf("unexpected header: %+v", h)
 	}
 }
@@ -45,18 +45,15 @@ func TestExportJSONL_WithBeadsAndConfigs(t *testing.T) {
 	ms.deps["kd-aaa"] = []*model.Dependency{{BeadID: "kd-aaa", DependsOnID: "kd-zzz", Type: model.DepBlocks, CreatedAt: now}}
 	ms.comments["kd-aaa"] = []*model.Comment{{ID: 1, BeadID: "kd-aaa", Author: "alice", Text: "Fix this", CreatedAt: now}}
 
-	// Add a config.
-	ms.configs["view:inbox"] = &model.Config{Key: "view:inbox", Value: json.RawMessage(`{"filter":{}}`), CreatedAt: now, UpdatedAt: now}
-
 	var buf bytes.Buffer
 	if err := ExportJSONL(context.Background(), ms, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	lines := nonEmptyLines(buf.String())
-	// 1 header + 2 beads + 1 config = 4 lines
-	if len(lines) != 4 {
-		t.Fatalf("expected 4 lines, got %d:\n%s", len(lines), buf.String())
+	// 1 header + 2 beads = 3 lines
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), buf.String())
 	}
 
 	// Verify header.
@@ -64,8 +61,8 @@ func TestExportJSONL_WithBeadsAndConfigs(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &h); err != nil {
 		t.Fatalf("unmarshal header: %v", err)
 	}
-	if h.BeadCount != 2 || h.ConfigCount != 1 {
-		t.Fatalf("header counts: bead=%d config=%d", h.BeadCount, h.ConfigCount)
+	if h.BeadCount != 2 {
+		t.Fatalf("header count: bead=%d", h.BeadCount)
 	}
 
 	// Verify beads are sorted by ID (kd-aaa before kd-zzz).
@@ -104,15 +101,6 @@ func TestExportJSONL_WithBeadsAndConfigs(t *testing.T) {
 	}
 	if len(b1.Comments) != 1 {
 		t.Fatalf("expected 1 comment for kd-aaa, got %d", len(b1.Comments))
-	}
-
-	// Verify config line.
-	var rec3 record
-	if err := json.Unmarshal([]byte(lines[3]), &rec3); err != nil {
-		t.Fatalf("unmarshal line 3: %v", err)
-	}
-	if rec3.Type != "config" {
-		t.Fatalf("expected config type, got %q", rec3.Type)
 	}
 }
 

@@ -18,7 +18,6 @@ import (
 
 type mockStore struct {
 	beads         map[string]*model.Bead
-	configs       map[string]*model.Config
 	events        []*model.Event
 	deps          map[string][]*model.Dependency
 	labels        map[string][]string
@@ -32,7 +31,6 @@ type mockStore struct {
 func newMockStore() *mockStore {
 	return &mockStore{
 		beads:    make(map[string]*model.Bead),
-		configs:  make(map[string]*model.Config),
 		deps:     make(map[string][]*model.Dependency),
 		labels:   make(map[string][]string),
 		comments: make(map[string][]*model.Comment),
@@ -369,46 +367,6 @@ func (m *mockStore) GetEvents(_ context.Context, beadID string) ([]*model.Event,
 	return result, nil
 }
 
-func (m *mockStore) SetConfig(_ context.Context, config *model.Config) error {
-	m.configs[config.Key] = config
-	return nil
-}
-
-func (m *mockStore) GetConfig(_ context.Context, key string) (*model.Config, error) {
-	c, ok := m.configs[key]
-	if !ok {
-		return nil, sql.ErrNoRows
-	}
-	return c, nil
-}
-
-func (m *mockStore) ListConfigs(_ context.Context, namespace string) ([]*model.Config, error) {
-	prefix := namespace + ":"
-	var result []*model.Config
-	for k, c := range m.configs {
-		if strings.HasPrefix(k, prefix) {
-			result = append(result, c)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockStore) ListAllConfigs(_ context.Context) ([]*model.Config, error) {
-	var result []*model.Config
-	for _, c := range m.configs {
-		result = append(result, c)
-	}
-	return result, nil
-}
-
-func (m *mockStore) DeleteConfig(_ context.Context, key string) error {
-	if _, ok := m.configs[key]; !ok {
-		return sql.ErrNoRows
-	}
-	delete(m.configs, key)
-	return nil
-}
-
 func (m *mockStore) RunInTransaction(_ context.Context, fn func(tx store.Store) error) error {
 	return fn(m)
 }
@@ -482,8 +440,6 @@ func TestHandleHTTPErrors(t *testing.T) {
 		{"CreateBead/MissingTitle", "POST", "/v1/beads", map[string]any{"type": "task"}, 400, "title is required"},
 		{"GetBead/NotFound", "GET", "/v1/beads/nonexistent", nil, 404, "bead not found"},
 		{"DeleteBead/NotFound", "DELETE", "/v1/beads/nonexistent", nil, 404, ""},
-		{"GetConfig/NotFound", "GET", "/v1/configs/view:nonexistent", nil, 404, ""},
-		{"DeleteConfig/NotFound", "DELETE", "/v1/configs/view:nonexistent", nil, 404, ""},
 		{"AddComment/MissingText", "POST", "/v1/beads/kd-x/comments", map[string]any{"author": "alice"}, 400, ""},
 		{"AddDependency/MissingDependsOnID", "POST", "/v1/beads/kd-a/dependencies", map[string]any{"type": "blocks"}, 400, ""},
 		{"AddLabel/MissingLabel", "POST", "/v1/beads/kd-a/labels", map[string]any{}, 400, ""},

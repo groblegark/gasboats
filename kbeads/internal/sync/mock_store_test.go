@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"sort"
-	"strings"
 
 	"github.com/groblegark/kbeads/internal/model"
 	"github.com/groblegark/kbeads/internal/store"
@@ -13,7 +12,6 @@ import (
 // mockStore is a minimal in-memory store for sync tests.
 type mockStore struct {
 	beads    map[string]*model.Bead
-	configs  map[string]*model.Config
 	labels   map[string][]string
 	deps     map[string][]*model.Dependency
 	comments map[string][]*model.Comment
@@ -22,7 +20,6 @@ type mockStore struct {
 func newMockStore() *mockStore {
 	return &mockStore{
 		beads:    make(map[string]*model.Bead),
-		configs:  make(map[string]*model.Config),
 		labels:   make(map[string][]string),
 		deps:     make(map[string][]*model.Dependency),
 		comments: make(map[string][]*model.Comment),
@@ -154,46 +151,6 @@ func (m *mockStore) RecordEvent(_ context.Context, _ *model.Event) error {
 
 func (m *mockStore) GetEvents(_ context.Context, _ string) ([]*model.Event, error) {
 	return nil, nil
-}
-
-func (m *mockStore) SetConfig(_ context.Context, config *model.Config) error {
-	m.configs[config.Key] = config
-	return nil
-}
-
-func (m *mockStore) GetConfig(_ context.Context, key string) (*model.Config, error) {
-	c, ok := m.configs[key]
-	if !ok {
-		return nil, sql.ErrNoRows
-	}
-	return c, nil
-}
-
-func (m *mockStore) ListConfigs(_ context.Context, namespace string) ([]*model.Config, error) {
-	prefix := namespace + ":"
-	var result []*model.Config
-	for k, c := range m.configs {
-		if strings.HasPrefix(k, prefix) {
-			result = append(result, c)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockStore) ListAllConfigs(_ context.Context) ([]*model.Config, error) {
-	var result []*model.Config
-	for _, c := range m.configs {
-		result = append(result, c)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Key < result[j].Key
-	})
-	return result, nil
-}
-
-func (m *mockStore) DeleteConfig(_ context.Context, key string) error {
-	delete(m.configs, key)
-	return nil
 }
 
 func (m *mockStore) RunInTransaction(_ context.Context, fn func(tx store.Store) error) error {

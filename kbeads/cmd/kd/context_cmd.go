@@ -35,13 +35,13 @@ var contextCmd = &cobra.Command{
 		name := args[0]
 
 		// 1. Fetch the context config.
-		config, err := resolveConfigBead(context.Background(), "context:"+name)
+		configValue, err := resolveConfigBead(context.Background(), "context:"+name)
 		if err != nil {
 			return fmt.Errorf("getting context config %q: %w", name, err)
 		}
 
 		var cc contextConfig
-		if err := json.Unmarshal(config.Value, &cc); err != nil {
+		if err := json.Unmarshal(configValue, &cc); err != nil {
 			return fmt.Errorf("parsing context config %q: %w", name, err)
 		}
 
@@ -56,14 +56,14 @@ var contextCmd = &cobra.Command{
 			}
 
 			// Resolve the named view.
-			viewCfg, err := resolveConfigBead(context.Background(), "view:"+section.View)
+			viewValue, err := resolveConfigBead(context.Background(), "view:"+section.View)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading view %q: %v\n", section.View, err)
 				continue
 			}
 
 			var vc viewConfig
-			if err := json.Unmarshal(viewCfg.Value, &vc); err != nil {
+			if err := json.Unmarshal(viewValue, &vc); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing view %q: %v\n", section.View, err)
 				continue
 			}
