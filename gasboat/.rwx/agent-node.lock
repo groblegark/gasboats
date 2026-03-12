@@ -1,5 +1,5 @@
 # Cache key for agent-install-node task.
 # Touch this file to force a rebuild of Node.js + Claude Code only.
-cache-epoch=2
+cache-epoch=3
 node-major=24
 claude-code=latest
