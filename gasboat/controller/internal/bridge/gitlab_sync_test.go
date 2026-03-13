@@ -682,6 +682,75 @@ func TestGitLabWebhookHandler_NoteEvent_NudgesAgent(t *testing.T) {
 	}
 }
 
+func TestGitLabWebhookHandler_NoteEvent_SpawnsAgentWhenNudgeFails(t *testing.T) {
+	daemon := newMockGitLabDaemon()
+	daemon.beads["bead-1"] = &beadsapi.BeadDetail{
+		ID:       "bead-1",
+		Title:    "Fix auth",
+		Type:     "task",
+		Assignee: "dead-agent",
+		Fields:   map[string]string{"mr_url": "https://gitlab.com/org/repo/-/merge_requests/42"},
+		Labels:   []string{"project:monorepo"},
+	}
+
+	// Nudge fails (agent is dead).
+	nudgeFailed := false
+	nudge := func(_ context.Context, _, _ string) error {
+		nudgeFailed = true
+		return fmt.Errorf("agent not found")
+	}
+
+	// Create an agent resolver backed by a mock resolver daemon.
+	// No agent bead for "dead-agent" → resolver will spawn a new one.
+	resolverDaemon := newMockResolverDaemon()
+	resolver := newTestAgentResolver(resolverDaemon, nil)
+
+	handler := GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		Daemon:        daemon,
+		WebhookSecret: "secret",
+		Nudge:         nudge,
+		AgentResolver: resolver,
+		Logger:        slog.Default(),
+	})
+
+	event := map[string]any{
+		"object_kind": "note",
+		"user":        map[string]any{"username": "reviewer-alice"},
+		"object_attributes": map[string]any{
+			"note":          "This null check is wrong",
+			"noteable_type": "MergeRequest",
+			"system":        false,
+		},
+		"merge_request": map[string]any{
+			"iid": 42,
+			"url": "https://gitlab.com/org/repo/-/merge_requests/42",
+		},
+	}
+	body, _ := json.Marshal(event)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !nudgeFailed {
+		t.Error("expected nudge to be called and fail")
+	}
+	// The resolver should have spawned an agent via the mock daemon.
+	spawned := resolverDaemon.getSpawned()
+	if len(spawned) == 0 {
+		t.Error("expected agent to be spawned via resolver")
+	} else {
+		if spawned[0].Fields["project"] != "monorepo" {
+			t.Errorf("spawn project = %q, want monorepo", spawned[0].Fields["project"])
+		}
+	}
+}
+
 func TestBuildReviewNudgeMessage(t *testing.T) {
 	nc := noteContext{
 		Author:       "alice",

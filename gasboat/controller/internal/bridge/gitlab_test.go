@@ -252,6 +252,117 @@ func TestGitLabClient_PostMRNote_Error(t *testing.T) {
 	}
 }
 
+func TestGitLabClient_ListMRNotes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/api/v4/projects/org/repo/merge_requests/10/notes"
+		if r.URL.Path != wantPath {
+			t.Errorf("unexpected path: %s, want %s", r.URL.Path, wantPath)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s, want GET", r.Method)
+		}
+		if r.URL.Query().Get("per_page") != "100" {
+			t.Error("expected per_page=100 query param")
+		}
+		if r.URL.Query().Get("sort") != "desc" {
+			t.Error("expected sort=desc query param")
+		}
+		resp := []GitLabNote{
+			{ID: 101, Body: "Please fix the null check", Author: GitLabUser{ID: 5, Username: "reviewer"}, System: false, CreatedAt: "2026-03-13T18:00:00Z"},
+			{ID: 100, Body: "added 1 commit", Author: GitLabUser{ID: 1, Username: "gasboat-bot"}, System: true, CreatedAt: "2026-03-13T17:55:00Z"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	notes, err := client.ListMRNotes(context.Background(), "org/repo", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes, got %d", len(notes))
+	}
+	if notes[0].ID != 101 {
+		t.Errorf("first note ID = %d, want 101", notes[0].ID)
+	}
+	if notes[0].Body != "Please fix the null check" {
+		t.Errorf("first note Body = %q", notes[0].Body)
+	}
+	if notes[1].System != true {
+		t.Error("second note should be a system note")
+	}
+}
+
+func TestGitLabClient_ListMRNotes_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	_, err := client.ListMRNotes(context.Background(), "org/nonexistent", 999)
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+func TestGitLabClient_ListMRDiscussions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/api/v4/projects/org/repo/merge_requests/10/discussions"
+		if r.URL.Path != wantPath {
+			t.Errorf("unexpected path: %s, want %s", r.URL.Path, wantPath)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s, want GET", r.Method)
+		}
+		resp := []GitLabDiscussion{
+			{
+				ID:             "abc123",
+				IndividualNote: false,
+				Notes: []GitLabNote{
+					{ID: 200, Body: "This null check looks wrong", Author: GitLabUser{ID: 5, Username: "reviewer"}, CreatedAt: "2026-03-13T18:00:00Z"},
+					{ID: 201, Body: "Fixed in latest push", Author: GitLabUser{ID: 1, Username: "gasboat-bot"}, CreatedAt: "2026-03-13T18:10:00Z"},
+				},
+			},
+			{
+				ID:             "def456",
+				IndividualNote: true,
+				Notes: []GitLabNote{
+					{ID: 202, Body: "LGTM", Author: GitLabUser{ID: 5, Username: "reviewer"}, CreatedAt: "2026-03-13T18:20:00Z"},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	discussions, err := client.ListMRDiscussions(context.Background(), "org/repo", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(discussions) != 2 {
+		t.Fatalf("expected 2 discussions, got %d", len(discussions))
+	}
+	if discussions[0].ID != "abc123" {
+		t.Errorf("first discussion ID = %q, want abc123", discussions[0].ID)
+	}
+	if len(discussions[0].Notes) != 2 {
+		t.Errorf("first discussion notes = %d, want 2", len(discussions[0].Notes))
+	}
+	if discussions[1].IndividualNote != true {
+		t.Error("second discussion should be an individual note")
+	}
+}
+
 func TestParseMRURL(t *testing.T) {
 	tests := []struct {
 		name        string
