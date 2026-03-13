@@ -3,5 +3,5 @@
 #
 # Versions controlled here:
 #   python=3.12, apt packages (git, curl, gcc, cmake, ffmpeg, etc.)
-cache-epoch=4
+cache-epoch=5
 python=3.12

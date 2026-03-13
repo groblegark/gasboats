@@ -96,14 +96,27 @@ gh release create <TAG> --generate-notes
 
 The agent image is the container that runs Claude Code agents in K8s pods. It has two build systems that **must be kept in sync**.
 
-### Two Build Systems
+### Shared Install Scripts (Single Source of Truth)
+
+Tool versions, package lists, and install logic are defined ONCE in shared scripts under `images/agent/install/`:
+
+| File | Purpose |
+|---|---|
+| `install/versions.env` | All version numbers and package lists (sourced by both Dockerfile and RWX CI) |
+| `install/clis.sh` | Binary CLI tools (kubectl, gh, glab, docker, aws, helm, terraform, etc.) |
+| `install/node.sh` | Node.js + Claude Code |
+| `install/go-tools.sh` | Go, gopls, golangci-lint, Task CLI |
+| `install/rust-tools.sh` | Rust, rust-analyzer, quench |
+| `install/playwright.sh` | Playwright, Chromium, Chrome, browser system deps |
+
+### Two Build Systems (Shared Scripts)
 
 | System | File | When | How |
 |---|---|---|---|
-| **Dockerfile** | `images/agent/Dockerfile` | `docker build` / local dev | Multi-stage Docker build |
-| **RWX CI** | `.rwx/docker.yml` | Push to main / tag | `crane append` with parallel cached layers |
+| **Dockerfile** | `images/agent/Dockerfile` | `docker build` / local dev | Multi-stage Docker build, calls shared scripts |
+| **RWX CI** | `.rwx/docker.yml` | Push to main / tag | `crane append` with parallel cached layers, calls shared scripts |
 
-**Both produce `ghcr.io/groblegark/gasboats/agent:<tag>`**. Production uses RWX CI. The Dockerfile is the reference spec; RWX CI mirrors it with a layer-based approach for speed.
+**Both produce `ghcr.io/groblegark/gasboats/agent:<tag>`**. Both source the same `versions.env` and call the same install scripts. RWX CI adds layer extraction (dpkg copy, ldd resolution) on top.
 
 ### RWX CI Architecture
 
@@ -111,37 +124,34 @@ RWX splits the agent image into 7 parallel install tasks, each with its own cach
 
 | Task | What it installs | Cache key |
 |---|---|---|
-| `agent-install-syspackages` | apt packages (git, curl, python3, gcc, ffmpeg, tmux, cmake...) | `.rwx/agent-syspackages.lock` |
-| `agent-install-node` | Node.js, Claude Code | `.rwx/agent-node.lock` |
-| `agent-install-playwright` | Playwright, @playwright/mcp, Chromium, browser system deps | `.rwx/agent-playwright.lock` |
-| `agent-install-go` | Go, gopls, golangci-lint, Task CLI | `.rwx/agent-go.lock` |
-| `agent-install-rust` | Rust, rust-analyzer, quench | `.rwx/agent-rust.lock` |
-| `agent-install-clis` | kubectl, gh, glab, docker, aws, helm, terraform, terragrunt, uv, bun, rtk, whisper-cli, etc. | `.rwx/agent-clis.lock` |
+| `agent-install-syspackages` | apt packages (sources `versions.env` for package lists) | `install/versions.env` + `.rwx/agent-syspackages.lock` |
+| `agent-install-node` | Node.js, Claude Code (calls `install/node.sh`) | `install/node.sh` + `.rwx/agent-node.lock` |
+| `agent-install-playwright` | Playwright, Chromium, browser system deps (sources `versions.env`) | `install/playwright.sh` + `.rwx/agent-playwright.lock` |
+| `agent-install-go` | Go, gopls, golangci-lint, Task CLI (calls `install/go-tools.sh`) | `install/go-tools.sh` + `.rwx/agent-go.lock` |
+| `agent-install-rust` | Rust, rust-analyzer, quench (calls `install/rust-tools.sh`) | `install/rust-tools.sh` + `.rwx/agent-rust.lock` |
+| `agent-install-clis` | kubectl, gh, docker, aws, helm, terraform, etc. (calls `install/clis.sh`) | `install/clis.sh` + `.rwx/agent-clis.lock` |
 | `push-agent` (assembly) | Merges all layers + gb, coop, kd binaries → `crane append` | never cached |
 
 Each task runs in its own container on `ubuntu:24.04`. They **cannot share installed packages** — if task A installs cmake, task B cannot use it. Install dependencies locally within each task.
 
 ### How to Add a Tool
 
-1. **Add to `images/agent/Dockerfile`** in the appropriate stage (`base` for essentials, `agent` for dev tools)
-2. **Add to the matching RWX install task in `.rwx/docker.yml`**:
-   - apt packages → `agent-install-syspackages` (also add to dpkg copy loop and ldd binary resolution)
-   - npm packages → `agent-install-node` (or `agent-install-playwright` for browser-related packages)
-   - Go tools → `agent-install-go`
-   - Rust tools → `agent-install-rust`
-   - Binary downloads → `agent-install-clis`
-3. **If the tool needs build deps** (e.g. cmake for whisper-cli), install them within the same RWX task — they won't be available from other tasks
-4. **Pin versions** in the relevant `.rwx/agent-*.lock` file (each task has its own lock file — only that task's cache is busted)
-5. **Verify both build paths**:
-   - Local: `make image-agent` (docker build)
-   - CI: `rwx run --file .rwx/docker.yml` (or push to main)
+1. **Add version** to `install/versions.env` (if pinned)
+2. **Add install logic** to the appropriate script:
+   - apt packages → add to `BASE_PACKAGES` or `AGENT_PACKAGES` in `versions.env`
+   - Binary CLI tools → add install function to `install/clis.sh`
+   - Go tools → add to `install/go-tools.sh`
+   - Rust tools → add to `install/rust-tools.sh`
+   - npm packages → add to `install/node.sh` or `install/playwright.sh`
+3. **If the tool needs build deps** in RWX (e.g. cmake for whisper-cli), ensure they're installed within the same RWX task — they won't be available from other tasks
+4. **Bump cache-epoch** in the relevant `.rwx/agent-*.lock` file
+5. Both build paths pick up changes automatically (no dual-editing needed)
 
 ### How to Update a Tool Version
 
-1. Update the version in `images/agent/Dockerfile` (look for `ARG` lines)
-2. Update the matching version in `.rwx/docker.yml` (look in the relevant install task)
-3. Update the version in the relevant `.rwx/agent-*.lock` file (only that task's cache is busted)
-4. Commit, tag, push — RWX CI will rebuild
+1. Update the version in `install/versions.env`
+2. Bump `cache-epoch` in the relevant `.rwx/agent-*.lock` file
+3. Commit, tag, push — both Dockerfile and RWX CI use the new version
 
 ### How to Verify the Agent Image
 
@@ -155,14 +165,12 @@ crane export ghcr.io/groblegark/gasboats/agent:<tag> - | tar -tf - | grep <binar
 docker run --rm ghcr.io/groblegark/gasboats/agent:<tag> which <tool-name>
 ```
 
-Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`, `psql`
+Key tools to verify: `claude`, `coop`, `kd`, `gb`, `playwright`, `npx`, `ffmpeg`, `tmux`, `whisper-cli`, `go`, `rustc`, `gh`, `glab`, `helm`, `terraform`, `kubectl`, `psql`, `k6`
 
 ### Common Pitfalls
 
-- **Dockerfile and RWX CI out of sync**: Adding a tool to one but not the other. Always update both.
 - **Cross-task dependencies in RWX**: Each `agent-install-*` task runs in a fresh container. If task B needs cmake, install cmake in task B — don't rely on it being in `agent-install-syspackages`.
-- **dpkg copy loop**: When adding apt packages to `agent-install-syspackages`, also add the package name to the `for pkg in ...` dpkg loop AND add the binary to the `for bin in ...` ldd loop. Missing these causes shared library errors at runtime.
-- **apt metapackages**: Some apt packages (e.g., `postgresql-client`) are metapackages that depend on versioned packages (e.g., `postgresql-client-16`). The metapackage owns no binaries — `dpkg -L` returns only docs. Always add the **versioned** package to the dpkg copy loop, not just the metapackage.
+- **apt metapackages**: The RWX CI uses before/after `dpkg-query` diffs to auto-resolve transitive deps, so metapackages like `postgresql-client` automatically include their providers (e.g., `postgresql-client-16`). No manual package lists needed.
 - **Go template `default` with empty strings**: Helm's `default` function does NOT treat empty string as falsy. Use `{{ if .Values.x }}{{ .Values.x }}{{ else }}{{ .Chart.AppVersion }}{{ end }}` instead of `{{ .Values.x | default .Chart.AppVersion }}`.
 
 ### All Images Built From Monorepo Source

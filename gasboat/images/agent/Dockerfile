@@ -3,6 +3,9 @@
 # Build (from repo root):
 #   docker build -t gasboat-agent -f images/agent/Dockerfile .
 #   docker build --target base -t gasboat-agent:base -f images/agent/Dockerfile .  # minimal variant
+#
+# Tool versions and package lists are defined in install/versions.env.
+# Install scripts under install/ are shared with .rwx/docker.yml (CI).
 
 # ═════════════════════════════════════════════════════════════════
 # Go builder — compiles gb (agent orchestration CLI) from source
@@ -22,29 +25,21 @@ RUN cd controller && CGO_ENABLED=0 go build -ldflags="-s -w" -o /gb ./cmd/gb/
 FROM ubuntu:24.04 AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG NODE_VERSION=24
 ARG COOP_VERSION=2026.67.2
 ARG BEADS_VERSION=2026.67.2
 ARG TARGETARCH
 
+# ── Shared install scripts ─────────────────────────────────────────
+COPY images/agent/install/ /tmp/install/
+
 # ── System packages (minimal) ─────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git git-lfs jq xz-utils ca-certificates screen tmux \
-    openssh-client sudo \
-    python3 python3-pip python3-venv && \
+RUN . /tmp/install/versions.env && \
+    apt-get update && apt-get install -y --no-install-recommends $BASE_PACKAGES && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── Node.js ──────────────────────────────────────────────────────
-RUN case "${TARGETARCH}" in arm64) NODE_ARCH=arm64 ;; *) NODE_ARCH=x64 ;; esac && \
-    NODE_FULL=$(curl -fsSL "https://nodejs.org/dist/index.json" \
-      | jq -r "[.[] | select(.version | startswith(\"v${NODE_VERSION}.\"))][0].version") && \
-    [ "${NODE_FULL}" != "null" ] && [ -n "${NODE_FULL}" ] && \
-    curl -fsSL "https://nodejs.org/dist/${NODE_FULL}/node-${NODE_FULL}-linux-${NODE_ARCH}.tar.xz" \
-      | tar -xJ --strip-components=1 -C /usr/local
-
-# ── Claude Code ──────────────────────────────────────────────────
-RUN npm install -g @anthropic-ai/claude-code
+# ── Node.js + Claude Code ─────────────────────────────────────────
+RUN TARGETARCH=${TARGETARCH} /tmp/install/node.sh
 
 # ── Coop (terminal session manager) ─────────────────────────────
 RUN set -e && \
@@ -111,186 +106,34 @@ FROM base AS agent
 
 USER root
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GO_VERSION=1.25
-ARG DOCKER_VERSION=27.5.1
-ARG DOCKER_COMPOSE_VERSION=2.35.1
 ARG TARGETARCH
 
 # ── Additional system packages ───────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    make unzip xz-utils \
-    python3 python3-pip python3-venv \
-    gcc g++ libc6-dev binutils \
-    pkg-config libssl-dev \
-    libcurl3t64-gnutls libicu74 libicu-dev \
-    postgresql-client shellcheck \
-    ffmpeg cmake libsdl2-dev && \
+RUN . /tmp/install/versions.env && \
+    apt-get update && apt-get install -y --no-install-recommends $AGENT_PACKAGES && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     ln -sf gcc /usr/bin/cc && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── Go + gopls ───────────────────────────────────────────────────
-RUN GO_LATEST=$(curl -fsSL "https://go.dev/dl/?mode=json" \
-      | jq -r "[.[] | select(.version | startswith(\"go${GO_VERSION}\"))][0].version") && \
-    [ "${GO_LATEST}" != "null" ] && [ -n "${GO_LATEST}" ] && \
-    curl -fsSL "https://go.dev/dl/${GO_LATEST}.linux-${TARGETARCH}.tar.gz" | tar -C /usr/local -xz && \
-    GOPATH=/tmp/go /usr/local/go/bin/go install golang.org/x/tools/gopls@latest && \
-    mv /tmp/go/bin/gopls /usr/local/go/bin/gopls && \
-    rm -rf /tmp/go
+# ── Go + gopls + golangci-lint + Task CLI ────────────────────────
+RUN TARGETARCH=${TARGETARCH} /tmp/install/go-tools.sh
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# ── Rust toolchain (compiler + cargo + rust-analyzer) ───────────
+# ── Rust toolchain (compiler + cargo + rust-analyzer + quench) ───
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --profile default \
-          --component rust-analyzer && \
-    chmod -R a+rw ${RUSTUP_HOME} ${CARGO_HOME}
+RUN /tmp/install/rust-tools.sh
 
-# ── GitHub CLI ───────────────────────────────────────────────────
-RUN GH_VERSION=$(curl -fsSL "https://api.github.com/repos/cli/cli/releases/latest" \
-      | jq -r .tag_name | sed "s/^v//") && \
-    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
-      | tar -xz --strip-components=2 -C /usr/local/bin "gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh"
+# ── CLI tools (gh, glab, docker, aws, helm, terraform, etc.) ────
+RUN TARGETARCH=${TARGETARCH} /tmp/install/clis.sh
 
-# ── GitLab CLI ──────────────────────────────────────────────────
-RUN GLAB_VERSION=$(curl -fsSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases" \
-      | jq -r '.[0].tag_name | ltrimstr("v")') && \
-    curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${TARGETARCH}.tar.gz" \
-      | tar -xz --strip-components=1 -C /usr/local/bin bin/glab
-
-# ── Docker CLI (client only) + Compose plugin ───────────────────
-RUN case "${TARGETARCH}" in arm64) DOCKER_ARCH=aarch64 ;; *) DOCKER_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \
-      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
-    mkdir -p /usr/local/lib/docker/cli-plugins && \
-    curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${TARGETARCH}" \
-      -o /usr/local/lib/docker/cli-plugins/docker-compose && \
-    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-
-# ── AWS CLI ──────────────────────────────────────────────────────
-RUN case "${TARGETARCH}" in arm64) AWS_ARCH=aarch64 ;; *) AWS_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscli.zip && \
-    unzip -q /tmp/awscli.zip -d /tmp && \
-    /tmp/aws/install --install-dir /opt/aws-cli --bin-dir /usr/local/bin && \
-    AWSVER=$(ls /opt/aws-cli/v2/ | grep -v current | head -1) && \
-    ln -sfn "/opt/aws-cli/v2/${AWSVER}" /opt/aws-cli/v2/current && \
-    rm -rf /tmp/awscli.zip /tmp/aws
-
-# ── Claudeless (Claude CLI simulator for E2E testing) ────────────
-ARG CLAUDELESS_VERSION=v0.4.0
-RUN case "${TARGETARCH}" in arm64) CL_ARCH=aarch64 ;; *) CL_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://github.com/alfredjeanlab/claudeless/releases/download/${CLAUDELESS_VERSION}/claudeless-linux-${CL_ARCH}.tar.gz" \
-      | tar -xz -C /usr/local/bin claudeless && \
-    chmod +x /usr/local/bin/claudeless
-
-# ── uv (Python package manager) ───────────────────────────────
-RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh && \
-    mv /root/.local/bin/uv /usr/local/bin/uv && \
-    mv /root/.local/bin/uvx /usr/local/bin/uvx
-
-# ── Poetry (Python dependency manager) ───────────────────────
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
-    chmod +x /usr/local/bin/poetry
-
-# ── Bun ────────────────────────────────────────────────────────
-ENV BUN_INSTALL=/usr/local/bun
-RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=${BUN_INSTALL} bash && \
-    ln -sf ${BUN_INSTALL}/bin/bun /usr/local/bin/bun && \
-    ln -sf ${BUN_INSTALL}/bin/bunx /usr/local/bin/bunx
-ENV PATH="${BUN_INSTALL}/bin:${PATH}"
-
-# ── Task CLI (Taskfile runner) ─────────────────────────────────
-RUN GOPATH=/tmp/go /usr/local/go/bin/go install github.com/go-task/task/v3/cmd/task@latest && \
-    mv /tmp/go/bin/task /usr/local/bin/task && \
-    rm -rf /tmp/go
-
-# ── Helm + plugins ───────────────────────────────────────────────
-RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-ENV HELM_PLUGINS=/usr/local/share/helm/plugins
-RUN helm plugin install https://github.com/helm-unittest/helm-unittest && \
-    helm plugin install https://github.com/chartmuseum/helm-push
-
-# ── Terraform + Terragrunt ───────────────────────────────────────
-ARG TERRAFORM_VERSION=1.11.3
-ARG TERRAGRUNT_VERSION=0.77.11
-RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip" \
-      -o /tmp/terraform.zip && \
-    unzip -q /tmp/terraform.zip -d /usr/local/bin && \
-    rm /tmp/terraform.zip && \
-    curl -fsSL "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${TARGETARCH}" \
-      -o /usr/local/bin/terragrunt && \
-    chmod +x /usr/local/bin/terragrunt
-
-# ── golangci-lint ────────────────────────────────────────────────
-ARG GOLANGCI_LINT_VERSION=1.64.8
-RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-      | sh -s -- -b /usr/local/bin "v${GOLANGCI_LINT_VERSION}"
-
-# ── quench (code quality checker) ────────────────────────────────
-RUN cargo install quench --git https://github.com/alfredjeanlab/quench && \
-    mv ${CARGO_HOME}/bin/quench /usr/local/bin/quench
-
-# ── yq (YAML processor) ─────────────────────────────────────────
-RUN YQ_VERSION=$(curl -fsSL "https://api.github.com/repos/mikefarah/yq/releases/latest" | jq -r .tag_name) && \
-    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
-      -o /usr/local/bin/yq && \
-    chmod +x /usr/local/bin/yq
-
-# ── stern (K8s log streaming) ────────────────────────────────────
-ARG STERN_VERSION=1.30.0
-RUN curl -fsSL "https://github.com/stern/stern/releases/download/v${STERN_VERSION}/stern_${STERN_VERSION}_linux_${TARGETARCH}.tar.gz" \
-      | tar -xz -C /usr/local/bin stern
-
-# ── hadolint (Dockerfile linter) ─────────────────────────────────
-RUN case "${TARGETARCH}" in arm64) HL_ARCH=arm64 ;; *) HL_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-${HL_ARCH}" \
-      -o /usr/local/bin/hadolint && \
-    chmod +x /usr/local/bin/hadolint
-
-# ── RTK (token optimization proxy) ──────────────────────────────
-ARG RTK_VERSION=0.23.0
-RUN case "${TARGETARCH}" in arm64) RTK_TRIPLE=aarch64-unknown-linux-gnu ;; *) RTK_TRIPLE=x86_64-unknown-linux-musl ;; esac && \
-    curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_TRIPLE}.tar.gz" \
-      | tar -xz -C /usr/local/bin rtk
-
-# ── RWX CLI (CI pipeline runner) ──────────────────────────────
-ARG RWX_VERSION=3.7.1
-RUN case "${TARGETARCH}" in arm64) RWX_ARCH=aarch64 ;; *) RWX_ARCH=x86_64 ;; esac && \
-    curl -fsSL "https://github.com/rwx-cloud/cli/releases/download/v${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
-      -o /usr/local/bin/rwx && \
-    chmod +x /usr/local/bin/rwx
-
-# ── whisper-cli (audio transcription for JIRA video attachments) ──
-ARG WHISPER_CPP_VERSION=1.8.3
-RUN curl -fsSL "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
-      | tar -xz -C /tmp && \
-    cmake -S /tmp/whisper.cpp-${WHISPER_CPP_VERSION} -B /tmp/whisper-build \
-      -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF && \
-    cmake --build /tmp/whisper-build --config Release -j$(nproc) --target whisper-cli && \
-    cp /tmp/whisper-build/bin/whisper-cli /usr/local/bin/whisper-cli && \
-    rm -rf /tmp/whisper.cpp-${WHISPER_CPP_VERSION} /tmp/whisper-build
-
-# ── Playwright + Chromium + Chrome + MCP server (headless browser automation) ──
-# NOTE: apt lists were cleaned after the system packages step above,
-# so we must re-run apt-get update before --with-deps can install
-# browser system library dependencies (libglib, libnss3, etc.).
-# Chromium is Playwright-managed (downloaded to $PLAYWRIGHT_BROWSERS_PATH).
-# Chrome is system-installed via Google's apt repo (/opt/google/chrome/chrome).
-ARG PLAYWRIGHT_VERSION=1.58.2
+# ── Playwright + Chromium + Chrome + MCP server ─────────────────
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN apt-get update && \
-    npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp && \
-    npx playwright install --with-deps chromium && \
-    $(npm root -g)/@playwright/mcp/node_modules/.bin/playwright install chromium && \
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-      | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
-      > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
-      fonts-noto-core fontconfig && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* && \
-    npm cache clean --force && \
-    chmod -R 777 ${PLAYWRIGHT_BROWSERS_PATH}
+RUN /tmp/install/playwright.sh
+
+# ── Environment ──────────────────────────────────────────────────
+ENV BUN_INSTALL=/usr/local/bun
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+ENV HELM_PLUGINS=/usr/local/share/helm/plugins
 
 USER 1000
