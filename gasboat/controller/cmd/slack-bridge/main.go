@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -144,6 +145,15 @@ func main() {
 		}
 	}
 
+	// Build channel router if configured.
+	var router *bridge.Router
+	if cfg.routerConfig != nil {
+		router = bridge.NewRouter(*cfg.routerConfig)
+		logger.Info("channel router enabled",
+			"patterns", len(cfg.routerConfig.Channels),
+			"default_channel", cfg.routerConfig.DefaultChannel)
+	}
+
 	if cfg.slackBotToken != "" && cfg.slackAppToken != "" {
 		// Socket Mode: real-time WebSocket connection for events, interactions, slash commands.
 		bot = bridge.NewBot(bridge.BotConfig{
@@ -153,6 +163,7 @@ func main() {
 			ThreadingMode:    cfg.threadingMode,
 			Daemon:           daemon,
 			State:            state,
+			Router:           router,
 			Bouncer:          bouncer,
 			Logger:           logger,
 			Debug:            cfg.debug,
@@ -401,6 +412,9 @@ type config struct {
 	// Coopmux terminal links
 	coopmuxPublicURL string
 
+	// Channel router
+	routerConfig *bridge.RouterConfig
+
 	// Gate (IP whitelist management)
 	bouncerEnabled     bool
 	bouncerNamespace   string
@@ -429,6 +443,15 @@ func parseConfig() *config {
 
 	repos := parseRepoList(envOrDefault("UNRELEASED_REPOS", "groblegark/gasboats"))
 
+	var routerCfg *bridge.RouterConfig
+	if v := os.Getenv("SLACK_ROUTER_CONFIG"); v != "" {
+		routerCfg = &bridge.RouterConfig{}
+		if err := json.Unmarshal([]byte(v), routerCfg); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: invalid SLACK_ROUTER_CONFIG JSON: %v\n", err)
+			routerCfg = nil
+		}
+	}
+
 	return &config{
 		beadsHTTPAddr:      envOrDefault("BEADS_HTTP_ADDR", "http://localhost:8080"),
 		slackBotToken:      os.Getenv("SLACK_BOT_TOKEN"),
@@ -451,6 +474,8 @@ func parseConfig() *config {
 		controllerURL: os.Getenv("CONTROLLER_URL"),
 
 		coopmuxPublicURL: os.Getenv("COOPMUX_PUBLIC_URL"),
+
+		routerConfig: routerCfg,
 
 		bouncerEnabled:     os.Getenv("BOUNCER_ENABLED") == "true",
 		bouncerNamespace:   envOrDefault("BOUNCER_NAMESPACE", os.Getenv("POD_NAMESPACE")),
