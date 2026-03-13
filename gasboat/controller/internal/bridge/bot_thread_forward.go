@@ -33,7 +33,7 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 			"agent", agentName, "channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp)
 		// Agent is gone — respawn the SAME agent name so the entrypoint
 		// finds the existing session JSONL and PVC for session continuity.
-		b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agentName, ev.Text)
+		b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agentName, ev.Text, ev.User)
 		return
 	}
 

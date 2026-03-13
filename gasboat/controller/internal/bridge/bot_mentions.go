@@ -132,7 +132,7 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 				"agent", agent, "channel", ev.Channel, "thread_ts", ev.ThreadTimeStamp, "error", err)
 			// Agent is gone — respawn the SAME agent name so the entrypoint
 			// finds the existing session JSONL and PVC for session continuity.
-			b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agent, text)
+			b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agent, text, ev.User)
 			return
 		}
 		agentPodName = beadsapi.ParseNotes(agentBead.Notes)["pod_name"]
@@ -937,7 +937,7 @@ func (b *Bot) handleMentionThreadCommand(_ context.Context, ev *slackevents.AppM
 		}
 		go func() {
 			b.respawnThreadAgent(context.Background(), channelID, threadTS, agent,
-				"Restarted via @mention command")
+				"Restarted via @mention command", userID)
 		}()
 		return true
 	}

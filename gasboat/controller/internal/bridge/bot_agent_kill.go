@@ -87,7 +87,7 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 // --resume to coop for session continuity. Used when a thread reply arrives
 // for a dead/completed agent. The triggerText is included in the description
 // so the agent knows why it was woken up.
-func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentName, triggerText string) {
+func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentName, triggerText, userID string) {
 	agentName = extractAgentName(agentName)
 
 	// Snapshot the listen-thread flag before it gets cleaned up by killAgent
@@ -125,6 +125,9 @@ func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentNa
 		"slack_thread_channel": channel,
 		"slack_thread_ts":      threadTS,
 		"spawn_source":         "slack-thread-resume",
+	}
+	if userID != "" {
+		fields["slack_user_id"] = userID
 	}
 	fieldsJSON, err := json.Marshal(fields)
 	if err != nil {
@@ -368,6 +371,7 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 			return
 		}
 		project := bead.Fields["project"]
+		slackUserID := bead.Fields["slack_user_id"]
 
 		// Snapshot the listen-thread flag before killAgent clears it.
 		wasListenThread := b.state != nil && b.state.IsListenThread(channelID, threadTS)
@@ -392,6 +396,9 @@ func (b *Bot) handleRestartThreadAgent(ctx context.Context, agentName string, ca
 			"slack_thread_channel": channelID,
 			"slack_thread_ts":      threadTS,
 			"spawn_source":         "slack-thread",
+		}
+		if slackUserID != "" {
+			fields["slack_user_id"] = slackUserID
 		}
 		fieldsJSON, err := json.Marshal(fields)
 		if err != nil {

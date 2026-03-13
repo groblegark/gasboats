@@ -748,7 +748,7 @@ func (b *Bot) handleKillThreadCommand(_ context.Context, cmd slack.SlashCommand)
 
 		if restart && threadChannel != "" && threadTS != "" {
 			b.respawnThreadAgent(context.Background(), threadChannel, threadTS, agentName,
-				"Restarted via /kill-thread --restart")
+				"Restarted via /kill-thread --restart", cmd.UserID)
 			_, _ = b.api.PostEphemeral(cmd.ChannelID, cmd.UserID,
 				slack.MsgOptionText(fmt.Sprintf(":arrows_counterclockwise: Thread agent *%s* restarted with session resume.", agentName), false))
 		} else {

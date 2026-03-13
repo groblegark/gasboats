@@ -273,7 +273,7 @@ func TestRespawnThreadAgent_CreatesSameNameBead(t *testing.T) {
 		threadSpawnMsgs: make(map[string]MessageRef),
 	}
 
-	b.respawnThreadAgent(context.Background(), channel, threadTS, agentName, "wake up please")
+	b.respawnThreadAgent(context.Background(), channel, threadTS, agentName, "wake up please", "U-SPAWNER")
 
 	// Thread→agent mapping should still exist.
 	agent, ok := state.GetThreadAgent(channel, threadTS)
@@ -334,7 +334,7 @@ func TestRespawnThreadAgent_RejectsNoProject(t *testing.T) {
 		threadSpawnMsgs: make(map[string]MessageRef),
 	}
 
-	b.respawnThreadAgent(context.Background(), "C-unmapped", "1111.2222", "thread-1111-2222", "wake up")
+	b.respawnThreadAgent(context.Background(), "C-unmapped", "1111.2222", "thread-1111-2222", "wake up", "")
 
 	// Should NOT have created any agent bead.
 	for _, bead := range daemon.beads {
@@ -363,7 +363,7 @@ func TestRespawnThreadAgent_InfersProjectFromChannel(t *testing.T) {
 		threadSpawnMsgs: make(map[string]MessageRef),
 	}
 
-	b.respawnThreadAgent(context.Background(), "C-gasboat", "2222.3333", "my-agent", "do the thing")
+	b.respawnThreadAgent(context.Background(), "C-gasboat", "2222.3333", "my-agent", "do the thing", "U-ORIGINAL")
 
 	// Find the created agent bead.
 	var found *beadsapi.BeadDetail
@@ -380,8 +380,68 @@ func TestRespawnThreadAgent_InfersProjectFromChannel(t *testing.T) {
 	if found.Fields["project"] != "gasboat" {
 		t.Errorf("project = %q, want gasboat", found.Fields["project"])
 	}
+	if found.Fields["slack_user_id"] != "U-ORIGINAL" {
+		t.Errorf("slack_user_id = %q, want U-ORIGINAL", found.Fields["slack_user_id"])
+	}
 	if !hasLabel(found.Labels, "project:gasboat") {
 		t.Errorf("expected project:gasboat label, got %v", found.Labels)
+	}
+}
+
+// TestHandleThreadForward_RespawnPreservesUserID verifies that when
+// handleThreadForward triggers a respawn (agent is dead), the poster's
+// user ID is carried forward as slack_user_id on the new agent bead.
+func TestHandleThreadForward_RespawnPreservesUserID(t *testing.T) {
+	daemon := newMockDaemon()
+	daemon.seedProjectWithChannel("testproj", "C-uid-test")
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	bot := newTestBot(daemon, slackSrv)
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot.state = state
+	bot.lastThreadNudge = make(map[string]time.Time)
+
+	channel := "C-uid-test"
+	threadTS := "9999.1111"
+	agentName := "thread-9999-1111"
+
+	// Pre-bind thread to an agent that is NOT in the daemon (dead).
+	_ = state.SetThreadAgent(channel, threadTS, agentName)
+	_ = state.SetListenThread(channel, threadTS)
+
+	// Forward a message — triggers respawn because agent is dead.
+	ev := &slackevents.MessageEvent{
+		User:            "U-POSTER",
+		Channel:         channel,
+		Text:            "follow up message",
+		TimeStamp:       "9999.2222",
+		ThreadTimeStamp: threadTS,
+	}
+	bot.handleThreadForward(context.Background(), ev, agentName)
+
+	// Find the respawned agent bead.
+	daemon.mu.Lock()
+	var found *beadsapi.BeadDetail
+	for _, b := range daemon.beads {
+		if b.Type == "agent" && b.Title == agentName {
+			found = b
+			break
+		}
+	}
+	daemon.mu.Unlock()
+
+	if found == nil {
+		t.Fatal("expected agent bead to be created by respawn")
+	}
+	if found.Fields["slack_user_id"] != "U-POSTER" {
+		t.Errorf("slack_user_id = %q, want U-POSTER", found.Fields["slack_user_id"])
 	}
 }
 
