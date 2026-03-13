@@ -389,9 +389,32 @@ func (p *GitLabPoller) poll(ctx context.Context) {
 	}
 }
 
+// GitLabWebhookConfig holds configuration for the GitLab webhook handler.
+type GitLabWebhookConfig struct {
+	GitLab        *GitLabClient
+	Daemon        GitLabBeadClient
+	WebhookSecret string
+	BotUsername   string // GitLab username of the bot; notes from this user are ignored to prevent loops
+	Logger        *slog.Logger
+}
+
 // GitLabWebhookHandler returns an http.Handler that processes GitLab webhook
 // events for merge request merges.
 func GitLabWebhookHandler(gitlab *GitLabClient, daemon GitLabBeadClient, webhookSecret string, logger *slog.Logger) http.Handler {
+	return GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		GitLab:        gitlab,
+		Daemon:        daemon,
+		WebhookSecret: webhookSecret,
+		Logger:        logger,
+	})
+}
+
+// GitLabWebhookHandlerWithConfig returns an http.Handler using the full config.
+func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
+	daemon := cfg.Daemon
+	logger := cfg.Logger
+	webhookSecret := cfg.WebhookSecret
+	botUsername := cfg.BotUsername
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify webhook secret.
 		if r.Header.Get("X-Gitlab-Token") != webhookSecret {
@@ -454,7 +477,7 @@ func GitLabWebhookHandler(gitlab *GitLabClient, daemon GitLabBeadClient, webhook
 				}
 			}
 			handleNoteWebhook(r.Context(), event.ObjectAttr.NoteableType, event.ObjectAttr.Note,
-				event.ObjectAttr.System, event.User.Username, pos,
+				event.ObjectAttr.System, event.User.Username, botUsername, pos,
 				event.MergeRequest, daemon, logger)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"status":"processed","kind":"note"}`)
@@ -630,7 +653,8 @@ type notePosition struct {
 
 // handleNoteWebhook processes a GitLab note webhook event. It matches
 // MR review comments to beads and creates bead comments with the review feedback.
-func handleNoteWebhook(ctx context.Context, noteableType, note string, system bool, author string, position *notePosition, mr *struct {
+// Notes from the bot user (botUsername) are skipped to prevent feedback loops.
+func handleNoteWebhook(ctx context.Context, noteableType, note string, system bool, author, botUsername string, position *notePosition, mr *struct {
 	IID int    `json:"iid"`
 	URL string `json:"url"`
 }, daemon GitLabBeadClient, logger *slog.Logger) {
@@ -644,6 +668,16 @@ func handleNoteWebhook(ctx context.Context, noteableType, note string, system bo
 	// Skip system-generated notes (merge status changes, etc.).
 	if system {
 		logger.Debug("webhook: skipping system note")
+		return
+	}
+
+	// Skip notes from the bot user to prevent feedback loops.
+	// When the bridge posts MR comments on behalf of agents, GitLab fires
+	// a webhook for that note. Without this filter, the bridge would
+	// re-process its own comments endlessly.
+	if botUsername != "" && author == botUsername {
+		logger.Debug("webhook: skipping note from bot user",
+			"author", author, "bot_username", botUsername)
 		return
 	}
 

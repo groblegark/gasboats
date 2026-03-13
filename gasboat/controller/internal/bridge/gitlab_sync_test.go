@@ -481,6 +481,57 @@ func TestGitLabWebhookHandler_NoteEvent_SystemNote(t *testing.T) {
 	}
 }
 
+func TestGitLabWebhookHandler_NoteEvent_BotUsername(t *testing.T) {
+	daemon := newMockGitLabDaemon()
+	daemon.beads["bead-1"] = &beadsapi.BeadDetail{
+		ID:     "bead-1",
+		Type:   "task",
+		Fields: map[string]string{"mr_url": "https://gitlab.com/org/repo/-/merge_requests/42"},
+	}
+
+	handler := GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		Daemon:        daemon,
+		WebhookSecret: "secret",
+		BotUsername:   "gasboat-bot",
+		Logger:        slog.Default(),
+	})
+
+	event := map[string]any{
+		"object_kind": "note",
+		"user":        map[string]any{"username": "gasboat-bot"},
+		"object_attributes": map[string]any{
+			"note":          "I've addressed this in the latest commit.",
+			"noteable_type": "MergeRequest",
+			"system":        false,
+		},
+		"merge_request": map[string]any{
+			"iid": 42,
+			"url": "https://gitlab.com/org/repo/-/merge_requests/42",
+		},
+	}
+	body, _ := json.Marshal(event)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Bot comments should be ignored — no comments or field updates.
+	comments := daemon.getComments()
+	if len(comments) != 0 {
+		t.Errorf("expected 0 comments for bot user, got %d", len(comments))
+	}
+	bead := daemon.getBead("bead-1")
+	if bead.Fields["mr_has_review_comments"] != "" {
+		t.Errorf("mr_has_review_comments should be empty for bot note, got %s", bead.Fields["mr_has_review_comments"])
+	}
+}
+
 func TestGitLabWebhookHandler_NoteEvent_NoMatchingBead(t *testing.T) {
 	daemon := newMockGitLabDaemon()
 	daemon.beads["bead-1"] = &beadsapi.BeadDetail{
