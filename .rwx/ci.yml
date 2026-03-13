@@ -85,6 +85,8 @@ tasks:
       - coop/Cargo.toml
       - coop/crates/*/Cargo.toml
       - coop/tests/*/Cargo.toml
+      - coop/**/src/lib.rs
+      - coop/**/src/main.rs
 
   # ── JS deps: beads3d ─────────────────────────────────────────────────
   - key: beads3d-deps
