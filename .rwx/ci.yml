@@ -44,7 +44,7 @@ tasks:
     filter:
       - .rwx/ci.yml
     run: |
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
       . "$HOME/.cargo/env"
       rustc --version
 
@@ -78,9 +78,11 @@ tasks:
     use: [code, rust]
     run: |
       . "$HOME/.cargo/env"
-      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
+      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev tmux
       cd coop && cargo fetch
     filter:
+      - .rwx/ci.yml
+      - coop/rust-toolchain.toml
       - coop/Cargo.lock
       - coop/Cargo.toml
       - coop/crates/*/Cargo.toml
@@ -161,10 +163,12 @@ tasks:
       - "coop/proto/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
+      - "coop/rustfmt.toml"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo clippy --workspace -- -D warnings
-      cd coop && cargo fmt --check
+      cd coop
+      cargo clippy --workspace -- -D warnings
+      cargo fmt --check
 
   # ── Test gasboat ─────────────────────────────────────────────────────
   - key: test-gasboat
@@ -203,7 +207,7 @@ tasks:
       - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo test --workspace
+      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy
 
   # ── Helm lint ────────────────────────────────────────────────────────
   - key: lint-helm

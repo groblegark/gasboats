@@ -11,6 +11,28 @@ Unified repository for the gasboat platform — K8s agent controller, terminal m
 | `kbeads/` | Go | Beads daemon (gRPC/HTTP server) + kd CLI |
 | `beads3d/` | JS/Vite | 3D force-graph visualization of beads |
 
+## Directory Structure
+
+```
+gasboat/              # K8s agent controller, Slack bridge, Helm chart, agent images
+├── controller/       # Go module — controller + bridge + CLI binaries
+├── helm/gasboat/     # Helm chart (controller, coopmux, slack-bridge, postgres, nats)
+└── images/           # Dockerfiles for agent, slack-bridge, jira-bridge, etc.
+coop/                 # Rust workspace — agent terminal multiplexer + credential manager
+├── crates/cli/       # coop binary + library
+├── crates/mux/       # coopmux multi-session dashboard
+├── tests/specs/      # Binary smoke tests
+└── proto/            # gRPC protobuf definitions
+kbeads/               # Go module — beads daemon (gRPC/HTTP) + kd CLI
+├── cmd/kd/           # kd CLI entry point
+└── gen/              # Generated protobuf code
+beads3d/              # JS/Vite — 3D force-graph visualization
+├── src/              # Application source
+└── tests/            # Playwright tests
+.rwx/                 # RWX CI pipeline definitions
+scripts/              # Release and utility scripts
+```
+
 ## Workspaces
 
 - **Go**: `go.work` at repo root links `gasboat/controller` and `kbeads`
