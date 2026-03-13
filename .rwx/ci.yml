@@ -163,6 +163,7 @@ tasks:
       - "coop/proto/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
+      - "coop/rustfmt.toml"
     run: |
       . "$HOME/.cargo/env"
       cd coop
