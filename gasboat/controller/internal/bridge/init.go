@@ -108,6 +108,11 @@ func configs() map[string]any {
 				{Name: "prompt", Type: "string"},
 				// Pre-assigned task ID (set by /spawn with ticket or task-first flow).
 				{Name: "task_id", Type: "string"},
+				// GitLab MR binding metadata (set by gitlab-bridge agent resolver).
+				{Name: "gitlab_mr_url", Type: "string"},
+				{Name: "gitlab_project_id", Type: "string"},
+				{Name: "gitlab_mr_iid", Type: "string"},
+				{Name: "gitlab_mr_source_branch", Type: "string"},
 			},
 		},
 		"type:mail": TypeConfig{

@@ -145,11 +145,18 @@ func main() {
 	})
 
 	// Register GitLab sync handler on the SSE stream.
-	gitlabSync := bridge.NewGitLabSync(bridge.GitLabSyncConfig{
-		GitLab: gitlabClient,
+	agentResolver := bridge.NewAgentResolver(bridge.AgentResolverConfig{
 		Daemon: daemon,
+		GitLab: gitlabClient,
+		Client: nudgeClient,
 		Logger: logger,
-		Nudge:  nudgeFunc,
+	})
+	gitlabSync := bridge.NewGitLabSync(bridge.GitLabSyncConfig{
+		GitLab:   gitlabClient,
+		Daemon:   daemon,
+		Logger:   logger,
+		Resolver: agentResolver,
+		Nudge:    nudgeFunc,
 	})
 	gitlabSync.RegisterHandlers(sseStream)
 
