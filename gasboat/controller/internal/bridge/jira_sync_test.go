@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"gasboat/controller/internal/beadsapi"
 )
 
 func TestJiraSync_MRLink(t *testing.T) {
@@ -546,4 +548,86 @@ func TestAdfToMarkdown(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mockCatchUpClient implements JiraSyncCatchUpClient for testing.
+type mockCatchUpClient struct {
+	beads []*beadsapi.BeadDetail
+	err   error
+}
+
+func (m *mockCatchUpClient) ListBeadsFiltered(_ context.Context, _ beadsapi.ListBeadsQuery) (*beadsapi.ListBeadsResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &beadsapi.ListBeadsResult{Beads: m.beads, Total: len(m.beads)}, nil
+}
+
+func TestJiraSync_CatchUp_PreventsReplay(t *testing.T) {
+	var (
+		mu           sync.Mutex
+		commentCount int
+	)
+
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-900/comment":
+			commentCount++
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":"1"}`)
+		case r.Method == "PUT" && r.URL.Path == "/rest/api/3/issue/PE-900":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PE-900/transitions":
+			resp := map[string]any{"transitions": []map[string]any{
+				{"id": "21", "name": "In Progress", "to": map[string]string{"name": "In Progress"}},
+			}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-900/transitions":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jiraServer.Close()
+
+	s := NewJiraSync(JiraSyncConfig{Jira: newTestJiraClient(jiraServer.URL), Logger: slog.Default()})
+
+	// Simulate restart catch-up: bead is already in_progress with an assignee.
+	client := &mockCatchUpClient{
+		beads: []*beadsapi.BeadDetail{
+			{
+				ID:       "bd-task-20",
+				Status:   "in_progress",
+				Assignee: "agent-old",
+				Labels:   []string{"source:jira", "jira:PE-900"},
+				Fields:   map[string]string{"jira_key": "PE-900", "mr_url": "https://gitlab.com/mr/1"},
+			},
+		},
+	}
+	s.CatchUp(context.Background(), client)
+
+	// SSE replays the same event after restart — should be deduped.
+	event := marshalSSEBeadPayload(BeadEvent{
+		ID: "bd-task-20", Type: "task", Title: "[PE-900] Fix auth",
+		Status:   "in_progress",
+		Assignee: "agent-old",
+		Labels:   []string{"source:jira", "jira:PE-900"},
+		Fields:   map[string]string{"jira_key": "PE-900", "mr_url": "https://gitlab.com/mr/1"},
+	})
+	s.handleUpdated(context.Background(), event)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if commentCount != 0 {
+		t.Errorf("expected 0 comments after catch-up (deduped), got %d", commentCount)
+	}
+}
+
+func TestJiraSync_CatchUp_NilClient(t *testing.T) {
+	s := NewJiraSync(JiraSyncConfig{Jira: newTestJiraClient("https://example.com"), Logger: slog.Default()})
+	// Should not panic.
+	s.CatchUp(context.Background(), nil)
 }

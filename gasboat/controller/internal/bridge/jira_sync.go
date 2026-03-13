@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gasboat/controller/internal/beadsapi"
 )
 
 // syncTTL is the dedup window for sync-back operations.
@@ -56,6 +58,77 @@ func (s *JiraSync) RegisterHandlers(stream *SSEStream) {
 	stream.On("beads.bead.closed", s.handleClosed)
 	s.logger.Info("JIRA sync watcher registered SSE handlers",
 		"topics", []string{"beads.bead.updated", "beads.bead.closed"})
+}
+
+// JiraSyncCatchUpClient is the subset of beadsapi.Client needed for catch-up.
+type JiraSyncCatchUpClient interface {
+	ListBeadsFiltered(ctx context.Context, q beadsapi.ListBeadsQuery) (*beadsapi.ListBeadsResult, error)
+}
+
+// CatchUp fetches existing Jira-sourced beads from the daemon and pre-populates
+// the dedup map so that SSE replay after a restart does not re-post comments,
+// links, or transitions that were already synced.
+func (s *JiraSync) CatchUp(ctx context.Context, client JiraSyncCatchUpClient) {
+	if client == nil {
+		return
+	}
+
+	// Fetch all active issue-kind beads with source:jira label.
+	result, err := client.ListBeadsFiltered(ctx, beadsapi.ListBeadsQuery{
+		Kinds:    []string{"issue"},
+		Statuses: []string{"open", "in_progress"},
+		Labels:   []string{"source:jira"},
+		Limit:    500,
+	})
+	if err != nil {
+		s.logger.Warn("jira catch-up: failed to list beads", "error", err)
+		return
+	}
+
+	marked := 0
+	for _, bead := range result.Beads {
+		jiraKey := bead.Fields["jira_key"]
+		if jiraKey == "" {
+			// Fallback: check labels.
+			for _, label := range bead.Labels {
+				if strings.HasPrefix(label, "jira:") && !strings.HasPrefix(label, "jira-label:") {
+					jiraKey = strings.TrimPrefix(label, "jira:")
+					break
+				}
+			}
+		}
+		if jiraKey == "" {
+			continue
+		}
+
+		// Pre-mark claimed beads.
+		if bead.Status == "in_progress" && bead.Assignee != "" {
+			s.mark("claimed:" + bead.ID + ":" + bead.Assignee)
+			marked++
+		}
+
+		// Pre-mark MR links.
+		if mrURL := bead.Fields["mr_url"]; mrURL != "" {
+			s.mark("mr:" + bead.ID + ":" + mrURL)
+			marked++
+		}
+
+		// Pre-mark MR merged.
+		if bead.Fields["mr_merged"] == "true" {
+			s.mark("merged:" + bead.ID)
+			marked++
+		}
+	}
+
+	s.logger.Info("jira catch-up complete",
+		"beads", len(result.Beads), "marked", marked)
+}
+
+// mark records a dedup key as seen without returning whether it was already present.
+func (s *JiraSync) mark(key string) {
+	s.mu.Lock()
+	s.seen[key] = time.Now()
+	s.mu.Unlock()
 }
 
 func (s *JiraSync) handleUpdated(ctx context.Context, data []byte) {

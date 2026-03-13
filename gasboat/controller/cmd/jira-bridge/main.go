@@ -142,6 +142,10 @@ func main() {
 	})
 	jiraSync.RegisterHandlers(sseStream)
 
+	// Pre-populate dedup map with existing Jira beads to prevent duplicate
+	// comments/transitions on SSE replay after restart.
+	jiraSync.CatchUp(ctx, daemon)
+
 	// Start the SSE stream.
 	go func() {
 		if err := sseStream.Start(ctx); err != nil && ctx.Err() == nil {
