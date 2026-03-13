@@ -466,7 +466,7 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 
 	// Validate explicit project override exists as a project bead.
 	// If the user explicitly typed --project=X and X doesn't exist,
-	// warn them rather than silently spawning with no project config.
+	// reject the spawn rather than creating an agent with no project config.
 	if projectOverride != "" {
 		projects, err := b.daemon.ListProjectBeads(ctx)
 		if err == nil {
@@ -475,16 +475,17 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 				for name := range projects {
 					names = append(names, name)
 				}
-				b.logger.Warn("thread-spawn: explicit project override not found in project beads",
+				b.logger.Warn("thread-spawn: explicit project override not found, rejecting",
 					"project", projectOverride, "available", names)
 				if b.api != nil {
-					msg := fmt.Sprintf(":warning: Project %q not found — spawning agent without project-specific config. Available projects: %s",
+					msg := fmt.Sprintf(":x: Project %q not found. Available projects: %s",
 						projectOverride, strings.Join(names, ", "))
 					_, _, _ = b.api.PostMessage(channel,
 						slack.MsgOptionText(msg, false),
 						slack.MsgOptionTS(threadTS),
 					)
 				}
+				return
 			}
 		}
 	}
