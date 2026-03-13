@@ -81,6 +81,7 @@ tasks:
       sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
       cd coop && cargo fetch
     filter:
+      - .rwx/ci.yml
       - coop/Cargo.lock
       - coop/Cargo.toml
       - coop/crates/*/Cargo.toml
