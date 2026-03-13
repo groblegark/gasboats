@@ -90,9 +90,13 @@ func main() {
 	})
 
 	// Webhook endpoint for GitLab MR events.
-	mux.Handle("/webhook", bridge.GitLabWebhookHandler(
-		gitlabClient, daemon, cfg.gitlabWebhookSecret, logger,
-	))
+	mux.Handle("/webhook", bridge.GitLabWebhookHandlerWithConfig(bridge.GitLabWebhookConfig{
+		GitLab:        gitlabClient,
+		Daemon:        daemon,
+		WebhookSecret: cfg.gitlabWebhookSecret,
+		BotUsername:   cfg.gitlabBotUsername,
+		Logger:        logger,
+	}))
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
@@ -174,6 +178,7 @@ type config struct {
 	gitlabBaseURL        string
 	gitlabAPIToken       string
 	gitlabWebhookSecret  string
+	gitlabBotUsername    string // GitLab username of bot; notes from this user are ignored
 	gitlabGroupID        int
 	pollInterval         time.Duration
 	listenAddr           string
@@ -201,6 +206,7 @@ func parseConfig() *config {
 		gitlabBaseURL:       os.Getenv("GITLAB_BASE_URL"),
 		gitlabAPIToken:      os.Getenv("GITLAB_API_TOKEN"),
 		gitlabWebhookSecret: os.Getenv("GITLAB_WEBHOOK_SECRET"),
+		gitlabBotUsername:   os.Getenv("GITLAB_BOT_USERNAME"),
 		gitlabGroupID:       groupID,
 		pollInterval:        pollInterval,
 		listenAddr:          envOrDefault("LISTEN_ADDR", ":8092"),
