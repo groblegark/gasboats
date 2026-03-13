@@ -379,6 +379,13 @@ func (b *Bot) handleThreadSpawn(ctx context.Context, ev *slackevents.AppMentionE
 	channel := ev.Channel
 	threadTS := ev.ThreadTimeStamp
 
+	// Reject malformed thread bindings early — before touching any shared state.
+	if !isValidThreadBinding(channel, threadTS) {
+		b.logger.Warn("thread-spawn: invalid thread binding, skipping",
+			"channel", channel, "thread_ts", threadTS)
+		return
+	}
+
 	// Guard: prevent spawning duplicate agents for the same thread.
 	// Another mention may have raced us, or the state may have been set
 	// between the caller's check and this point.
