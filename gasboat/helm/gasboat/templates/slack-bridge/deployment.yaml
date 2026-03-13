@@ -149,6 +149,11 @@ spec:
             - name: COOPMUX_PUBLIC_URL
               value: "https://{{ .Values.coopmux.ingress.host }}/mux"
             {{- end }}
+            # Channel router
+            {{- if .Values.slackBridge.router }}
+            - name: SLACK_ROUTER_CONFIG
+              value: {{ .Values.slackBridge.router | toJson | quote }}
+            {{- end }}
             # Bouncer (IP whitelist management)
             {{- if .Values.slackBridge.bouncer.enabled }}
             - name: BOUNCER_ENABLED

@@ -578,6 +578,19 @@ slackBridge:
     # Default: groblegark/gasboats (monorepo)
     repos: ""
 
+  # Channel router — maps agent identity patterns to Slack channels.
+  # Agent identity format: "project/role/name" (e.g., "gasboat/crew/test-bot").
+  # Patterns support wildcards: "*" matches any single segment.
+  # Example:
+  #   router:
+  #     default_channel: "C-DEFAULT"
+  #     channels:
+  #       "gasboat/crew/*": "C-CREW-CHANNEL"
+  #       "gasboat/thread/*": "C-THREAD-CHANNEL"
+  #     overrides:
+  #       "gasboat/crew/hq": "C-HQ-CHANNEL"
+  router: {}
+
   # Bouncer — IP whitelist management via /bouncer Slack command.
   # Patches Traefik Middleware CRs to add/remove IPs from sourceRange.
   bouncer:
