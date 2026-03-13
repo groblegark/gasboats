@@ -7,6 +7,26 @@ import (
 	"github.com/slack-go/slack"
 )
 
+// resolveThreadedChannel determines the target channel and optional thread TS
+// for posting a notification about an agent. It checks thread-bound agents
+// first, then agent card threading, falling back to the resolved channel.
+func (b *Bot) resolveThreadedChannel(ctx context.Context, agent string) (channel, threadTS string) {
+	// Thread-bound agent: post in the originating thread.
+	if ch, ts := b.resolveAgentThread(ctx, agent); ch != "" && ts != "" {
+		return ch, ts
+	}
+
+	// Agent card threading: post in the agent's card thread.
+	if b.agentThreadingEnabled() {
+		if ts := b.getAgentThreadTS(agent); ts != "" {
+			return b.resolveChannel(agent), ts
+		}
+	}
+
+	// Fallback: post to channel without threading.
+	return b.resolveChannel(agent), ""
+}
+
 // NotifyAgentCrash posts a crash alert to the agent's resolved Slack channel.
 // For thread-bound agents, the crash is posted as a reply in the bound thread.
 func (b *Bot) NotifyAgentCrash(ctx context.Context, bead BeadEvent) error {
@@ -42,16 +62,13 @@ func (b *Bot) NotifyAgentCrash(ctx context.Context, bead BeadEvent) error {
 				fmt.Sprintf("Agent: %s", displayName), false, false)),
 	}
 
-	targetChannel := b.resolveChannel(agent)
+	targetChannel, threadTS := b.resolveThreadedChannel(ctx, agent)
 	msgOpts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Agent crashed: %s", displayName), false),
 		slack.MsgOptionBlocks(blocks...),
 	}
-
-	// Thread-bound agents: post crash in the originating thread.
-	if slackChannel, slackTS := b.resolveAgentThread(ctx, agent); slackChannel != "" && slackTS != "" {
-		targetChannel = slackChannel
-		msgOpts = append(msgOpts, slack.MsgOptionTS(slackTS))
+	if threadTS != "" {
+		msgOpts = append(msgOpts, slack.MsgOptionTS(threadTS))
 	}
 
 	_, _, err := b.api.PostMessageContext(ctx, targetChannel, msgOpts...)
@@ -82,15 +99,20 @@ func (b *Bot) NotifyJackOn(ctx context.Context, bead BeadEvent) error {
 		text += fmt.Sprintf("\n> %s", reason)
 	}
 
-	targetChannel := b.resolveChannel(agent)
-	_, _, err := b.api.PostMessageContext(ctx, targetChannel,
+	targetChannel, threadTS := b.resolveThreadedChannel(ctx, agent)
+	msgOpts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Jack raised: %s on %s", bead.ID, target), false),
 		slack.MsgOptionBlocks(
 			slack.NewSectionBlock(
 				slack.NewTextBlockObject("mrkdwn", text, false, false),
 				nil, nil),
 		),
-	)
+	}
+	if threadTS != "" {
+		msgOpts = append(msgOpts, slack.MsgOptionTS(threadTS))
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, targetChannel, msgOpts...)
 	if err != nil {
 		return fmt.Errorf("post jack on to Slack: %w", err)
 	}
@@ -148,15 +170,20 @@ func (b *Bot) NotifyJackOff(ctx context.Context, bead BeadEvent) error {
 		text += fmt.Sprintf("\n> %s", reason)
 	}
 
-	targetChannel := b.resolveChannel(agent)
-	_, _, err := b.api.PostMessageContext(ctx, targetChannel,
+	targetChannel, threadTS := b.resolveThreadedChannel(ctx, agent)
+	msgOpts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Jack lowered: %s", bead.ID), false),
 		slack.MsgOptionBlocks(
 			slack.NewSectionBlock(
 				slack.NewTextBlockObject("mrkdwn", text, false, false),
 				nil, nil),
 		),
-	)
+	}
+	if threadTS != "" {
+		msgOpts = append(msgOpts, slack.MsgOptionTS(threadTS))
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, targetChannel, msgOpts...)
 	if err != nil {
 		return fmt.Errorf("post jack off to Slack: %w", err)
 	}
@@ -179,15 +206,20 @@ func (b *Bot) NotifyJackExpired(ctx context.Context, bead BeadEvent) error {
 	}
 	text += fmt.Sprintf("\n_Review revert plan and close with_ `bd jack off %s`", bead.ID)
 
-	targetChannel := b.resolveChannel(agent)
-	_, _, err := b.api.PostMessageContext(ctx, targetChannel,
+	targetChannel, threadTS := b.resolveThreadedChannel(ctx, agent)
+	msgOpts := []slack.MsgOption{
 		slack.MsgOptionText(fmt.Sprintf("Jack expired: %s on %s", bead.ID, target), false),
 		slack.MsgOptionBlocks(
 			slack.NewSectionBlock(
 				slack.NewTextBlockObject("mrkdwn", text, false, false),
 				nil, nil),
 		),
-	)
+	}
+	if threadTS != "" {
+		msgOpts = append(msgOpts, slack.MsgOptionTS(threadTS))
+	}
+
+	_, _, err := b.api.PostMessageContext(ctx, targetChannel, msgOpts...)
 	if err != nil {
 		return fmt.Errorf("post jack expired to Slack: %w", err)
 	}
