@@ -443,15 +443,25 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 // per 10 minutes to avoid spam.
 func (b *Bot) hintMentionRequired(ctx context.Context, channel, threadTS, agent string) {
 	key := "hint:" + channel + ":" + threadTS
-	now := time.Now()
+	const hintInterval = 10 * time.Minute
 
-	b.mu.Lock()
-	if last, ok := b.lastThreadNudge[key]; ok && now.Sub(last) < 10*time.Minute {
+	// Use persistent state when available.
+	if b.state != nil {
+		throttled, _ := b.state.CheckAndSetNudgeThrottle(key, hintInterval)
+		if throttled {
+			return
+		}
+	} else {
+		// Fallback to in-memory map when state is nil.
+		now := time.Now()
+		b.mu.Lock()
+		if last, ok := b.lastThreadNudge[key]; ok && now.Sub(last) < hintInterval {
+			b.mu.Unlock()
+			return
+		}
+		b.lastThreadNudge[key] = now
 		b.mu.Unlock()
-		return
 	}
-	b.lastThreadNudge[key] = now
-	b.mu.Unlock()
 
 	hint := fmt.Sprintf(":bulb: _Tip: @mention me so *%s* sees your message._", agent)
 	if b.api != nil {

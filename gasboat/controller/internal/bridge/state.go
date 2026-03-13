@@ -64,6 +64,7 @@ type StateData struct {
 	AgentCards       map[string]MessageRef       `json:"agent_cards,omitempty"`       // agent identity → status card message ref
 	ThreadAgents     map[string]ThreadAgentEntry `json:"thread_agents,omitempty"`     // "{channel}:{thread_ts}" → agent entry
 	ListenThreads    map[string]bool             `json:"listen_threads,omitempty"`    // "{channel}:{thread_ts}" → true if --listen mode
+	NudgeThrottles   map[string]time.Time        `json:"nudge_throttles,omitempty"`   // "agent:thread_ts" → last nudge time
 	Dashboard        *DashboardRef               `json:"dashboard,omitempty"`
 	LastEventID      string                      `json:"last_event_id,omitempty"` // SSE event ID for reconnection
 }
@@ -86,6 +87,7 @@ func NewStateManager(path string) (*StateManager, error) {
 			AgentCards:       make(map[string]MessageRef),
 			ThreadAgents:     make(map[string]ThreadAgentEntry),
 			ListenThreads:    make(map[string]bool),
+			NudgeThrottles:   make(map[string]time.Time),
 		},
 	}
 	if err := sm.load(); err != nil && !os.IsNotExist(err) {
@@ -329,6 +331,36 @@ func (sm *StateManager) RemoveListenThread(channel, threadTS string) error {
 	return sm.saveLocked()
 }
 
+// --- Nudge Throttles ---
+
+// CheckAndSetNudgeThrottle atomically checks whether a nudge for the given key
+// is within the throttle interval. If throttled, returns true without modifying
+// state. Otherwise, records the current time and persists.
+// This survives bridge restarts, preventing duplicate bead creation on SSE replay.
+func (sm *StateManager) CheckAndSetNudgeThrottle(key string, interval time.Duration) (bool, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if last, ok := sm.data.NudgeThrottles[key]; ok && time.Since(last) < interval {
+		return true, nil // throttled
+	}
+	sm.data.NudgeThrottles[key] = time.Now()
+	return false, sm.saveLocked()
+}
+
+// CleanExpiredNudgeThrottles removes throttle entries older than maxAge.
+// Called during compaction to prevent unbounded growth.
+func (sm *StateManager) CleanExpiredNudgeThrottles(maxAge time.Duration) int {
+	now := time.Now()
+	removed := 0
+	for k, last := range sm.data.NudgeThrottles {
+		if now.Sub(last) > maxAge {
+			delete(sm.data.NudgeThrottles, k)
+			removed++
+		}
+	}
+	return removed
+}
+
 // --- Dashboard ---
 
 // GetDashboard returns the dashboard message ref.
@@ -411,6 +443,10 @@ func (sm *StateManager) CompactStaleEntries(activeAgents map[string]bool) (int, 
 	// Compact thread-agent bindings that have exceeded the TTL.
 	removed += sm.cleanExpiredThreadAgentsLocked(ThreadAgentTTL)
 
+	// Clean up expired nudge throttle entries (anything older than 1h
+	// is well past any throttle interval and safe to remove).
+	removed += sm.CleanExpiredNudgeThrottles(time.Hour)
+
 	if removed > 0 {
 		return removed, sm.saveLocked()
 	}
@@ -481,6 +517,9 @@ func (sm *StateManager) load() error {
 	}
 	if sm.data.ListenThreads == nil {
 		sm.data.ListenThreads = make(map[string]bool)
+	}
+	if sm.data.NudgeThrottles == nil {
+		sm.data.NudgeThrottles = make(map[string]time.Time)
 	}
 	return nil
 }
