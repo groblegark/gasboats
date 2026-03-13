@@ -127,10 +127,10 @@ func main() {
 	// Create event deduplicator.
 	dedup := bridge.NewDedup(logger)
 
-	// Create SSE event stream for MR status checking on bead updates.
+	// Create SSE event stream for MR status checking and squawk forwarding.
 	sseStream := bridge.NewSSEStream(bridge.SSEStreamConfig{
 		BeadsHTTPAddr: cfg.beadsHTTPAddr,
-		Topics:        []string{"beads.bead.updated"},
+		Topics:        []string{"beads.bead.updated", "beads.bead.closed"},
 		Token:         os.Getenv("BEADS_DAEMON_TOKEN"),
 		Logger:        logger,
 		Dedup:         dedup,
@@ -148,6 +148,14 @@ func main() {
 		},
 	})
 	gitlabSync.RegisterHandlers(sseStream)
+
+	// Register GitLab squawk forwarder — posts agent squawk messages as MR notes.
+	squawkFwd := bridge.NewGitLabSquawkForwarder(bridge.GitLabSquawkForwarderConfig{
+		Daemon: daemon,
+		GitLab: gitlabClient,
+		Logger: logger,
+	})
+	squawkFwd.RegisterHandlers(sseStream)
 
 	// Start the SSE stream.
 	go func() {
