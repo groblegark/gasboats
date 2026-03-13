@@ -281,6 +281,41 @@ func (c *GitLabClient) UpdateMergeRequestDescription(ctx context.Context, projec
 	return nil
 }
 
+// GitLabNote represents a note (comment) on a GitLab merge request.
+type GitLabNote struct {
+	ID        int        `json:"id"`
+	Body      string     `json:"body"`
+	Author    GitLabUser `json:"author"`
+	CreatedAt string     `json:"created_at"`
+	System    bool       `json:"system"`
+}
+
+// PostMRNote creates a new note (comment) on a merge request.
+// POST /projects/:id/merge_requests/:merge_request_iid/notes
+func (c *GitLabClient) PostMRNote(ctx context.Context, projectPath string, mrIID int, body string) (*GitLabNote, error) {
+	encoded := url.PathEscape(projectPath)
+	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/notes", encoded, mrIID)
+	reqBody := map[string]string{"body": body}
+	var note GitLabNote
+	if err := c.doJSON(ctx, http.MethodPost, path, reqBody, &note); err != nil {
+		return nil, fmt.Errorf("GitLab post MR note %s!%d: %w", projectPath, mrIID, err)
+	}
+	return &note, nil
+}
+
+// PostMRDiscussionReply adds a reply to an existing discussion thread on a merge request.
+// POST /projects/:id/merge_requests/:merge_request_iid/discussions/:discussion_id/notes
+func (c *GitLabClient) PostMRDiscussionReply(ctx context.Context, projectPath string, mrIID int, discussionID, body string) (*GitLabNote, error) {
+	encoded := url.PathEscape(projectPath)
+	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/discussions/%s/notes", encoded, mrIID, discussionID)
+	reqBody := map[string]string{"body": body}
+	var note GitLabNote
+	if err := c.doJSON(ctx, http.MethodPost, path, reqBody, &note); err != nil {
+		return nil, fmt.Errorf("GitLab reply to discussion %s on MR %s!%d: %w", discussionID, projectPath, mrIID, err)
+	}
+	return &note, nil
+}
+
 // MRRef holds the parsed components of a GitLab MR URL.
 type MRRef struct {
 	ProjectPath string // e.g., "PiHealth/CoreFICS/fics-helm-chart"
