@@ -124,6 +124,7 @@ tasks:
     filter:
       - "coop/crates/**"
       - "coop/tests/**"
+      - "coop/proto/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
     run: |
@@ -157,6 +158,7 @@ tasks:
     filter:
       - "coop/crates/**"
       - "coop/tests/**"
+      - "coop/proto/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
     run: |
@@ -196,6 +198,7 @@ tasks:
     filter:
       - "coop/crates/**"
       - "coop/tests/**"
+      - "coop/proto/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
     run: |
