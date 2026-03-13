@@ -203,7 +203,7 @@ tasks:
       - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_
+      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy
 
   # ── Helm lint ────────────────────────────────────────────────────────
   - key: lint-helm

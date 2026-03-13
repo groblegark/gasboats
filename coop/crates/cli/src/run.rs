@@ -11,7 +11,7 @@ use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use tracing_subscriber::EnvFilter;
 
@@ -359,7 +359,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
 
         match crate::s3::restore_transcripts(&**s3, source_session, &transcripts_dir).await {
             Ok(count) => info!(count, "s3: restored transcripts from S3"),
-            Err(e) => warn!("s3: failed to restore transcripts: {e}"),
+            Err(e) => tracing::warn!("s3: failed to restore transcripts: {e}"),
         }
 
         // Download session log so --resume can discover it.
@@ -367,7 +367,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
         if let Err(e) =
             crate::s3::restore_session_log(&**s3, source_session, &session_log_dest).await
         {
-            warn!("s3: failed to restore session log: {e}");
+            tracing::warn!("s3: failed to restore session log: {e}");
         } else if config.resume.is_none() {
             // Auto-set --resume to the downloaded session log.
             config.resume = Some(session_log_dest.display().to_string());
