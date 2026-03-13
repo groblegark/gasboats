@@ -142,7 +142,13 @@ func (b *Bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	}
 
 	if replyTS == "" {
-		replyTS = ev.TimeStamp
+		// For thread messages, reply in the parent thread (not under
+		// the individual message which would create a sub-thread).
+		if ev.ThreadTimeStamp != "" {
+			replyTS = ev.ThreadTimeStamp
+		} else {
+			replyTS = ev.TimeStamp
+		}
 	}
 
 	// Canonicalize to short name so map lookups (agentPodName, etc.)

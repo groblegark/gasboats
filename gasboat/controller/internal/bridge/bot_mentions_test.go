@@ -1196,3 +1196,75 @@ func TestHandleMentionThreadCommand_CommandDispatch(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestHandleAppMention_ThreadMention_UsesParentThreadTS(t *testing.T) {
+	// Verifies that when a mention arrives in a thread, the stored chat
+	// message ref uses the parent thread TS (ThreadTimeStamp) so the
+	// response threads correctly in the same thread, not under the
+	// individual message.
+	daemon := newMockDaemon()
+
+	// Seed an active agent bead for the thread-bound agent.
+	daemon.beads["thread-agent"] = &beadsapi.BeadDetail{
+		ID:    "bd-agent-thread",
+		Title: "crew-gasboat-crew-thread-agent",
+		Type:  "agent",
+		Fields: map[string]string{
+			"agent":   "thread-agent",
+			"project": "gasboat",
+			"role":    "crew",
+		},
+	}
+
+	dir := t.TempDir()
+	state, err := NewStateManager(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Map the thread to the agent.
+	_ = state.SetThreadAgent("C-test", "1000.0000", "thread-agent")
+
+	slackSrv := newFakeSlackServer(t)
+	defer slackSrv.Close()
+
+	b := newTestBot(daemon, slackSrv)
+	b.state = state
+	b.botUserID = "U-BOT"
+	b.lastThreadNudge = make(map[string]time.Time)
+
+	// Mention @gasboat in a thread — the parent thread TS is 1000.0000,
+	// the individual message TS is 2000.5555.
+	b.handleAppMention(context.Background(), &slackevents.AppMentionEvent{
+		User:            "U-USER",
+		Text:            "<@U-BOT> check the status",
+		TimeStamp:       "2000.5555",
+		ThreadTimeStamp: "1000.0000",
+		Channel:         "C-test",
+	})
+
+	// Find the mention tracking bead created by handleAppMention.
+	taskBeads := filterBeadsByType(daemon.beads, "task")
+	if len(taskBeads) == 0 {
+		t.Fatal("expected a mention tracking bead to be created")
+	}
+
+	// Check the stored chat message ref uses the parent thread TS.
+	for _, tb := range taskBeads {
+		ref, ok := state.GetChatMessage(tb.ID)
+		if !ok {
+			continue
+		}
+		if ref.Timestamp == "2000.5555" {
+			t.Errorf("chat message ref uses individual message TS %q, want parent thread TS %q",
+				ref.Timestamp, "1000.0000")
+		}
+		if ref.Timestamp != "1000.0000" {
+			t.Errorf("chat message ref timestamp = %q, want parent thread TS %q",
+				ref.Timestamp, "1000.0000")
+		}
+		if ref.ChannelID != "C-test" {
+			t.Errorf("chat message ref channel = %q, want %q", ref.ChannelID, "C-test")
+		}
+	}
+}

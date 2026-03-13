@@ -98,12 +98,17 @@ func (c *Chat) handleClosed(ctx context.Context, data []byte) {
 
 	// Post as thread reply.
 	if c.bot != nil && c.bot.api != nil {
-		_, _, _ = c.bot.api.PostMessage(ref.ChannelID,
+		_, _, err = c.bot.api.PostMessageContext(ctx, ref.ChannelID,
 			slack.MsgOptionText(response, false),
 			slack.MsgOptionTS(ref.Timestamp),
 		)
-		c.logger.Info("chat response relayed to Slack",
-			"bead", bead.ID, "channel", ref.ChannelID)
+		if err != nil {
+			c.logger.Error("failed to relay chat response to Slack",
+				"bead", bead.ID, "channel", ref.ChannelID, "error", err)
+		} else {
+			c.logger.Info("chat response relayed to Slack",
+				"bead", bead.ID, "channel", ref.ChannelID)
+		}
 	}
 
 	// Clean up state.
