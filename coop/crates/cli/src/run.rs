@@ -11,7 +11,7 @@ use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use tracing_subscriber::EnvFilter;
 
