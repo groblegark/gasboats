@@ -89,12 +89,19 @@ func main() {
 		fmt.Fprintf(w, `{"status":"ok"}`)
 	})
 
+	// Shared HTTP client for nudging agents via coop API.
+	nudgeClient := &http.Client{Timeout: 15 * time.Second}
+	nudgeFunc := func(ctx context.Context, agentName, message string) error {
+		return bridge.NudgeAgent(ctx, daemon, nudgeClient, logger, agentName, message)
+	}
+
 	// Webhook endpoint for GitLab MR events.
 	mux.Handle("/webhook", bridge.GitLabWebhookHandlerWithConfig(bridge.GitLabWebhookConfig{
 		GitLab:        gitlabClient,
 		Daemon:        daemon,
 		WebhookSecret: cfg.gitlabWebhookSecret,
 		BotUsername:   cfg.gitlabBotUsername,
+		Nudge:         nudgeFunc,
 		Logger:        logger,
 	}))
 
@@ -138,14 +145,11 @@ func main() {
 	})
 
 	// Register GitLab sync handler on the SSE stream.
-	nudgeClient := &http.Client{Timeout: 15 * time.Second}
 	gitlabSync := bridge.NewGitLabSync(bridge.GitLabSyncConfig{
 		GitLab: gitlabClient,
 		Daemon: daemon,
 		Logger: logger,
-		Nudge: func(ctx context.Context, agentName, message string) error {
-			return bridge.NudgeAgent(ctx, daemon, nudgeClient, logger, agentName, message)
-		},
+		Nudge:  nudgeFunc,
 	})
 	gitlabSync.RegisterHandlers(sseStream)
 

@@ -598,3 +598,153 @@ func TestGitLabWebhookHandler_PipelineEvent_NoMR(t *testing.T) {
 	}
 	// No MR in event — should be a no-op.
 }
+
+func TestGitLabWebhookHandler_NoteEvent_NudgesAgent(t *testing.T) {
+	daemon := newMockGitLabDaemon()
+	daemon.beads["bead-1"] = &beadsapi.BeadDetail{
+		ID:       "bead-1",
+		Title:    "Fix auth",
+		Type:     "task",
+		Assignee: "agent-worker-1",
+		Fields:   map[string]string{"mr_url": "https://gitlab.com/org/repo/-/merge_requests/42"},
+	}
+
+	var nudgedAgent, nudgedMessage string
+	handler := GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		Daemon:        daemon,
+		WebhookSecret: "secret",
+		Nudge: func(_ context.Context, agent, msg string) error {
+			nudgedAgent = agent
+			nudgedMessage = msg
+			return nil
+		},
+		Logger: slog.Default(),
+	})
+
+	event := map[string]any{
+		"object_kind": "note",
+		"user":        map[string]any{"username": "reviewer-bob"},
+		"object_attributes": map[string]any{
+			"note":          "Please handle the error on line 42",
+			"noteable_type": "MergeRequest",
+			"system":        false,
+			"discussion_id": "disc-abc123",
+			"position": map[string]any{
+				"new_path": "pkg/auth/handler.go",
+				"new_line": 42,
+				"old_path": "pkg/auth/handler.go",
+				"old_line": 40,
+			},
+		},
+		"merge_request": map[string]any{
+			"iid":   42,
+			"url":   "https://gitlab.com/org/repo/-/merge_requests/42",
+			"title": "Fix auth token refresh",
+		},
+	}
+	body, _ := json.Marshal(event)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	if nudgedAgent != "agent-worker-1" {
+		t.Errorf("nudged agent=%q, want agent-worker-1", nudgedAgent)
+	}
+
+	// Verify rich nudge message content.
+	if !strings.Contains(nudgedMessage, "reviewer-bob") {
+		t.Errorf("nudge message should contain reviewer name, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "pkg/auth/handler.go:42") {
+		t.Errorf("nudge message should contain file:line, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "Please handle the error on line 42") {
+		t.Errorf("nudge message should contain comment text, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "disc-abc123") {
+		t.Errorf("nudge message should contain discussion ID, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "Fix auth token refresh") {
+		t.Errorf("nudge message should contain MR title, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "bead-1") {
+		t.Errorf("nudge message should contain bead ID, got: %s", nudgedMessage)
+	}
+	if !strings.Contains(nudgedMessage, "[old line 40]") {
+		t.Errorf("nudge message should contain old line context, got: %s", nudgedMessage)
+	}
+}
+
+func TestBuildReviewNudgeMessage(t *testing.T) {
+	nc := noteContext{
+		Author:       "alice",
+		Note:         "Fix the null check",
+		DiscussionID: "disc-xyz",
+		Position: &notePosition{
+			NewPath: "src/main.go",
+			NewLine: 100,
+			OldPath: "src/main.go",
+			OldLine: 98,
+		},
+		MR: &struct {
+			IID   int    `json:"iid"`
+			URL   string `json:"url"`
+			Title string `json:"title"`
+		}{
+			IID:   5,
+			URL:   "https://gitlab.com/org/repo/-/merge_requests/5",
+			Title: "Add null checks",
+		},
+	}
+
+	msg := buildReviewNudgeMessage(nc, "bead-42")
+
+	expected := []string{
+		`"Add null checks"`,
+		"@alice",
+		"File: src/main.go:100",
+		"[old line 98]",
+		"Comment: Fix the null check",
+		"Discussion ID: disc-xyz",
+		"MR: https://gitlab.com/org/repo/-/merge_requests/5",
+		"Bead: bead-42",
+	}
+	for _, want := range expected {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q\ngot: %s", want, msg)
+		}
+	}
+}
+
+func TestBuildReviewNudgeMessage_NoPosition(t *testing.T) {
+	nc := noteContext{
+		Author: "bob",
+		Note:   "LGTM",
+		MR: &struct {
+			IID   int    `json:"iid"`
+			URL   string `json:"url"`
+			Title string `json:"title"`
+		}{
+			URL: "https://gitlab.com/org/repo/-/merge_requests/10",
+		},
+	}
+
+	msg := buildReviewNudgeMessage(nc, "bead-99")
+
+	if strings.Contains(msg, "File:") {
+		t.Errorf("message should not contain File when position is nil, got: %s", msg)
+	}
+	if !strings.Contains(msg, "Comment: LGTM") {
+		t.Errorf("message missing comment, got: %s", msg)
+	}
+	if strings.Contains(msg, "Discussion ID:") {
+		t.Errorf("message should not contain Discussion ID when empty, got: %s", msg)
+	}
+}
