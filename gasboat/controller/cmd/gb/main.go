@@ -125,6 +125,7 @@ func init() {
 	rootCmd.AddCommand(squawkCmd)
 	rootCmd.AddCommand(poolCmd)
 	rootCmd.AddCommand(peekCmd)
+	rootCmd.AddCommand(jiraCmd)
 
 	// Session Control
 	rootCmd.AddCommand(configCmd)
