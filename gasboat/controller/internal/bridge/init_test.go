@@ -51,6 +51,7 @@ func findBead(beads []*beadsapi.BeadDetail, title string, labels []string) *bead
 	return nil
 }
 
+
 // findConfigBeadDescription finds a config bead by title and labels and returns
 // its description. Calls t.Fatal if not found.
 func findConfigBeadDescription(t *testing.T, beads []*beadsapi.BeadDetail, title string, labels []string) string {
