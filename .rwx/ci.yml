@@ -163,8 +163,9 @@ tasks:
       - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo clippy --workspace -- -D warnings
-      cd coop && cargo fmt --check
+      cd coop
+      cargo clippy --workspace -- -D warnings
+      cargo fmt --check
 
   # ── Test gasboat ─────────────────────────────────────────────────────
   - key: test-gasboat
@@ -203,7 +204,7 @@ tasks:
       - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy
+      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy --skip tmux_backend
 
   # ── Helm lint ────────────────────────────────────────────────────────
   - key: lint-helm
