@@ -141,7 +141,7 @@ func (d *Decisions) handleClosed(ctx context.Context, data []byte) {
 
 	chosen := bead.Fields["chosen"]
 
-	// SSE close events may not include close-time fields (chosen, rationale).
+	// SSE close events may not include close-time fields (chosen, rationale, prompt).
 	// Fetch the full bead when chosen is missing so nudgeAgent has complete data.
 	if chosen == "" {
 		if detail, err := d.daemon.GetBead(ctx, bead.ID); err == nil {
@@ -154,6 +154,14 @@ func (d *Decisions) handleClosed(ctx context.Context, data []byte) {
 			}
 			if v := detail.Fields["rationale"]; v != "" {
 				bead.Fields["rationale"] = v
+			}
+			// Backfill prompt/question so nudge message includes the decision context.
+			if decisionQuestion(bead.Fields) == "" {
+				if v := detail.Fields["prompt"]; v != "" {
+					bead.Fields["prompt"] = v
+				} else if v := detail.Fields["question"]; v != "" {
+					bead.Fields["question"] = v
+				}
 			}
 			if bead.Assignee == "" {
 				bead.Assignee = detail.Assignee
@@ -261,14 +269,24 @@ func (d *Decisions) nudgeAgent(ctx context.Context, bead BeadEvent) {
 
 	chosen := bead.Fields["chosen"]
 	rationale := bead.Fields["rationale"]
-	message := fmt.Sprintf("Decision resolved: %s", chosen)
+	prompt := decisionQuestion(bead.Fields)
+
+	// Build a nudge message that gives the agent full context about the
+	// resolved decision: the original prompt, the chosen option, and the
+	// rationale. Without the prompt, the agent has no idea which decision
+	// was resolved or why.
+	message := fmt.Sprintf("Decision %s resolved", bead.ID)
+	if prompt != "" {
+		message += fmt.Sprintf(": %s", prompt)
+	}
+	message += fmt.Sprintf("\nChosen: %s", chosen)
 	if rationale != "" {
-		message += fmt.Sprintf(" — %s", rationale)
+		message += fmt.Sprintf("\nRationale: %s", rationale)
 	}
 
 	// If the chosen option requires an artifact, append requirement to nudge.
 	if ra, ok := bead.Fields["required_artifact"]; ok && ra != "" {
-		message += fmt.Sprintf(" — Artifact required (%s). Use `gb decision report %s` to submit.", ra, bead.ID)
+		message += fmt.Sprintf("\nArtifact required (%s). Use `gb decision report %s` to submit.", ra, bead.ID)
 	}
 
 	if err := NudgeAgent(ctx, d.daemon, d.httpClient, d.logger, agentName, message); err != nil {
