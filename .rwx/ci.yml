@@ -84,6 +84,7 @@ tasks:
       - coop/Cargo.lock
       - coop/Cargo.toml
       - coop/crates/*/Cargo.toml
+      - coop/tests/*/Cargo.toml
 
   # ── JS deps: beads3d ─────────────────────────────────────────────────
   - key: beads3d-deps
@@ -120,6 +121,7 @@ tasks:
     use: coop-deps
     filter:
       - "coop/crates/**"
+      - "coop/tests/**"
       - "coop/Cargo.toml"
       - "coop/Cargo.lock"
     run: |
@@ -130,8 +132,7 @@ tasks:
   - key: build-beads3d
     use: beads3d-deps
     filter:
-      - "beads3d/src/**"
-      - "beads3d/package.json"
+      - "beads3d/**"
     run: cd beads3d && npm run build
 
   # ── Lint gasboat ─────────────────────────────────────────────────────
@@ -153,6 +154,9 @@ tasks:
     use: coop-deps
     filter:
       - "coop/crates/**"
+      - "coop/tests/**"
+      - "coop/Cargo.toml"
+      - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
       cd coop && cargo clippy --workspace -- -D warnings
@@ -189,6 +193,9 @@ tasks:
     use: coop-deps
     filter:
       - "coop/crates/**"
+      - "coop/tests/**"
+      - "coop/Cargo.toml"
+      - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
       cd coop && cargo test --workspace
