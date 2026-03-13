@@ -157,6 +157,101 @@ func TestGitLabClient_ErrorHandling(t *testing.T) {
 	}
 }
 
+func TestGitLabClient_PostMRNote(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Go's net/http decodes %2F, so check both forms.
+		wantPath := "/api/v4/projects/PiHealth/CoreFICS/monorepo/merge_requests/42/notes"
+		if r.URL.Path != wantPath {
+			t.Errorf("unexpected path: %s, want %s", r.URL.Path, wantPath)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s, want POST", r.Method)
+		}
+		if r.Header.Get("PRIVATE-TOKEN") != "test-token" {
+			t.Error("missing or wrong PRIVATE-TOKEN header")
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["body"] != "LGTM with one nit" {
+			t.Errorf("unexpected note body: %q", body["body"])
+		}
+		resp := GitLabNote{
+			ID:        1001,
+			Body:      body["body"],
+			Author:    GitLabUser{ID: 1, Username: "gasboat-bot"},
+			CreatedAt: "2026-03-13T18:00:00Z",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	note, err := client.PostMRNote(context.Background(), "PiHealth/CoreFICS/monorepo", 42, "LGTM with one nit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if note.ID != 1001 {
+		t.Errorf("note ID = %d, want 1001", note.ID)
+	}
+	if note.Body != "LGTM with one nit" {
+		t.Errorf("note Body = %q, want %q", note.Body, "LGTM with one nit")
+	}
+}
+
+func TestGitLabClient_PostMRDiscussionReply(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/api/v4/projects/org/repo/merge_requests/7/discussions/abc123def/notes"
+		if r.URL.Path != wantPath {
+			t.Errorf("unexpected path: %s, want %s", r.URL.Path, wantPath)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s, want POST", r.Method)
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		resp := GitLabNote{
+			ID:        2002,
+			Body:      body["body"],
+			Author:    GitLabUser{ID: 1, Username: "gasboat-bot"},
+			CreatedAt: "2026-03-13T18:05:00Z",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	note, err := client.PostMRDiscussionReply(context.Background(), "org/repo", 7, "abc123def", "Fixed in latest push")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if note.ID != 2002 {
+		t.Errorf("note ID = %d, want 2002", note.ID)
+	}
+	if note.Body != "Fixed in latest push" {
+		t.Errorf("note Body = %q, want %q", note.Body, "Fixed in latest push")
+	}
+}
+
+func TestGitLabClient_PostMRNote_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
+	}))
+	defer server.Close()
+
+	client := newTestGitLabClient(server.URL)
+	_, err := client.PostMRNote(context.Background(), "org/repo", 42, "test")
+	if err == nil {
+		t.Fatal("expected error for 403 response")
+	}
+}
+
 func TestParseMRURL(t *testing.T) {
 	tests := []struct {
 		name        string
