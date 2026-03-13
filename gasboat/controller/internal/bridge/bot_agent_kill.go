@@ -90,6 +90,28 @@ func (b *Bot) killAgent(ctx context.Context, agentName string, force bool) error
 func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentName, triggerText, userID string) {
 	agentName = extractAgentName(agentName)
 
+	// Atomic check-and-set: prevent concurrent respawn attempts for the same thread.
+	// Multiple thread replies arriving for a dead agent can all call respawnThreadAgent
+	// concurrently — this guard ensures only one respawn proceeds.
+	spawnKey := channel + ":" + threadTS
+	b.mu.Lock()
+	if b.spawnInFlight == nil {
+		b.spawnInFlight = make(map[string]bool)
+	}
+	if b.spawnInFlight[spawnKey] {
+		b.mu.Unlock()
+		b.logger.Info("respawn-thread-agent: spawn already in flight, skipping",
+			"channel", channel, "thread_ts", threadTS, "agent", agentName)
+		return
+	}
+	b.spawnInFlight[spawnKey] = true
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.spawnInFlight, spawnKey)
+		b.mu.Unlock()
+	}()
+
 	// Snapshot the listen-thread flag before it gets cleaned up by killAgent
 	// (which calls RemoveThreadAgentByAgent, clearing both thread mapping and
 	// listen flag). We restore it after re-establishing the thread binding.
