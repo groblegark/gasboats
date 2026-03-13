@@ -28,10 +28,11 @@ type GitLabBeadClient interface {
 
 // GitLabSync watches for MR merges and updates bead fields.
 type GitLabSync struct {
-	gitlab *GitLabClient
-	daemon GitLabBeadClient
-	logger *slog.Logger
-	nudge  NudgeFunc
+	gitlab   *GitLabClient
+	daemon   GitLabBeadClient
+	logger   *slog.Logger
+	nudge    NudgeFunc
+	resolver *AgentResolver // optional; when set, handles agent lookup/reuse for review nudges
 
 	mu   sync.Mutex
 	seen map[string]time.Time // dedup key → last check time
@@ -42,20 +43,22 @@ type NudgeFunc func(ctx context.Context, agentName, message string) error
 
 // GitLabSyncConfig holds configuration for the GitLab sync watcher.
 type GitLabSyncConfig struct {
-	GitLab *GitLabClient
-	Daemon GitLabBeadClient
-	Logger *slog.Logger
-	Nudge  NudgeFunc // optional; if nil, nudges are skipped
+	GitLab   *GitLabClient
+	Daemon   GitLabBeadClient
+	Logger   *slog.Logger
+	Nudge    NudgeFunc      // optional; if nil, nudges are skipped
+	Resolver *AgentResolver // optional; when set, handles agent lookup/reuse for review nudges
 }
 
 // NewGitLabSync creates a new GitLab MR sync watcher.
 func NewGitLabSync(cfg GitLabSyncConfig) *GitLabSync {
 	return &GitLabSync{
-		gitlab: cfg.GitLab,
-		daemon: cfg.Daemon,
-		logger: cfg.Logger,
-		nudge:  cfg.Nudge,
-		seen:   make(map[string]time.Time),
+		gitlab:   cfg.GitLab,
+		daemon:   cfg.Daemon,
+		logger:   cfg.Logger,
+		nudge:    cfg.Nudge,
+		resolver: cfg.Resolver,
+		seen:     make(map[string]time.Time),
 	}
 }
 
@@ -205,9 +208,11 @@ func (s *GitLabSync) handleDescriptionSync(ctx context.Context, data []byte) {
 }
 
 // handleReviewNudge nudges the assigned agent when mr_has_review_comments
-// changes to true on a bead.
+// changes to true on a bead. When an AgentResolver is configured, it handles
+// agent lookup/reuse: if the original agent is alive it gets nudged; if dead,
+// a new agent is spawned with the MR context.
 func (s *GitLabSync) handleReviewNudge(ctx context.Context, data []byte) {
-	if s.nudge == nil {
+	if s.nudge == nil && s.resolver == nil {
 		return
 	}
 
@@ -239,6 +244,21 @@ func (s *GitLabSync) handleReviewNudge(ctx context.Context, data []byte) {
 	}
 
 	message := fmt.Sprintf("MR has new review comments — address them: %s", bead.Fields["mr_url"])
+
+	// When the resolver is available, use it for agent lookup/reuse.
+	// This handles dead agents by spawning new ones with MR context.
+	if s.resolver != nil {
+		if err := s.resolver.ResolveAndNudge(ctx, *bead, message); err != nil {
+			s.logger.Error("failed to resolve/nudge agent for review comments",
+				"bead", bead.ID, "agent", assignee, "error", err)
+		} else {
+			s.logger.Info("resolved and nudged agent for MR review comments",
+				"bead", bead.ID, "agent", assignee)
+		}
+		return
+	}
+
+	// Fallback: simple nudge by agent name (no agent reuse).
 	if err := s.nudge(ctx, assignee, message); err != nil {
 		s.logger.Error("failed to nudge agent for review comments",
 			"bead", bead.ID, "agent", assignee, "error", err)
