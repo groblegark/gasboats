@@ -2,26 +2,19 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 
 	"github.com/groblegark/kbeads/internal/model"
 )
 
-// builtinConfigs provides default config values that are returned when no
-// user-defined config exists for a key.
-var builtinConfigs = map[string]*model.Config{
-	"view:ready": {
-		Key:   "view:ready",
-		Value: json.RawMessage(`{"filter":{"status":["open","in_progress"],"kind":["issue"]},"sort":"priority","limit":5}`),
-	},
-	"type:epic":    {Key: "type:epic", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:task":    {Key: "type:task", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:feature": {Key: "type:feature", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:chore":   {Key: "type:chore", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:bug":     {Key: "type:bug", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:advice": {Key: "type:advice", Value: json.RawMessage(`{
+// builtinConfigs provides the built-in type definitions for all known bead types.
+var builtinConfigs = map[string]json.RawMessage{
+	"type:epic":    json.RawMessage(`{"kind":"issue","fields":[]}`),
+	"type:task":    json.RawMessage(`{"kind":"issue","fields":[]}`),
+	"type:feature": json.RawMessage(`{"kind":"issue","fields":[]}`),
+	"type:chore":   json.RawMessage(`{"kind":"issue","fields":[]}`),
+	"type:bug":     json.RawMessage(`{"kind":"issue","fields":[]}`),
+	"type:advice": json.RawMessage(`{
 		"kind": "data",
 		"fields": [
 			{"name": "hook_command",   "type": "string"},
@@ -31,8 +24,8 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "subscriptions",  "type": "string[]"},
 			{"name": "subscriptions_exclude", "type": "string[]"}
 		]
-	}`)},
-	"type:jack": {Key: "type:jack", Value: json.RawMessage(`{
+	}`),
+	"type:jack": json.RawMessage(`{
 		"kind": "data",
 		"fields": [
 			{"name": "jack_target",          "type": "string",  "required": true},
@@ -51,9 +44,9 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "jack_changes",         "type": "json"},
 			{"name": "jack_rig",             "type": "string"}
 		]
-	}`)},
-	"type:mail": {Key: "type:mail", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:agent": {Key: "type:agent", Value: json.RawMessage(`{
+	}`),
+	"type:mail": json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:agent": json.RawMessage(`{
 		"kind": "config",
 		"fields": [
 			{"name": "agent",         "type": "string", "required": true},
@@ -67,8 +60,8 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "advice_subscriptions",         "type": "string[]"},
 			{"name": "advice_subscriptions_exclude",  "type": "string[]"}
 		]
-	}`)},
-	"type:decision": {Key: "type:decision", Value: json.RawMessage(`{
+	}`),
+	"type:decision": json.RawMessage(`{
 		"kind": "data",
 		"fields": [
 			{"name": "prompt",                  "type": "string", "required": true},
@@ -85,8 +78,8 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "required_artifact",       "type": "string"},
 			{"name": "artifact_status",         "type": "enum", "values": ["pending", "submitted", "accepted"]}
 		]
-	}`)},
-	"type:report": {Key: "type:report", Value: json.RawMessage(`{
+	}`),
+	"type:report": json.RawMessage(`{
 		"kind": "data",
 		"fields": [
 			{"name": "decision_id", "type": "string", "required": true},
@@ -94,9 +87,9 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "content",     "type": "string", "required": true},
 			{"name": "format",      "type": "string"}
 		]
-	}`)},
+	}`),
 
-	"type:project": {Key: "type:project", Value: json.RawMessage(`{
+	"type:project": json.RawMessage(`{
 		"kind": "config",
 		"fields": [
 			{"name": "prefix",          "type": "string"},
@@ -121,19 +114,19 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "prewarmed_pool",  "type": "json"},
 			{"name": "nudge_prompts",   "type": "json"}
 		]
-	}`)},
+	}`),
 
 	// Infrastructure types — config kind.
-	"type:role":    {Key: "type:role", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
-	"type:rig":     {Key: "type:rig", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
-	"type:convoy":  {Key: "type:convoy", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
-	"type:config":  {Key: "type:config", Value: json.RawMessage(`{"kind":"config","fields":[]}`)},
+	"type:role":    json.RawMessage(`{"kind":"config","fields":[]}`),
+	"type:rig":     json.RawMessage(`{"kind":"config","fields":[]}`),
+	"type:convoy":  json.RawMessage(`{"kind":"config","fields":[]}`),
+	"type:config":  json.RawMessage(`{"kind":"config","fields":[]}`),
 
 	// Infrastructure types — data kind.
-	"type:event":    {Key: "type:event", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:gate":     {Key: "type:gate", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:message":  {Key: "type:message", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:formula": {Key: "type:formula", Value: json.RawMessage(`{
+	"type:event":    json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:gate":     json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:message":  json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:formula": json.RawMessage(`{
 		"kind": "data",
 		"fields": [
 			{"name": "vars",  "type": "json"},
@@ -141,40 +134,32 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "default_roles", "type": "json"},
 			{"name": "assigned_agent", "type": "string"}
 		]
-	}`)},
-	"type:molecule": {Key: "type:molecule", Value: json.RawMessage(`{
+	}`),
+	"type:molecule": json.RawMessage(`{
 		"kind": "issue",
 		"fields": [
 			{"name": "formula_id",   "type": "string"},
 			{"name": "applied_vars", "type": "json"},
 			{"name": "ephemeral",    "type": "boolean"}
 		]
-	}`)},
-	"type:mention":  {Key: "type:mention", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:artifact": {Key: "type:artifact", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
-	"type:runbook":  {Key: "type:runbook", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
+	}`),
+	"type:mention":  json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:artifact": json.RawMessage(`{"kind":"data","fields":[]}`),
+	"type:runbook":  json.RawMessage(`{"kind":"data","fields":[]}`),
 }
 
-// resolveTypeConfig looks up the type config for a bead type, first from the
-// store, then from builtin defaults. Returns nil, nil if not found.
-func (s *BeadsServer) resolveTypeConfig(ctx context.Context, beadType model.BeadType) (*model.TypeConfig, error) {
+// resolveTypeConfig looks up the type config for a bead type from the
+// builtin type definitions. Returns nil, nil if not found.
+func (s *BeadsServer) resolveTypeConfig(_ context.Context, beadType model.BeadType) (*model.TypeConfig, error) {
 	key := "type:" + string(beadType)
 
-	// Try user-defined config in the store first.
-	config, err := s.store.GetConfig(ctx, key)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if config == nil {
-		// Fall back to builtin.
-		config = builtinConfigs[key]
-	}
-	if config == nil {
+	raw, ok := builtinConfigs[key]
+	if !ok {
 		return nil, nil
 	}
 
 	var tc model.TypeConfig
-	if err := json.Unmarshal(config.Value, &tc); err != nil {
+	if err := json.Unmarshal(raw, &tc); err != nil {
 		return nil, err
 	}
 	return &tc, nil

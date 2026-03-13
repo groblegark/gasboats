@@ -263,33 +263,6 @@ func scanEvents(rows *sql.Rows) ([]*model.Event, error) {
 	return events, nil
 }
 
-// scanConfig scans a single row into a model.Config.
-func scanConfig(row scannable) (*model.Config, error) {
-	var c model.Config
-	var value []byte
-	err := row.Scan(&c.Key, &value, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	c.Value = json.RawMessage(value)
-	return &c, nil
-}
-
-// scanConfigs scans multiple rows into a slice of model.Config pointers.
-func scanConfigs(rows *sql.Rows) ([]*model.Config, error) {
-	var configs []*model.Config
-	for rows.Next() {
-		c, err := scanConfig(rows)
-		if err != nil {
-			return nil, err
-		}
-		configs = append(configs, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return configs, nil
-}
 
 // nullTimePtr converts a *time.Time to a sql.NullTime.
 func nullTimePtr(t *time.Time) sql.NullTime {

@@ -177,26 +177,6 @@ func (s *PostgresStore) GetEvents(ctx context.Context, beadID string) ([]*model.
 	return queryGetEvents(ctx, s.db, beadID)
 }
 
-func (s *PostgresStore) SetConfig(ctx context.Context, config *model.Config) error {
-	return querySetConfig(ctx, s.db, config)
-}
-
-func (s *PostgresStore) GetConfig(ctx context.Context, key string) (*model.Config, error) {
-	return queryGetConfig(ctx, s.db, key)
-}
-
-func (s *PostgresStore) ListConfigs(ctx context.Context, namespace string) ([]*model.Config, error) {
-	return queryListConfigs(ctx, s.db, namespace)
-}
-
-func (s *PostgresStore) ListAllConfigs(ctx context.Context) ([]*model.Config, error) {
-	return queryListAllConfigs(ctx, s.db)
-}
-
-func (s *PostgresStore) DeleteConfig(ctx context.Context, key string) error {
-	return queryDeleteConfig(ctx, s.db, key)
-}
-
 // RunInTransaction begins a database transaction, creates a txStore that
 // delegates to it, calls fn, and commits on success or rolls back on error.
 func (s *PostgresStore) RunInTransaction(ctx context.Context, fn func(tx store.Store) error) error {
@@ -319,26 +299,6 @@ func (s *txStore) RecordEvent(ctx context.Context, event *model.Event) error {
 
 func (s *txStore) GetEvents(ctx context.Context, beadID string) ([]*model.Event, error) {
 	return queryGetEvents(ctx, s.tx, beadID)
-}
-
-func (s *txStore) SetConfig(ctx context.Context, config *model.Config) error {
-	return querySetConfig(ctx, s.tx, config)
-}
-
-func (s *txStore) GetConfig(ctx context.Context, key string) (*model.Config, error) {
-	return queryGetConfig(ctx, s.tx, key)
-}
-
-func (s *txStore) ListConfigs(ctx context.Context, namespace string) ([]*model.Config, error) {
-	return queryListConfigs(ctx, s.tx, namespace)
-}
-
-func (s *txStore) ListAllConfigs(ctx context.Context) ([]*model.Config, error) {
-	return queryListAllConfigs(ctx, s.tx)
-}
-
-func (s *txStore) DeleteConfig(ctx context.Context, key string) error {
-	return queryDeleteConfig(ctx, s.tx, key)
 }
 
 // RunInTransaction on a txStore reuses the existing transaction (no nesting).

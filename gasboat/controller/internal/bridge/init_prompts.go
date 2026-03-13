@@ -1,7 +1,6 @@
 package bridge
 
-// configBeadEntries returns the config:* entries that are seeded as both
-// KV configs (for backward compat) and config beads (for ResolveConfigBeads).
+// configBeadEntries returns the config:* entries that are seeded as config beads.
 // These are merged into the main configs() map in init.go.
 func configBeadEntries() map[string]any {
 	return map[string]any{

@@ -801,11 +801,10 @@ func TestHandleCancelDecision(t *testing.T) {
 }
 
 func TestHandleCreateBead_DueAtOnNonIssue(t *testing.T) {
-	_, ms, h := newTestServer()
-	ms.configs["type:note"] = &model.Config{Key: "type:note", Value: json.RawMessage(`{"kind":"data"}`)}
+	_, _, h := newTestServer()
 
 	rec := doJSON(t, h, "POST", "/v1/beads", map[string]any{
-		"title": "x", "type": "note", "due_at": "2026-03-01T00:00:00Z",
+		"title": "x", "type": "mail", "due_at": "2026-03-01T00:00:00Z",
 	})
 	requireStatus(t, rec, 201)
 }

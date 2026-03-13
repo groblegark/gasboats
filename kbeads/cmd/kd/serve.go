@@ -73,20 +73,6 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		// Load persisted external handlers from config table.
-		allConfigs, err := store.ListAllConfigs(context.Background())
-		if err != nil {
-			logger.Warn("failed to list configs for handler loading", "err", err)
-		} else {
-			configMap := make(map[string]string, len(allConfigs))
-			for _, c := range allConfigs {
-				configMap[c.Key] = string(c.Value)
-			}
-			if n := bus.LoadPersistedHandlers(configMap); n > 0 {
-				logger.Info("loaded persisted bus handlers", "count", n)
-			}
-		}
-
 		// Create server components.
 		beadsServer := server.NewBeadsServer(store, publisher)
 		beadsServer.SetBus(bus)

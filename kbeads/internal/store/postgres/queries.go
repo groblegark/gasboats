@@ -516,60 +516,6 @@ func queryGetEvents(ctx context.Context, db executor, beadID string) ([]*model.E
 	return scanEvents(rows)
 }
 
-func querySetConfig(ctx context.Context, db executor, c *model.Config) error {
-	return db.QueryRowContext(ctx, `
-		INSERT INTO configs (key, value)
-		VALUES ($1, $2)
-		ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-		RETURNING created_at, updated_at`,
-		c.Key, []byte(c.Value),
-	).Scan(&c.CreatedAt, &c.UpdatedAt)
-}
-
-func queryGetConfig(ctx context.Context, db executor, key string) (*model.Config, error) {
-	row := db.QueryRowContext(ctx, `
-		SELECT key, value, created_at, updated_at
-		FROM configs WHERE key = $1`, key)
-	return scanConfig(row)
-}
-
-func queryListConfigs(ctx context.Context, db executor, namespace string) ([]*model.Config, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT key, value, created_at, updated_at
-		FROM configs WHERE key LIKE $1 || ':%'
-		ORDER BY key`, namespace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanConfigs(rows)
-}
-
-func queryListAllConfigs(ctx context.Context, db executor) ([]*model.Config, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT key, value, created_at, updated_at
-		FROM configs ORDER BY key`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanConfigs(rows)
-}
-
-func queryDeleteConfig(ctx context.Context, db executor, key string) error {
-	res, err := db.ExecContext(ctx, `DELETE FROM configs WHERE key = $1`, key)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
 
 func queryGetStats(ctx context.Context, db executor) (*model.GraphStats, error) {
 	stats := &model.GraphStats{}

@@ -14,11 +14,10 @@ import (
 
 // header is the first JSONL record written by ExportJSONL.
 type header struct {
-	Version     string    `json:"version"`
-	Type        string    `json:"type"`
-	Timestamp   time.Time `json:"timestamp"`
-	BeadCount   int       `json:"bead_count"`
-	ConfigCount int       `json:"config_count"`
+	Version   string    `json:"version"`
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	BeadCount int       `json:"bead_count"`
 }
 
 // record wraps a single JSONL line with a type discriminator.
@@ -27,7 +26,7 @@ type record struct {
 	Data interface{} `json:"data"`
 }
 
-// ExportJSONL writes all beads and configs from the store as JSONL to w.
+// ExportJSONL writes all beads from the store as JSONL to w.
 // Beads are sorted by ID and include embedded labels, dependencies, and comments.
 func ExportJSONL(ctx context.Context, s store.Store, w io.Writer) error {
 	// Fetch all beads (no filter, no limit).
@@ -62,22 +61,15 @@ func ExportJSONL(ctx context.Context, s store.Store, w io.Writer) error {
 		return beads[i].ID < beads[j].ID
 	})
 
-	// Fetch all configs.
-	configs, err := s.ListAllConfigs(ctx)
-	if err != nil {
-		return fmt.Errorf("list configs: %w", err)
-	}
-
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 
 	// Write header.
 	if err := enc.Encode(header{
-		Version:     "1",
-		Type:        "header",
-		Timestamp:   time.Now().UTC(),
-		BeadCount:   len(beads),
-		ConfigCount: len(configs),
+		Version:   "1",
+		Type:      "header",
+		Timestamp: time.Now().UTC(),
+		BeadCount: len(beads),
 	}); err != nil {
 		return fmt.Errorf("encode header: %w", err)
 	}
@@ -86,13 +78,6 @@ func ExportJSONL(ctx context.Context, s store.Store, w io.Writer) error {
 	for _, b := range beads {
 		if err := enc.Encode(record{Type: "bead", Data: b}); err != nil {
 			return fmt.Errorf("encode bead %s: %w", b.ID, err)
-		}
-	}
-
-	// Write configs.
-	for _, c := range configs {
-		if err := enc.Encode(record{Type: "config", Data: c}); err != nil {
-			return fmt.Errorf("encode config %s: %w", c.Key, err)
 		}
 	}
 

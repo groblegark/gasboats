@@ -98,7 +98,7 @@ kbeads uses a different architecture from beads:
 - **Server**: HTTP API at KD_HOST (not Unix socket daemon)
 - **Env vars**: KD_ACTOR, KD_AGENT_ID, KD_HOST (not BD_ACTOR, BEADS_ACTOR)
 - **No .beads/ directory**: kbeads does not use local file storage
-- **Config**: `kd config` backed by Postgres config table
+- **Config**: Config beads via `gb config dump/load`
 - **Setup**: `gb setup claude --defaults` installs Claude Code hooks'
 
 echo "  [4/6] Platform differences"

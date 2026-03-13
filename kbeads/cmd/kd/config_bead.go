@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/groblegark/kbeads/internal/client"
-	"github.com/groblegark/kbeads/internal/model"
 )
 
 // roleKeyedNamespaces are key prefixes where the suffix represents a role.
@@ -35,10 +34,9 @@ func parseConfigEntryKey(key string) (title string, labels []string) {
 	return key, []string{"global"}
 }
 
-// resolveConfigBead looks up a config value from config beads instead of
-// the legacy KV store. Returns a model.Config with the bead's description
-// as the value, matching the same return shape as GetConfig.
-func resolveConfigBead(ctx context.Context, key string) (*model.Config, error) {
+// resolveConfigBead looks up a config value from config beads.
+// Returns the config bead's description as raw JSON.
+func resolveConfigBead(ctx context.Context, key string) (json.RawMessage, error) {
 	title, labels := parseConfigEntryKey(key)
 
 	resp, err := beadsClient.ListBeads(ctx, &client.ListBeadsRequest{
@@ -52,10 +50,7 @@ func resolveConfigBead(ctx context.Context, key string) (*model.Config, error) {
 
 	for _, b := range resp.Beads {
 		if b.Title == title && labelsMatchConfig(b.Labels, labels) {
-			return &model.Config{
-				Key:   key,
-				Value: json.RawMessage(b.Description),
-			}, nil
+			return json.RawMessage(b.Description), nil
 		}
 	}
 
