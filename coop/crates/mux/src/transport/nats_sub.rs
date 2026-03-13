@@ -19,9 +19,7 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::state::{
-    CachedStatus, MuxEvent, MuxState, SessionEntry, SessionTransport,
-};
+use crate::state::{CachedStatus, MuxEvent, MuxState, SessionEntry, SessionTransport};
 
 /// Configuration for the NATS relay subscriber.
 pub struct NatsRelayConfig {
@@ -201,7 +199,9 @@ async fn handle_announce(
             // Only remove if it's a NATS-transport session (don't evict HTTP sessions).
             let is_nats = {
                 let sessions = state.sessions.read().await;
-                sessions.get(session_id).is_some_and(|e| matches!(e.transport, SessionTransport::Nats { .. }))
+                sessions
+                    .get(session_id)
+                    .is_some_and(|e| matches!(e.transport, SessionTransport::Nats { .. }))
             };
             if is_nats {
                 state.remove_session(session_id).await;

@@ -12,8 +12,7 @@ use crate::test_support::{StoreBuilder, StoreCtx, StubNudgeEncoder, StubRespondE
 
 /// Helper: call `handle_input` with a JSON payload and return the received InputEvent.
 async fn send_input(payload: &[u8]) -> Option<InputEvent> {
-    let StoreCtx { store, mut input_rx, .. } =
-        StoreBuilder::new().child_pid(1234).build();
+    let StoreCtx { store, mut input_rx, .. } = StoreBuilder::new().child_pid(1234).build();
     super::handle_input(&store, payload).await;
     input_rx.try_recv().ok()
 }
@@ -125,10 +124,8 @@ async fn nudge_invalid_json_uses_default() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn respond_invalid_json_is_ignored() -> anyhow::Result<()> {
-    let StoreCtx { store, mut input_rx, .. } = StoreBuilder::new()
-        .child_pid(1234)
-        .respond_encoder(Arc::new(StubRespondEncoder))
-        .build();
+    let StoreCtx { store, mut input_rx, .. } =
+        StoreBuilder::new().child_pid(1234).respond_encoder(Arc::new(StubRespondEncoder)).build();
     store.ready.store(true, Ordering::Release);
 
     super::handle_respond(&store, b"not json").await;
@@ -142,18 +139,12 @@ async fn respond_invalid_json_is_ignored() -> anyhow::Result<()> {
 async fn respond_valid_json_parses_fields() -> anyhow::Result<()> {
     // With no prompt state, respond will fail at the encoder level (no active prompt),
     // but the deserialization path should succeed.
-    let StoreCtx { store, .. } = StoreBuilder::new()
-        .child_pid(1234)
-        .respond_encoder(Arc::new(StubRespondEncoder))
-        .build();
+    let StoreCtx { store, .. } =
+        StoreBuilder::new().child_pid(1234).respond_encoder(Arc::new(StubRespondEncoder)).build();
     store.ready.store(true, Ordering::Release);
 
     // This should not panic — it should gracefully handle the "not in prompt" case.
-    super::handle_respond(
-        &store,
-        br#"{"accept":true,"option":1,"text":"ok","answers":[]}"#,
-    )
-    .await;
+    super::handle_respond(&store, br#"{"accept":true,"option":1,"text":"ok","answers":[]}"#).await;
     Ok(())
 }
 

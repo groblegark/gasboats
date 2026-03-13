@@ -78,7 +78,7 @@ tasks:
     use: [code, rust]
     run: |
       . "$HOME/.cargo/env"
-      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev
+      sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev tmux
       cd coop && cargo fetch
     filter:
       - .rwx/ci.yml
@@ -205,7 +205,7 @@ tasks:
       - "coop/Cargo.lock"
     run: |
       . "$HOME/.cargo/env"
-      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy --skip tmux_backend
+      cd coop && cargo test --workspace -- --skip claude_ --skip attach_ --skip coop_vs_tmux_ --skip grpc_nudge_agent_busy
 
   # ── Helm lint ────────────────────────────────────────────────────────
   - key: lint-helm

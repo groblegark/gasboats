@@ -43,10 +43,7 @@ pub fn spawn_health_checker(state: Arc<MuxState>) {
                 .iter()
                 .filter(|entry| {
                     !entry.cancel.is_cancelled()
-                        && !matches!(
-                            entry.transport,
-                            crate::state::SessionTransport::Nats { .. }
-                        )
+                        && !matches!(entry.transport, crate::state::SessionTransport::Nats { .. })
                 })
                 .map(|entry| {
                     let entry = Arc::clone(entry);
@@ -89,8 +86,7 @@ pub fn spawn_health_checker(state: Arc<MuxState>) {
                             );
                             // Unassign from credential pool before removal.
                             if let Some(ref broker) = state_ref.credential_broker {
-                                if let Some(account) =
-                                    entry.assigned_account.read().await.as_ref()
+                                if let Some(account) = entry.assigned_account.read().await.as_ref()
                                 {
                                     broker.session_unassigned(account).await;
                                 }

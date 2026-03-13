@@ -6,9 +6,9 @@
 pub mod auth;
 pub mod http;
 pub mod http_cred;
-pub mod nats_sub;
 #[cfg(feature = "legacy-oauth")]
 pub mod nats_pub;
+pub mod nats_sub;
 pub mod ws;
 pub mod ws_mux;
 
@@ -83,7 +83,10 @@ fn build_router_inner(
         .route("/api/v1/sessions/{id}/output", get(http::session_output))
         .route("/api/v1/sessions/{id}/transcripts", get(http::session_transcripts))
         .route("/api/v1/sessions/{id}/transcripts/catchup", get(http::session_transcripts_catchup))
-        .route("/api/v1/sessions/{id}/transcripts/{number}", get(http::session_transcript_by_number))
+        .route(
+            "/api/v1/sessions/{id}/transcripts/{number}",
+            get(http::session_transcript_by_number),
+        )
         .route("/api/v1/sessions/{id}/recording", get(http::session_recording))
         .route("/api/v1/sessions/{id}/recording/catchup", get(http::session_recording_catchup))
         // Launch

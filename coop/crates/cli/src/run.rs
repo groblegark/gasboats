@@ -340,19 +340,16 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
         };
 
     #[cfg(feature = "s3")]
-    if let (Some(ref s3), Some(ref source_session)) =
-        (&s3_client, &config.s3_resume_session)
-    {
+    if let (Some(ref s3), Some(ref source_session)) = (&s3_client, &config.s3_resume_session) {
         info!(session = %source_session, "s3: restoring session data for resume");
 
         // Determine a local directory for restored transcripts.
         // Use the working directory to build a Claude-style session dir.
         let restore_dir = {
-            let state_home = std::env::var("XDG_STATE_HOME")
-                .unwrap_or_else(|_| {
-                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                    format!("{home}/.local/state")
-                });
+            let state_home = std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                format!("{home}/.local/state")
+            });
             PathBuf::from(format!("{state_home}/coop/sessions/{source_session}"))
         };
         let transcripts_dir = restore_dir.join("transcripts");
@@ -670,8 +667,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
     // Spawn S3 persistence subscriber if configured.
     #[cfg(feature = "s3")]
     if let Some(ref s3) = s3_client {
-        let session_log_path_s3 =
-            setup.as_ref().and_then(|s| s.session_log_path.clone());
+        let session_log_path_s3 = setup.as_ref().and_then(|s| s.session_log_path.clone());
         crate::s3::spawn_subscriber(
             Arc::clone(s3),
             store.session_id.read().await.clone(),
@@ -743,8 +739,7 @@ pub async fn prepare(mut config: Config) -> anyhow::Result<PreparedSession> {
 
                     // Spawn the subscriber for bidirectional input (Phase 2).
                     let subscriber = crate::transport::nats_relay::NatsRelaySubscriber::new(
-                        sub_client,
-                        sub_prefix,
+                        sub_client, sub_prefix,
                     );
                     let store_ref = Arc::clone(&store);
                     let sd = shutdown.clone();
