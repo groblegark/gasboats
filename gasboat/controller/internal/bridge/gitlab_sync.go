@@ -394,7 +394,8 @@ type GitLabWebhookConfig struct {
 	GitLab        *GitLabClient
 	Daemon        GitLabBeadClient
 	WebhookSecret string
-	BotUsername   string // GitLab username of the bot; notes from this user are ignored to prevent loops
+	BotUsername   string    // GitLab username of the bot; notes from this user are ignored to prevent loops
+	Nudge         NudgeFunc // optional; if set, review comments nudge the assigned agent with rich context
 	Logger        *slog.Logger
 }
 
@@ -446,6 +447,7 @@ func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
 				Note         string `json:"note"`
 				NoteableType string `json:"noteable_type"`
 				System       bool   `json:"system"`
+				DiscussionID string `json:"discussion_id"`
 				Position     *struct {
 					NewPath string `json:"new_path"`
 					NewLine int    `json:"new_line"`
@@ -454,8 +456,9 @@ func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
 				} `json:"position"`
 			} `json:"object_attributes"`
 			MergeRequest *struct {
-				IID int    `json:"iid"`
-				URL string `json:"url"`
+				IID   int    `json:"iid"`
+				URL   string `json:"url"`
+				Title string `json:"title"`
 			} `json:"merge_request"`
 		}
 
@@ -476,9 +479,17 @@ func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
 					OldLine: event.ObjectAttr.Position.OldLine,
 				}
 			}
-			handleNoteWebhook(r.Context(), event.ObjectAttr.NoteableType, event.ObjectAttr.Note,
-				event.ObjectAttr.System, event.User.Username, botUsername, pos,
-				event.MergeRequest, daemon, logger)
+			nc := noteContext{
+				NoteableType: event.ObjectAttr.NoteableType,
+				Note:         event.ObjectAttr.Note,
+				System:       event.ObjectAttr.System,
+				Author:       event.User.Username,
+				BotUsername:   botUsername,
+				Position:     pos,
+				DiscussionID: event.ObjectAttr.DiscussionID,
+				MR:           event.MergeRequest,
+			}
+			handleNoteWebhook(r.Context(), nc, cfg.Nudge, daemon, logger)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"status":"processed","kind":"note"}`)
 			return
@@ -556,8 +567,9 @@ func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
 // handlePipelineWebhook processes a GitLab pipeline webhook event. It matches
 // the pipeline's MR URL to a bead and updates the pipeline status fields.
 func handlePipelineWebhook(ctx context.Context, pipelineID int, status, pipelineURL string, mr *struct {
-	IID int    `json:"iid"`
-	URL string `json:"url"`
+	IID   int    `json:"iid"`
+	URL   string `json:"url"`
+	Title string `json:"title"`
 }, daemon GitLabBeadClient, logger *slog.Logger) {
 	if mr == nil || mr.URL == "" {
 		logger.Debug("webhook: pipeline event has no merge_request, skipping")
@@ -651,43 +663,55 @@ type notePosition struct {
 	OldLine int    `json:"old_line"`
 }
 
+// noteContext holds parsed data from a GitLab note webhook event.
+type noteContext struct {
+	NoteableType string
+	Note         string
+	System       bool
+	Author       string
+	BotUsername  string
+	Position     *notePosition
+	DiscussionID string
+	MR           *struct {
+		IID   int    `json:"iid"`
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+}
+
 // handleNoteWebhook processes a GitLab note webhook event. It matches
-// MR review comments to beads and creates bead comments with the review feedback.
-// Notes from the bot user (botUsername) are skipped to prevent feedback loops.
-func handleNoteWebhook(ctx context.Context, noteableType, note string, system bool, author, botUsername string, position *notePosition, mr *struct {
-	IID int    `json:"iid"`
-	URL string `json:"url"`
-}, daemon GitLabBeadClient, logger *slog.Logger) {
+// MR review comments to beads, creates bead comments with the review feedback,
+// and nudges the assigned agent with a rich message containing file path, line,
+// diff context, and discussion ID.
+// Notes from the bot user are skipped to prevent feedback loops.
+func handleNoteWebhook(ctx context.Context, nc noteContext, nudge NudgeFunc, daemon GitLabBeadClient, logger *slog.Logger) {
 	// Only process MR discussion notes.
-	if noteableType != "MergeRequest" {
+	if nc.NoteableType != "MergeRequest" {
 		logger.Debug("webhook: note event is not for MergeRequest, skipping",
-			"noteable_type", noteableType)
+			"noteable_type", nc.NoteableType)
 		return
 	}
 
 	// Skip system-generated notes (merge status changes, etc.).
-	if system {
+	if nc.System {
 		logger.Debug("webhook: skipping system note")
 		return
 	}
 
 	// Skip notes from the bot user to prevent feedback loops.
-	// When the bridge posts MR comments on behalf of agents, GitLab fires
-	// a webhook for that note. Without this filter, the bridge would
-	// re-process its own comments endlessly.
-	if botUsername != "" && author == botUsername {
+	if nc.BotUsername != "" && nc.Author == nc.BotUsername {
 		logger.Debug("webhook: skipping note from bot user",
-			"author", author, "bot_username", botUsername)
+			"author", nc.Author, "bot_username", nc.BotUsername)
 		return
 	}
 
-	if mr == nil || mr.URL == "" {
+	if nc.MR == nil || nc.MR.URL == "" {
 		logger.Debug("webhook: note event has no merge_request, skipping")
 		return
 	}
 
 	logger.Info("webhook: MR review comment",
-		"mr_url", mr.URL, "author", author)
+		"mr_url", nc.MR.URL, "author", nc.Author)
 
 	beads, err := daemon.ListTaskBeads(ctx)
 	if err != nil {
@@ -697,14 +721,14 @@ func handleNoteWebhook(ctx context.Context, noteableType, note string, system bo
 
 	// Format the comment text for the bead.
 	var commentText strings.Builder
-	commentText.WriteString(fmt.Sprintf("**GitLab review comment** by @%s:\n\n", author))
-	if position != nil && position.NewPath != "" {
-		commentText.WriteString(fmt.Sprintf("`%s:%d`\n\n", position.NewPath, position.NewLine))
+	commentText.WriteString(fmt.Sprintf("**GitLab review comment** by @%s:\n\n", nc.Author))
+	if nc.Position != nil && nc.Position.NewPath != "" {
+		commentText.WriteString(fmt.Sprintf("`%s:%d`\n\n", nc.Position.NewPath, nc.Position.NewLine))
 	}
-	commentText.WriteString(note)
+	commentText.WriteString(nc.Note)
 
 	for _, bead := range beads {
-		if bead.Fields["mr_url"] != mr.URL {
+		if bead.Fields["mr_url"] != nc.MR.URL {
 			continue
 		}
 
@@ -724,9 +748,54 @@ func handleNoteWebhook(ctx context.Context, noteableType, note string, system bo
 				"bead", bead.ID, "error", err)
 		} else {
 			logger.Info("webhook: added review comment to bead",
-				"bead", bead.ID, "author", author, "mr_url", mr.URL)
+				"bead", bead.ID, "author", nc.Author, "mr_url", nc.MR.URL)
+		}
+
+		// Nudge the assigned agent with rich context.
+		if nudge != nil && bead.Assignee != "" {
+			msg := buildReviewNudgeMessage(nc, bead.ID)
+			if err := nudge(ctx, bead.Assignee, msg); err != nil {
+				logger.Error("webhook: failed to nudge agent for review comment",
+					"bead", bead.ID, "agent", bead.Assignee, "error", err)
+			} else {
+				logger.Info("webhook: nudged agent for review comment",
+					"bead", bead.ID, "agent", bead.Assignee, "author", nc.Author)
+			}
 		}
 	}
+}
+
+// buildReviewNudgeMessage constructs a rich nudge message for an agent from a
+// GitLab review comment, including file path, line number, diff context,
+// discussion ID, and MR reference.
+func buildReviewNudgeMessage(nc noteContext, beadID string) string {
+	var b strings.Builder
+	b.WriteString("GitLab review comment on MR")
+	if nc.MR.Title != "" {
+		b.WriteString(fmt.Sprintf(" \"%s\"", nc.MR.Title))
+	}
+	b.WriteString(fmt.Sprintf(" by @%s", nc.Author))
+	if nc.Position != nil && nc.Position.NewPath != "" {
+		b.WriteString(fmt.Sprintf("\nFile: %s", nc.Position.NewPath))
+		if nc.Position.NewLine > 0 {
+			b.WriteString(fmt.Sprintf(":%d", nc.Position.NewLine))
+		}
+		if nc.Position.OldPath != "" && nc.Position.OldPath != nc.Position.NewPath {
+			b.WriteString(fmt.Sprintf(" (was %s)", nc.Position.OldPath))
+		}
+		if nc.Position.OldLine > 0 {
+			b.WriteString(fmt.Sprintf(" [old line %d]", nc.Position.OldLine))
+		}
+	}
+	b.WriteString(fmt.Sprintf("\nComment: %s", nc.Note))
+	if nc.DiscussionID != "" {
+		b.WriteString(fmt.Sprintf("\nDiscussion ID: %s", nc.DiscussionID))
+	}
+	if nc.MR.URL != "" {
+		b.WriteString(fmt.Sprintf("\nMR: %s", nc.MR.URL))
+	}
+	b.WriteString(fmt.Sprintf("\nBead: %s", beadID))
+	return b.String()
 }
 
 // containsApprover checks if username is in the comma-separated approvers list.
