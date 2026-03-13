@@ -1032,21 +1032,29 @@ tasks:
         fi
       done
 
-      echo "=== Validate: tool binaries (/usr/local/bin) ==="
+      echo "=== Validate: tool binaries ==="
       # Static binaries (Go/Rust) — existence check only, no ldd
-      STATIC_BINS="coop kd gb go gopls golangci-lint task quench rtk claudeless hadolint stern yq k6 terraform terragrunt"
+      STATIC_BINS="coop kd gb go gopls golangci-lint task quench rtk claudeless hadolint stern yq k6 terraform terragrunt rustc cargo"
+      # Search paths for binaries (cargo/rustup install to their own dirs)
+      BIN_DIRS="usr/local/bin usr/local/cargo/bin usr/local/go/bin"
       for bin in claude node npm npx coop kd gb go gopls golangci-lint rustc cargo \
                  kubectl gh glab docker helm terraform terragrunt uv bun \
                  rtk quench whisper-cli yq stern hadolint claudeless rwx k6 poetry task; do
-        if [ -f "$ROOT/usr/local/bin/$bin" ] || [ -L "$ROOT/usr/local/bin/$bin" ]; then
-          found="/usr/local/bin/$bin"
+        found=""
+        for dir in $BIN_DIRS; do
+          if [ -f "$ROOT/$dir/$bin" ] || [ -L "$ROOT/$dir/$bin" ]; then
+            found="/$dir/$bin"
+            break
+          fi
+        done
+        if [ -n "$found" ]; then
           case " $STATIC_BINS " in
             *" $bin "*) ;;
             *) assert_ldd_clean "$bin" "$found" ;;
           esac
-          echo "  OK: /usr/local/bin/$bin"
+          echo "  OK: $found"
         else
-          echo "FAIL: /usr/local/bin/$bin missing"
+          echo "FAIL: $bin not found in any bin dir"
           FAILURES=$((FAILURES + 1))
         fi
       done
