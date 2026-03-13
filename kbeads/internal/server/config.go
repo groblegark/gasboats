@@ -70,7 +70,11 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "stop_requested",    "type": "string"},
 			{"name": "gate_satisfied_by", "type": "string"},
 			{"name": "advice_subscriptions",         "type": "string[]"},
-			{"name": "advice_subscriptions_exclude",  "type": "string[]"}
+			{"name": "advice_subscriptions_exclude",  "type": "string[]"},
+			{"name": "slack_thread_channel", "type": "string"},
+			{"name": "slack_thread_ts",      "type": "string"},
+			{"name": "spawn_source",         "type": "string"},
+			{"name": "slack_user_id",        "type": "string"}
 		]
 	}`)},
 	"type:decision": {Key: "type:decision", Value: json.RawMessage(`{
