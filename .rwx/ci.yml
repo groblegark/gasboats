@@ -60,7 +60,7 @@ tasks:
   # ── Go deps: gasboat/controller ──────────────────────────────────────
   - key: gasboat-deps
     use: [code, go]
-    run: cd gasboat/controller && go mod download
+    run: cd gasboat/controller && GOWORK=off go mod download
     filter:
       - gasboat/controller/go.mod
       - gasboat/controller/go.sum
@@ -68,7 +68,7 @@ tasks:
   # ── Go deps: kbeads ──────────────────────────────────────────────────
   - key: kbeads-deps
     use: [code, go]
-    run: cd kbeads && go mod download
+    run: cd kbeads && GOWORK=off go mod download
     filter:
       - kbeads/go.mod
       - kbeads/go.sum
@@ -83,38 +83,37 @@ tasks:
     filter:
       - coop/Cargo.lock
       - coop/Cargo.toml
+      - coop/crates/*/Cargo.toml
 
   # ── JS deps: beads3d ─────────────────────────────────────────────────
   - key: beads3d-deps
     use: [code, node]
     run: cd beads3d && npm ci
     filter:
+      - beads3d/package.json
       - beads3d/package-lock.json
 
   # ── Build gasboat binaries (parallel) ────────────────────────────────
   - key: build-gasboat
     use: gasboat-deps
     filter:
-      - "gasboat/controller/**/*.go"
-      - "gasboat/controller/go.mod"
+      - "gasboat/controller/**"
     run: |
       cd gasboat/controller
-      CGO_ENABLED=0 go build -v -o bin/controller ./cmd/controller/
-      CGO_ENABLED=0 go build -v -o bin/slack-bridge ./cmd/slack-bridge/
-      CGO_ENABLED=0 go build -v -o bin/gb ./cmd/gb/
-      CGO_ENABLED=0 go build -v -o bin/jira-bridge ./cmd/jira-bridge/
-      CGO_ENABLED=0 go build -v -o bin/wl-bridge ./cmd/wl-bridge/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/controller ./cmd/controller/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/slack-bridge ./cmd/slack-bridge/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/gb ./cmd/gb/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/jira-bridge ./cmd/jira-bridge/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/wl-bridge ./cmd/wl-bridge/
 
   # ── Build kbeads ─────────────────────────────────────────────────────
   - key: build-kbeads
     use: kbeads-deps
     filter:
-      - "kbeads/**/*.go"
-      - "kbeads/go.mod"
+      - "kbeads/**"
     run: |
       cd kbeads
-      CGO_ENABLED=0 go build -v -o bin/kd ./cmd/kd/
-      CGO_ENABLED=0 go build -v -o bin/beads-server ./cmd/beads-server/
+      GOWORK=off CGO_ENABLED=0 go build -v -o bin/kd ./cmd/kd/
 
   # ── Build coop ───────────────────────────────────────────────────────
   - key: build-coop
@@ -139,15 +138,15 @@ tasks:
   - key: lint-gasboat
     use: [gasboat-deps, golangci-lint]
     filter:
-      - "gasboat/controller/**/*.go"
-    run: cd gasboat/controller && golangci-lint run --timeout=5m ./...
+      - "gasboat/controller/**"
+    run: cd gasboat/controller && GOWORK=off golangci-lint run --timeout=5m ./...
 
   # ── Lint kbeads ──────────────────────────────────────────────────────
   - key: lint-kbeads
     use: [kbeads-deps, golangci-lint]
     filter:
-      - "kbeads/**/*.go"
-    run: cd kbeads && golangci-lint run --timeout=5m ./...
+      - "kbeads/**"
+    run: cd kbeads && GOWORK=off golangci-lint run --timeout=5m ./...
 
   # ── Lint coop ────────────────────────────────────────────────────────
   - key: lint-coop
@@ -163,10 +162,10 @@ tasks:
   - key: test-gasboat
     use: gasboat-deps
     filter:
-      - "gasboat/controller/**/*.go"
+      - "gasboat/controller/**"
     run: |
       cd gasboat/controller
-      CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
+      GOWORK=off CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
     outputs:
       artifacts:
         - key: gasboat-coverage
@@ -176,10 +175,10 @@ tasks:
   - key: test-kbeads
     use: kbeads-deps
     filter:
-      - "kbeads/**/*.go"
+      - "kbeads/**"
     run: |
       cd kbeads
-      CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
+      GOWORK=off CGO_ENABLED=0 go test -v -short -parallel 8 -coverprofile=coverage.out ./...
     outputs:
       artifacts:
         - key: kbeads-coverage
