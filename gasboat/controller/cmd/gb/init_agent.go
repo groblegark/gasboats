@@ -235,7 +235,14 @@ func bypassStartup(ctx context.Context, coop *coopapi.Client) error {
 
 // injectPrompt resolves the nudge prompt and injects it into the agent.
 func injectPrompt(ctx context.Context, coop *coopapi.Client) error {
-	// Wait for agent to be idle.
+	// Wait for agent to reach a nudge-ready state (idle or working).
+	//
+	// After startup prompt bypass, the agent may briefly transition to
+	// "working" as SessionStart hooks fire (e.g., gb hook prime). Coop
+	// accepts nudges in both idle and working states — the agent picks up
+	// the message when the current generation finishes. We must NOT skip
+	// on "working" or the initial nudge is lost.
+	var readyState string
 	for i := 0; i < 60; i++ {
 		select {
 		case <-ctx.Done():
@@ -243,20 +250,23 @@ func injectPrompt(ctx context.Context, coop *coopapi.Client) error {
 		default:
 		}
 
-		time.Sleep(2 * time.Second)
-
 		state, err := coop.GetAgentState(ctx)
 		if err != nil {
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if state.State == "idle" {
+		if state.State == "idle" || state.State == "working" {
+			readyState = state.State
 			break
 		}
-		if state.State == "working" {
-			logInit("Agent already working, skipping initial prompt")
-			return nil
-		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	if readyState == "" {
+		logInit("WARNING: timed out waiting for agent to be ready for nudge")
+		return nil
 	}
 
 	// Resolve nudge prompt. Use the daemon (beadsapi) client which is
@@ -271,19 +281,33 @@ func injectPrompt(ctx context.Context, coop *coopapi.Client) error {
 	}
 
 	role := os.Getenv("BOAT_ROLE")
-	logInit("Injecting initial work prompt (role: %s)", role)
+	logInit("Injecting initial work prompt (role: %s, agent state: %s)", role, readyState)
 
-	resp, err := coop.Nudge(ctx, nudgeMsg)
-	if err != nil {
-		logInit("WARNING: nudge failed: %v", err)
-		return nil
+	// Deliver with retry. Coop accepts nudges during both idle and working
+	// states, but transient errors or brief state transitions may cause a
+	// single attempt to fail.
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		resp, err := coop.Nudge(ctx, nudgeMsg)
+		if err != nil {
+			lastErr = err
+			logInit("WARNING: nudge attempt %d/%d failed: %v", attempt, maxAttempts, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if resp.Delivered {
+			logInit("Initial prompt delivered successfully (attempt %d)", attempt)
+			return nil
+		}
+
+		lastErr = fmt.Errorf("not delivered: %s", resp.Reason)
+		logInit("WARNING: nudge attempt %d/%d not delivered: %s", attempt, maxAttempts, resp.Reason)
+		time.Sleep(2 * time.Second)
 	}
 
-	if resp.Delivered {
-		logInit("Initial prompt delivered successfully")
-	} else {
-		logInit("WARNING: nudge not delivered: %s", resp.Reason)
-	}
+	logInit("WARNING: all %d nudge attempts failed: %v", maxAttempts, lastErr)
 	return nil
 }
 

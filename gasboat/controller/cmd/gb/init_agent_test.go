@@ -145,6 +145,91 @@ func TestEnvDuration_Set(t *testing.T) {
 	}
 }
 
+func TestInjectPrompt_WorkingAgent_StillDelivers(t *testing.T) {
+	// Regression test: injectPrompt must NOT skip when the agent is "working".
+	// Coop accepts nudges during working state — the agent picks up the
+	// message when the current generation finishes.
+	nudgeDelivered := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/agent":
+			json.NewEncoder(w).Encode(coopapi.AgentState{State: "working"})
+		case "/api/v1/agent/nudge":
+			nudgeDelivered = true
+			json.NewEncoder(w).Encode(coopapi.NudgeResponse{Delivered: true})
+		}
+	}))
+	defer srv.Close()
+
+	coop := coopapi.New(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := injectPrompt(ctx, coop)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !nudgeDelivered {
+		t.Fatal("nudge was not delivered — injectPrompt should not skip when agent is working")
+	}
+}
+
+func TestInjectPrompt_IdleAgent_Delivers(t *testing.T) {
+	nudgeDelivered := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/agent":
+			json.NewEncoder(w).Encode(coopapi.AgentState{State: "idle"})
+		case "/api/v1/agent/nudge":
+			nudgeDelivered = true
+			json.NewEncoder(w).Encode(coopapi.NudgeResponse{Delivered: true})
+		}
+	}))
+	defer srv.Close()
+
+	coop := coopapi.New(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := injectPrompt(ctx, coop)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !nudgeDelivered {
+		t.Fatal("nudge was not delivered to idle agent")
+	}
+}
+
+func TestInjectPrompt_RetryOnFailure(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/agent":
+			json.NewEncoder(w).Encode(coopapi.AgentState{State: "idle"})
+		case "/api/v1/agent/nudge":
+			attempts++
+			if attempts < 3 {
+				json.NewEncoder(w).Encode(coopapi.NudgeResponse{Delivered: false, Reason: "agent busy"})
+			} else {
+				json.NewEncoder(w).Encode(coopapi.NudgeResponse{Delivered: true})
+			}
+		}
+	}))
+	defer srv.Close()
+
+	coop := coopapi.New(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err := injectPrompt(ctx, coop)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempts < 3 {
+		t.Fatalf("expected at least 3 nudge attempts, got %d", attempts)
+	}
+}
+
 func TestMonitorExit_AgentExited(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

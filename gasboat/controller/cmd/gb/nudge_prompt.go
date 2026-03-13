@@ -144,6 +144,10 @@ func resolveTaskFromDeps() string {
 // resolveNudgeFromConfig queries nudge-prompts config beads and returns
 // the resolved prompt for the given type. Returns "" if no config beads exist.
 func resolveNudgeFromConfig(promptType string, vars nudgeVars) string {
+	if daemon == nil {
+		return ""
+	}
+
 	ctx := context.Background()
 
 	role := os.Getenv("BOAT_ROLE")
