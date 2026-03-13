@@ -128,6 +128,17 @@ agents:
   # If empty, Claude Code uses its built-in default (Sonnet).
   claudeModel: ""
 
+  # --- S3 Session Persistence ---
+
+  # S3 bucket for coop session artifact persistence. When set, agent pods
+  # upload transcripts, recordings, and session logs to S3 for cross-pod
+  # recall and durable storage. Requires IRSA on the agent ServiceAccount
+  # (set agentServiceAccount.annotations with eks.amazonaws.com/role-arn).
+  s3:
+    bucket: ""        # e.g., "gasboat-sessions"
+    prefix: ""        # S3 key prefix (default in coop: "coop/sessions")
+    region: ""        # AWS region override (default: AWS SDK region chain)
+
   # --- Claude Agent Teams ---
 
   # Claude Code Agent Teams: allow a team lead session to spawn and coordinate

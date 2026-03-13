@@ -182,6 +182,42 @@ func TestParse_EnvOverrides(t *testing.T) {
 	}
 }
 
+func TestParse_S3Config(t *testing.T) {
+	t.Setenv("COOP_S3_BUCKET", "gasboat-sessions")
+	t.Setenv("COOP_S3_PREFIX", "prod/sessions")
+	t.Setenv("COOP_S3_REGION", "us-west-2")
+
+	cfg := Parse()
+
+	if cfg.CoopS3Bucket != "gasboat-sessions" {
+		t.Errorf("CoopS3Bucket = %q, want gasboat-sessions", cfg.CoopS3Bucket)
+	}
+	if cfg.CoopS3Prefix != "prod/sessions" {
+		t.Errorf("CoopS3Prefix = %q, want prod/sessions", cfg.CoopS3Prefix)
+	}
+	if cfg.CoopS3Region != "us-west-2" {
+		t.Errorf("CoopS3Region = %q, want us-west-2", cfg.CoopS3Region)
+	}
+}
+
+func TestParse_S3Config_Empty(t *testing.T) {
+	t.Setenv("COOP_S3_BUCKET", "")
+	t.Setenv("COOP_S3_PREFIX", "")
+	t.Setenv("COOP_S3_REGION", "")
+
+	cfg := Parse()
+
+	if cfg.CoopS3Bucket != "" {
+		t.Errorf("CoopS3Bucket = %q, want empty", cfg.CoopS3Bucket)
+	}
+	if cfg.CoopS3Prefix != "" {
+		t.Errorf("CoopS3Prefix = %q, want empty", cfg.CoopS3Prefix)
+	}
+	if cfg.CoopS3Region != "" {
+		t.Errorf("CoopS3Region = %q, want empty", cfg.CoopS3Region)
+	}
+}
+
 func TestParse_SecretEnvVars(t *testing.T) {
 	// Controller-level secrets (not per-project — those come from config beads).
 	t.Setenv("BEADS_TOKEN_SECRET", "beads-token")
