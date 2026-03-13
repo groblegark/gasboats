@@ -451,8 +451,27 @@ func (b *Bot) nudgeDecisionRequestingAgent(ctx context.Context, decisionBeadID s
 		return
 	}
 
+	// Build a nudge message with full decision context so the agent
+	// knows which decision was resolved, what was chosen, and why.
+	chosen := dec.Fields["chosen"]
+	rationale := dec.Fields["rationale"]
+	prompt := decisionQuestion(dec.Fields)
+
+	message := fmt.Sprintf("Decision %s resolved", decisionBeadID)
+	if prompt != "" {
+		message += fmt.Sprintf(": %s", prompt)
+	}
+	if chosen != "" {
+		message += fmt.Sprintf("\nChosen: %s", chosen)
+	}
+	if rationale != "" {
+		message += fmt.Sprintf("\nRationale: %s", rationale)
+	}
+	if ra := dec.Fields["required_artifact"]; ra != "" {
+		message += fmt.Sprintf("\nArtifact required (%s). Use `gb decision report %s` to submit.", ra, decisionBeadID)
+	}
+
 	client := &http.Client{Timeout: 10 * time.Second}
-	message := "Decision resolved: " + decisionBeadID
 	if err := nudgeCoop(ctx, client, coopURL, message); err != nil {
 		b.logger.Warn("nudge: failed to nudge agent for decision response",
 			"agent_bead", agentBeadID, "coop_url", coopURL, "error", err)

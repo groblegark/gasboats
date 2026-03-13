@@ -97,6 +97,7 @@ func TestDecisions_HandleClosed_NudgesCoop(t *testing.T) {
 		Type:     "decision",
 		Assignee: "crew-town-crew-hq",
 		Fields: map[string]string{
+			"prompt":    "What color?",
 			"chosen":    "blue",
 			"rationale": "it's calming",
 		},
@@ -112,8 +113,9 @@ func TestDecisions_HandleClosed_NudgesCoop(t *testing.T) {
 	if msg == "" {
 		t.Fatal("expected coop nudge, got none")
 	}
-	if msg != "Decision resolved: blue \u2014 it's calming" {
-		t.Errorf("unexpected nudge message: %s", msg)
+	want := "Decision dec-1 resolved: What color?\nChosen: blue\nRationale: it's calming"
+	if msg != want {
+		t.Errorf("unexpected nudge message:\n got: %s\nwant: %s", msg, want)
 	}
 
 	// Verify notifier.UpdateDecision was called.
@@ -151,10 +153,11 @@ func TestDecisions_HandleClosed_RationaleFromFetch(t *testing.T) {
 		ID:    "agent-x",
 		Notes: "coop_url: " + coopServer.URL,
 	}
-	// Full bead has both chosen and rationale; SSE event only has chosen.
+	// Full bead has chosen, rationale, and prompt; SSE event has none.
 	daemon.beads["dec-rat"] = &beadsapi.BeadDetail{
 		ID: "dec-rat",
 		Fields: map[string]string{
+			"prompt":    "Should we proceed?",
 			"chosen":    "proceed",
 			"rationale": "looks good to me",
 		},
@@ -168,7 +171,7 @@ func TestDecisions_HandleClosed_RationaleFromFetch(t *testing.T) {
 		escalated:  make(map[string]time.Time),
 	}
 
-	// SSE event carries neither chosen nor rationale — both must come from the fetch.
+	// SSE event carries neither chosen nor rationale — all must come from the fetch.
 	closedEvent := marshalSSEBeadPayload(BeadEvent{
 		ID:       "dec-rat",
 		Type:     "decision",
@@ -182,7 +185,7 @@ func TestDecisions_HandleClosed_RationaleFromFetch(t *testing.T) {
 	msg := nudgeMessage
 	nudgeReceived.Unlock()
 
-	want := "Decision resolved: proceed \u2014 looks good to me"
+	want := "Decision dec-rat resolved: Should we proceed?\nChosen: proceed\nRationale: looks good to me"
 	if msg != want {
 		t.Errorf("nudge message = %q, want %q", msg, want)
 	}
