@@ -44,7 +44,7 @@ tasks:
     filter:
       - .rwx/ci.yml
     run: |
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
       . "$HOME/.cargo/env"
       rustc --version
 
