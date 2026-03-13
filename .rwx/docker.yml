@@ -571,14 +571,19 @@ tasks:
       sudo apt-get -y update
       sudo apt-get -y install --no-install-recommends $BASE_PACKAGES $AGENT_PACKAGES
 
-      # Auto-resolve: capture ALL newly installed packages (including transitive deps).
-      # This prevents the class of bugs where a metapackage (e.g. postgresql-client)
-      # is listed but its actual provider (postgresql-client-16) is omitted.
+      # Auto-resolve: capture newly installed packages (transitive deps like
+      # postgresql-client-16 that aren't listed explicitly).
       dpkg-query -W -f '${Package}\n' | sort > /tmp/after.txt
-      NEW_PACKAGES=$(comm -13 /tmp/before.txt /tmp/after.txt)
+      TRANSITIVE_PACKAGES=$(comm -13 /tmp/before.txt /tmp/after.txt)
 
-      # Extract all files from newly installed packages
-      for pkg in $NEW_PACKAGES; do
+      # Build complete package list: explicit packages + transitive deps.
+      # CRITICAL: The RWX runner may have some packages pre-installed (git,
+      # curl, jq, sudo, etc.) — these won't appear in the before/after diff
+      # but MUST be copied since the ubuntu:24.04 base image lacks them.
+      ALL_PACKAGES=$(echo "$BASE_PACKAGES $AGENT_PACKAGES $TRANSITIVE_PACKAGES" | tr ' ' '\n' | sort -u)
+
+      # Extract all files from all required packages
+      for pkg in $ALL_PACKAGES; do
         dpkg -L "$pkg" 2>/dev/null | while read -r f; do
           [ -e "$f" ] || continue
           [ -d "$f" ] && { mkdir -p "$OUT$f"; continue; }
@@ -586,8 +591,8 @@ tasks:
         done || true
       done
 
-      # Auto-detect binaries and resolve shared library deps via ldd
-      for pkg in $NEW_PACKAGES; do
+      # Resolve shared library deps for all binaries via ldd
+      for pkg in $ALL_PACKAGES; do
         dpkg -L "$pkg" 2>/dev/null | grep -E '^/usr/(s?bin|local/bin)/' | while read -r bin; do
           [ -f "$bin" ] && [ -x "$bin" ] || continue
           ldd "$bin" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r lib; do
@@ -866,9 +871,9 @@ tasks:
         - key: clis-tar
           path: clis.tar
 
-  # ── Agent assembly: merge all layers + push ────────────────────────
-  - key: push-agent
-    use: [code, build-gb, build-coop, build-kd, install-crane, agent-install-syspackages, agent-install-node, agent-install-playwright, agent-install-go, agent-install-rust, agent-install-clis]
+  # ── Agent assembly: merge all layers into a tar ─────────────────────
+  - key: assemble-agent
+    use: [code, build-gb, build-coop, build-kd, agent-install-syspackages, agent-install-node, agent-install-playwright, agent-install-go, agent-install-rust, agent-install-clis]
     if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
     cache: false
     timeout: 10m
@@ -957,12 +962,141 @@ tasks:
       sudo chown root:root $LAYER/etc/sudo.conf 2>/dev/null || true
       sudo chown -R 1000:1000 $LAYER/home/agent
 
-      # Create tar and push
-      echo "=== Pushing image ==="
-      sudo tar -cf /tmp/layer.tar -C $LAYER .
+      # Create tar (push happens after validation)
+      echo "=== Creating layer tar ==="
+      sudo tar -cf agent-layer.tar -C $LAYER .
+      echo "Layer tar: $(du -h agent-layer.tar | cut -f1)"
+    env:
+      REF_NAME: ${{ init.ref-name }}
+    outputs:
+      artifacts:
+        - key: agent-layer-tar
+          path: agent-layer.tar
+
+  # ── Validate agent layer: verify all binaries + libs BEFORE push ───
+  - key: validate-agent
+    use: [assemble-agent]
+    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
+    cache: false
+    timeout: 5m
+    run: |
+      set -e
+      ROOT=/tmp/agent-root
+      LIBDIR=usr/lib/x86_64-linux-gnu
+
+      # Extract the assembled layer on top of ubuntu:24.04 base filesystem
+      mkdir -p "$ROOT"
+      sudo tar -xf ${{ tasks.assemble-agent.artifacts.agent-layer-tar }} -C "$ROOT"
+      if [ ! -d "$ROOT/usr" ]; then
+        echo "FAIL: layer tar produced empty or corrupt filesystem"
+        exit 1
+      fi
+
+      # Verify a binary's shared libs resolve inside the chroot.
+      assert_ldd_clean() {
+        local label="$1" binpath="$2"
+        missing=$(sudo chroot "$ROOT" ldd "$binpath" 2>/dev/null | grep "not found" || true)
+        if [ -n "$missing" ]; then
+          echo "FAIL: $label has missing libs: $missing"
+          FAILURES=$((FAILURES + 1))
+        fi
+      }
+
+      FAILURES=0
+
+      echo "=== Validate: shared library resolution ==="
+      for lib in libgssapi_krb5.so.2 libcurl.so.4 libssl.so.3 libnss3.so libnspr4.so; do
+        f="$ROOT/$LIBDIR/$lib"
+        if [ -L "$f" ]; then
+          target=$(readlink "$f")
+          if [ ! -e "$ROOT/$LIBDIR/$target" ]; then
+            echo "FAIL: dangling symlink $lib -> $target"
+            FAILURES=$((FAILURES + 1))
+            continue
+          fi
+        elif [ ! -f "$f" ]; then
+          echo "FAIL: missing $lib"
+          FAILURES=$((FAILURES + 1))
+          continue
+        fi
+        echo "  OK: $lib"
+      done
+
+      echo "=== Validate: system binaries (/usr/bin) ==="
+      for bin in git curl jq ssh make gcc g++ sudo unzip python3 screen tmux psql ffmpeg cmake shellcheck; do
+        if [ -f "$ROOT/usr/bin/$bin" ] || [ -L "$ROOT/usr/bin/$bin" ]; then
+          echo "  OK: /usr/bin/$bin"
+        else
+          echo "FAIL: /usr/bin/$bin missing"
+          FAILURES=$((FAILURES + 1))
+        fi
+      done
+
+      echo "=== Validate: tool binaries (/usr/local/bin) ==="
+      # Static binaries (Go/Rust) — existence check only, no ldd
+      STATIC_BINS="coop kd gb go gopls golangci-lint task quench rtk claudeless hadolint stern yq k6 terraform terragrunt"
+      for bin in claude node npm npx coop kd gb go gopls golangci-lint rustc cargo \
+                 kubectl gh glab docker helm terraform terragrunt uv bun \
+                 rtk quench whisper-cli yq stern hadolint claudeless rwx k6 poetry task; do
+        if [ -f "$ROOT/usr/local/bin/$bin" ] || [ -L "$ROOT/usr/local/bin/$bin" ]; then
+          found="/usr/local/bin/$bin"
+          case " $STATIC_BINS " in
+            *" $bin "*) ;;
+            *) assert_ldd_clean "$bin" "$found" ;;
+          esac
+          echo "  OK: /usr/local/bin/$bin"
+        else
+          echo "FAIL: /usr/local/bin/$bin missing"
+          FAILURES=$((FAILURES + 1))
+        fi
+      done
+
+      echo "=== Validate: playwright browsers ==="
+      if [ ! -d "$ROOT/ms-playwright" ]; then
+        echo "FAIL: /ms-playwright directory missing"
+        FAILURES=$((FAILURES + 1))
+      else
+        chromium=$(find "$ROOT/ms-playwright" -name chrome -type f -executable 2>/dev/null | head -1)
+        if [ -z "$chromium" ]; then
+          echo "FAIL: no chromium binary in /ms-playwright"
+          FAILURES=$((FAILURES + 1))
+        else
+          assert_ldd_clean "chromium" "${chromium#$ROOT}"
+          echo "  OK: playwright chromium"
+        fi
+      fi
+
+      echo "=== Validate: entrypoint ==="
+      [ -x "$ROOT/entrypoint.sh" ] || { echo "FAIL: /entrypoint.sh not executable"; FAILURES=$((FAILURES + 1)); }
+      [ -x "$ROOT/entrypoint.sh" ] && echo "  OK: /entrypoint.sh"
+
+      echo "=== Validate: git-core ==="
+      [ -d "$ROOT/usr/lib/git-core" ] || { echo "FAIL: /usr/lib/git-core missing"; FAILURES=$((FAILURES + 1)); }
+      [ -d "$ROOT/usr/lib/git-core" ] && echo "  OK: /usr/lib/git-core"
+
+      if [ "$FAILURES" -gt 0 ]; then
+        echo ""
+        echo "FAILED: $FAILURES validation errors — image will NOT be pushed"
+        exit 1
+      fi
+      echo ""
+      echo "=== All validation passed ==="
+
+  # ── Push validated agent image ─────────────────────────────────────
+  - key: push-agent
+    use: [code, validate-agent, assemble-agent, install-crane]
+    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
+    cache: false
+    timeout: 10m
+    run: |
+      set -e
+      TAG="${REF_NAME#refs/tags/}"
+      TAG="${TAG#refs/heads/}"
 
       REPO="ghcr.io/groblegark/gasboats/agent"
-      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" --new_layer /tmp/layer.tar --platform linux/amd64
+      crane append --base ubuntu:24.04 --new_tag "${REPO}:${TAG}" \
+        --new_layer ${{ tasks.assemble-agent.artifacts.agent-layer-tar }} \
+        --platform linux/amd64
       crane mutate "${REPO}:${TAG}" \
         --entrypoint /entrypoint.sh \
         --user 1000 \
@@ -980,95 +1114,5 @@ tasks:
         crane tag "${REPO}:${TAG}" "$APP_VERSION"
       fi
       echo "Pushed ${REPO}:${TAG}"
-    env:
-      REF_NAME: ${{ init.ref-name }}
-
-  # ── Agent image smoke test: verify critical binaries + libs ─────────
-  - key: smoke-agent
-    use: [push-agent, install-crane]
-    if: ${{ init.ref-name != 'pr' && (init.build-target == 'all' || init.build-target == 'agent') }}
-    cache: false
-    timeout: 5m
-    run: |
-      set -e
-      TAG="${REF_NAME#refs/tags/}"
-      TAG="${TAG#refs/heads/}"
-      REPO="ghcr.io/groblegark/gasboats/agent"
-      ROOT=/tmp/agent-root
-      LIBDIR=usr/lib/x86_64-linux-gnu  # multiarch lib path (amd64)
-
-      # Verify a binary's shared libs resolve inside the chroot.
-      # Skips statically-linked binaries (Go, Rust) where ldd prints
-      # "not a dynamic executable" to stderr.
-      assert_ldd_clean() {
-        local label="$1" binpath="$2"
-        missing=$(sudo chroot "$ROOT" ldd "$binpath" 2>/dev/null | grep "not found" || true)
-        if [ -n "$missing" ]; then
-          echo "FAIL: $label has missing libs: $missing"
-          exit 1
-        fi
-      }
-
-      # Extract image filesystem
-      mkdir -p "$ROOT"
-      crane export "${REPO}:${TAG}" - | sudo tar -xf - -C "$ROOT"
-      if [ ! -d "$ROOT/usr" ]; then
-        echo "FAIL: crane export produced empty or corrupt filesystem"
-        exit 1
-      fi
-
-      echo "=== Smoke test: shared library resolution ==="
-      for lib in libgssapi_krb5.so.2 libcurl.so.4 libssl.so.3 libnss3.so libnspr4.so; do
-        f="$ROOT/$LIBDIR/$lib"
-        if [ -L "$f" ]; then
-          target=$(readlink "$f")
-          if [ ! -e "$ROOT/$LIBDIR/$target" ]; then
-            echo "FAIL: dangling symlink $lib -> $target"
-            exit 1
-          fi
-        elif [ ! -f "$f" ]; then
-          echo "FAIL: missing $lib"
-          exit 1
-        fi
-        echo "  OK: $lib"
-      done
-
-      echo "=== Smoke test: critical binaries ==="
-      # Static binaries (Go/Rust) — existence check only, no ldd
-      STATIC_BINS="coop kd gb go"
-      for bin in curl git jq node claude coop kd gb go rustc python3 tmux; do
-        if [ -f "$ROOT/usr/local/bin/$bin" ] || [ -L "$ROOT/usr/local/bin/$bin" ]; then
-          found="/usr/local/bin/$bin"
-        elif [ -f "$ROOT/usr/bin/$bin" ] || [ -L "$ROOT/usr/bin/$bin" ]; then
-          found="/usr/bin/$bin"
-        else
-          echo "FAIL: $bin not found in /usr/local/bin or /usr/bin"
-          exit 1
-        fi
-        case " $STATIC_BINS " in
-          *" $bin "*) ;;  # skip ldd for statically-linked binaries
-          *) assert_ldd_clean "$bin" "$found" ;;
-        esac
-        echo "  OK: $bin"
-      done
-
-      echo "=== Smoke test: playwright browsers ==="
-      if [ ! -d "$ROOT/ms-playwright" ]; then
-        echo "FAIL: /ms-playwright directory missing"
-        exit 1
-      fi
-      chromium=$(find "$ROOT/ms-playwright" -name chrome -type f -executable 2>/dev/null | head -1)
-      if [ -z "$chromium" ]; then
-        echo "FAIL: no chromium binary in /ms-playwright"
-        exit 1
-      fi
-      assert_ldd_clean "chromium" "${chromium#$ROOT}"
-      echo "  OK: playwright chromium"
-
-      echo "=== Smoke test: entrypoint exists ==="
-      [ -x "$ROOT/entrypoint.sh" ] || { echo "FAIL: /entrypoint.sh not executable"; exit 1; }
-      echo "  OK: /entrypoint.sh"
-
-      echo "=== All smoke tests passed ==="
     env:
       REF_NAME: ${{ init.ref-name }}
