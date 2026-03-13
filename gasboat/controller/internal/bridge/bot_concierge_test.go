@@ -300,3 +300,15 @@ func TestHandleMessageEvent_ConciergeDebounce(t *testing.T) {
 		TimeStamp: "1111.7777",
 	})
 }
+
+func TestGenerateConciergeAgentName_UniquePerCall(t *testing.T) {
+	b := &Bot{}
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		name := b.generateAgentName("myproject")
+		if seen[name] {
+			t.Fatalf("duplicate agent name on iteration %d: %s", i, name)
+		}
+		seen[name] = true
+	}
+}
