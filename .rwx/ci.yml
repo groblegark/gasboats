@@ -82,6 +82,7 @@ tasks:
       cd coop && cargo fetch
     filter:
       - .rwx/ci.yml
+      - coop/rust-toolchain.toml
       - coop/Cargo.lock
       - coop/Cargo.toml
       - coop/crates/*/Cargo.toml
