@@ -150,6 +150,12 @@ func (b *Bot) respawnThreadAgent(ctx context.Context, channel, threadTS, agentNa
 	if err != nil {
 		b.logger.Error("respawn-thread-agent: failed to create bead",
 			"agent", agentName, "channel", channel, "thread_ts", threadTS, "error", err)
+		if b.api != nil {
+			_, _, _ = b.api.PostMessage(channel,
+				slack.MsgOptionText(":x: Failed to resume agent — please try mentioning @gasboat again.", false),
+				slack.MsgOptionTS(threadTS),
+			)
+		}
 		return
 	}
 
