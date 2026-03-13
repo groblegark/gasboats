@@ -1049,6 +1049,8 @@ gitlabBridge:
     groupID: ""
     # Polling interval (e.g., "5m", "10m")
     pollInterval: "5m"
+    # Bot username — notes from this user are ignored to prevent feedback loops
+    botUsername: ""
 
   service:
     type: ClusterIP

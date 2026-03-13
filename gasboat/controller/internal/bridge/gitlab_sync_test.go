@@ -817,3 +817,157 @@ func TestBuildReviewNudgeMessage_NoPosition(t *testing.T) {
 		t.Errorf("message should not contain Discussion ID when empty, got: %s", msg)
 	}
 }
+
+// TestIntegration_WebhookToAgentSpawn exercises the full flow:
+// GitLab webhook → bead comment stored → mr_has_review_comments set → agent spawned.
+func TestIntegration_WebhookToAgentSpawn(t *testing.T) {
+	// Set up mock beads daemon with a task bead that has an MR URL.
+	daemon := newMockGitLabDaemon()
+	daemon.beads["kd-task-1"] = &beadsapi.BeadDetail{
+		ID:       "kd-task-1",
+		Title:    "Implement auth refactor",
+		Type:     "task",
+		Assignee: "auth-refactor-bot",
+		Fields:   map[string]string{"mr_url": "https://gitlab.com/org/repo/-/merge_requests/55"},
+		Labels:   []string{"project:gasboat"},
+	}
+
+	// Nudge will fail (agent is dead) — this forces the resolver to spawn.
+	nudge := func(_ context.Context, _, _ string) error {
+		return fmt.Errorf("agent pod not running")
+	}
+
+	// Set up mock resolver daemon (no agent bead → will spawn).
+	resolverDaemon := newMockResolverDaemon()
+	resolver := newTestAgentResolver(resolverDaemon, nil)
+
+	handler := GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		Daemon:        daemon,
+		WebhookSecret: "test-secret",
+		BotUsername:   "gasboat-bot",
+		Nudge:         nudge,
+		AgentResolver: resolver,
+		Logger:        slog.Default(),
+	})
+
+	// Simulate GitLab webhook: a reviewer posts a comment on the MR.
+	event := map[string]any{
+		"object_kind": "note",
+		"user":        map[string]any{"username": "code-reviewer"},
+		"object_attributes": map[string]any{
+			"note":          "The error handling in `handleAuth` is incomplete — missing the nil check for `session`.",
+			"noteable_type": "MergeRequest",
+			"system":        false,
+			"position": map[string]any{
+				"new_path": "internal/auth/handler.go",
+				"new_line": 42,
+				"old_path": "internal/auth/handler.go",
+				"old_line": 40,
+			},
+			"discussion_id": "disc-abc123",
+		},
+		"merge_request": map[string]any{
+			"iid":   55,
+			"url":   "https://gitlab.com/org/repo/-/merge_requests/55",
+			"title": "Refactor auth module",
+		},
+	}
+	body, _ := json.Marshal(event)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "test-secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify: comment was stored on the bead.
+	comments := daemon.getComments()
+	if len(comments) == 0 {
+		t.Fatal("expected at least one comment stored on bead")
+	}
+	found := false
+	for _, c := range comments {
+		if c.BeadID == "kd-task-1" && strings.Contains(c.Text, "nil check") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected comment containing 'nil check' on bead kd-task-1")
+	}
+
+	// Verify: mr_has_review_comments was set to true.
+	bead := daemon.getBead("kd-task-1")
+	if bead.Fields["mr_has_review_comments"] != "true" {
+		t.Errorf("mr_has_review_comments = %q, want true", bead.Fields["mr_has_review_comments"])
+	}
+
+	// Verify: agent was spawned via the resolver.
+	spawned := resolverDaemon.getSpawned()
+	if len(spawned) == 0 {
+		t.Fatal("expected agent to be spawned via resolver")
+	}
+	agent := spawned[0]
+	if agent.Fields["agent"] != "auth-refactor-bot" {
+		t.Errorf("spawned agent name = %q, want auth-refactor-bot", agent.Fields["agent"])
+	}
+	if agent.Fields["project"] != "gasboat" {
+		t.Errorf("spawned agent project = %q, want gasboat", agent.Fields["project"])
+	}
+	if agent.Fields["task_id"] != "kd-task-1" {
+		t.Errorf("spawned agent task_id = %q, want kd-task-1", agent.Fields["task_id"])
+	}
+	if agent.Fields["spawn_source"] != "gitlab-mr-review" {
+		t.Errorf("spawn_source = %q, want gitlab-mr-review", agent.Fields["spawn_source"])
+	}
+}
+
+// TestIntegration_BotNoteSelfFilter verifies bot-generated notes are ignored.
+func TestIntegration_BotNoteSelfFilter(t *testing.T) {
+	daemon := newMockGitLabDaemon()
+	daemon.beads["kd-task-1"] = &beadsapi.BeadDetail{
+		ID:     "kd-task-1",
+		Type:   "task",
+		Fields: map[string]string{"mr_url": "https://gitlab.com/org/repo/-/merge_requests/10"},
+	}
+
+	handler := GitLabWebhookHandlerWithConfig(GitLabWebhookConfig{
+		Daemon:        daemon,
+		WebhookSecret: "secret",
+		BotUsername:   "gasboat-bot",
+		Logger:        slog.Default(),
+	})
+
+	// Bot's own note should be ignored.
+	event := map[string]any{
+		"object_kind": "note",
+		"user":        map[string]any{"username": "gasboat-bot"},
+		"object_attributes": map[string]any{
+			"note":          "Agent response posted",
+			"noteable_type": "MergeRequest",
+			"system":        false,
+		},
+		"merge_request": map[string]any{
+			"iid": 10,
+			"url": "https://gitlab.com/org/repo/-/merge_requests/10",
+		},
+	}
+	body, _ := json.Marshal(event)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// No comment should be stored — the bot's own note is filtered.
+	comments := daemon.getComments()
+	if len(comments) != 0 {
+		t.Errorf("expected no comments (bot note should be filtered), got %d", len(comments))
+	}
+}
