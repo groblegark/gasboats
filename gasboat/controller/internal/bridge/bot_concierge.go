@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -248,7 +250,9 @@ func (b *Bot) fetchMessageText(ctx context.Context, channel, messageTS string) s
 // generateAgentName creates a unique agent name for a concierge-spawned agent.
 func (b *Bot) generateAgentName(project string) string {
 	ts := time.Now().UnixMilli()
-	return fmt.Sprintf("concierge-%s-%d", project, ts)
+	var suffix [3]byte
+	_, _ = rand.Read(suffix[:])
+	return fmt.Sprintf("concierge-%s-%d-%s", project, ts, hex.EncodeToString(suffix[:]))
 }
 
 // parseConciergeValue parses the encoded button value: "project|channel|message_ts|user_id".
