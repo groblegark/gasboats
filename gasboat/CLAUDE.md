@@ -70,7 +70,7 @@ When multiple agents are running, always follow this sequence to avoid duplicati
 
 ## Release (Golden Release Path)
 
-One canonical path. Template: `kd formula apply kd-GwMFKXnPvR --var version=YYYY.DDD.N`
+One canonical path. Template: `kd formula apply kd-GwMFKXnPvR --var version=YYYY.DDD.N --http-url https://beads.gasboat.app.e2e.dev.fics.ai`
 
 ```bash
 # All components are in the monorepo — one tag releases everything

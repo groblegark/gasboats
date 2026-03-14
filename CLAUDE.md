@@ -69,7 +69,7 @@ git push origin main <TAG>    # triggers all CI:
 #   - GitHub release.yml: creates release + triggers deploy
 ```
 
-Formula: `kd formula apply kd-mfqqJTLtJu --var version=YYYY.DDD.N`
+Formula: `kd formula apply kd-GwMFKXnPvR --var version=YYYY.DDD.N --http-url https://beads.gasboat.app.e2e.dev.fics.ai`
 
 ## CI
 
