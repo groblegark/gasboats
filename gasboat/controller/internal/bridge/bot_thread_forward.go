@@ -121,9 +121,25 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 }
 
 // shouldThrottleNudge returns true if a nudge was sent recently for this agent+thread.
-// Updates the last nudge time if not throttled.
+// Uses persistent state if available (survives restarts), falling back to in-memory map.
 func (b *Bot) shouldThrottleNudge(agent, threadTS string) bool {
 	key := agent + ":" + threadTS
+
+	// Use persistent state when available.
+	if b.state != nil {
+		throttled, err := b.state.CheckAndSetNudgeThrottle(key, threadNudgeInterval)
+		if err != nil {
+			b.logger.Warn("thread-forward: failed to persist nudge throttle", "key", key, "error", err)
+		}
+		if throttled {
+			b.logger.Debug("thread-forward: nudge throttled (persisted)",
+				"agent", agent, "thread_ts", threadTS)
+			return true
+		}
+		return false
+	}
+
+	// Fallback to in-memory map when state is nil (tests).
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if last, ok := b.lastThreadNudge[key]; ok && time.Since(last) < threadNudgeInterval {
