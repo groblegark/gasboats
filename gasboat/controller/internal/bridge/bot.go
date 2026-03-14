@@ -277,6 +277,10 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 	}()
 
+	// Periodically validate thread-agent bindings against Slack API
+	// to remove entries for deleted threads or archived channels.
+	go b.startPeriodicThreadValidation(ctx)
+
 	go b.handleEvents(ctx)
 
 	err = b.socket.RunContext(ctx)
