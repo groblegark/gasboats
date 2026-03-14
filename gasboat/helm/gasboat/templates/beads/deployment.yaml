@@ -45,7 +45,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.postgres.passwordSecret | default (include "gasboat.postgres.passwordSecretName" .) }}
-                  key: password
+                  key: password_url
             {{- end }}
             - name: BEADS_DATABASE_URL
               value: {{ include "gasboat.beads.databaseURL" . }}
