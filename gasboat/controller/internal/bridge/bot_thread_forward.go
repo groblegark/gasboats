@@ -37,6 +37,14 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 		return
 	}
 
+	// Refresh the TTL on this thread→agent binding so active threads
+	// don't get cleaned up by the 24h inactivity expiry. Done after
+	// the agent validation to avoid serializing concurrent forwards
+	// through the state mutex before the spawnInFlight guard.
+	if b.state != nil {
+		_ = b.state.TouchThreadAgent(ev.Channel, ev.ThreadTimeStamp)
+	}
+
 	// Throttle check first — skip bead creation for rapid-fire thread replies
 	// to avoid creating dozens of orphaned task beads in active threads.
 	if b.shouldThrottleNudge(agentName, ev.ThreadTimeStamp) {

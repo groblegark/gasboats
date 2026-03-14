@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MessageRef tracks a Slack message by channel and timestamp.
@@ -29,15 +30,42 @@ type DashboardRef struct {
 	LastHash  string `json:"last_hash,omitempty"` // content hash for change detection
 }
 
+// ThreadAgentEntry tracks a thread-agent binding with an activity timestamp
+// for TTL-based expiry.
+type ThreadAgentEntry struct {
+	Agent      string    `json:"agent"`
+	LastActive time.Time `json:"last_active"`
+}
+
+// UnmarshalJSON handles backward compatibility: old state files store
+// thread_agents values as plain strings, new ones as objects.
+func (e *ThreadAgentEntry) UnmarshalJSON(data []byte) error {
+	// Try plain string first (backward compat with old state files).
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		e.Agent = s
+		e.LastActive = time.Time{}
+		return nil
+	}
+	// Object form.
+	type entry ThreadAgentEntry // avoid infinite recursion
+	var obj entry
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*e = ThreadAgentEntry(obj)
+	return nil
+}
+
 // StateData is the JSON-serialized state structure.
 type StateData struct {
-	DecisionMessages map[string]MessageRef `json:"decision_messages,omitempty"` // bead ID → message ref
-	ChatMessages     map[string]MessageRef `json:"chat_messages,omitempty"`     // bead ID → message ref (chat forwarding)
-	AgentCards       map[string]MessageRef `json:"agent_cards,omitempty"`       // agent identity → status card message ref
-	ThreadAgents     map[string]string     `json:"thread_agents,omitempty"`     // "{channel}:{thread_ts}" → agent identity
-	ListenThreads    map[string]bool       `json:"listen_threads,omitempty"`    // "{channel}:{thread_ts}" → true if --listen mode
-	Dashboard        *DashboardRef         `json:"dashboard,omitempty"`
-	LastEventID      string                `json:"last_event_id,omitempty"` // SSE event ID for reconnection
+	DecisionMessages map[string]MessageRef       `json:"decision_messages,omitempty"` // bead ID → message ref
+	ChatMessages     map[string]MessageRef       `json:"chat_messages,omitempty"`     // bead ID → message ref (chat forwarding)
+	AgentCards       map[string]MessageRef       `json:"agent_cards,omitempty"`       // agent identity → status card message ref
+	ThreadAgents     map[string]ThreadAgentEntry `json:"thread_agents,omitempty"`     // "{channel}:{thread_ts}" → agent entry
+	ListenThreads    map[string]bool             `json:"listen_threads,omitempty"`    // "{channel}:{thread_ts}" → true if --listen mode
+	Dashboard        *DashboardRef               `json:"dashboard,omitempty"`
+	LastEventID      string                      `json:"last_event_id,omitempty"` // SSE event ID for reconnection
 }
 
 // StateManager provides thread-safe persistence of Slack message references.
@@ -56,7 +84,7 @@ func NewStateManager(path string) (*StateManager, error) {
 			DecisionMessages: make(map[string]MessageRef),
 			ChatMessages:     make(map[string]MessageRef),
 			AgentCards:       make(map[string]MessageRef),
-			ThreadAgents:     make(map[string]string),
+			ThreadAgents:     make(map[string]ThreadAgentEntry),
 			ListenThreads:    make(map[string]bool),
 		},
 	}
@@ -188,15 +216,35 @@ func threadAgentKey(channel, threadTS string) string {
 func (sm *StateManager) GetThreadAgent(channel, threadTS string) (string, bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	agent, ok := sm.data.ThreadAgents[threadAgentKey(channel, threadTS)]
-	return agent, ok
+	entry, ok := sm.data.ThreadAgents[threadAgentKey(channel, threadTS)]
+	return entry.Agent, ok
 }
 
-// SetThreadAgent stores a thread→agent association and persists.
+// SetThreadAgent stores a thread→agent association with the current timestamp
+// and persists.
 func (sm *StateManager) SetThreadAgent(channel, threadTS, agent string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.data.ThreadAgents[threadAgentKey(channel, threadTS)] = agent
+	sm.data.ThreadAgents[threadAgentKey(channel, threadTS)] = ThreadAgentEntry{
+		Agent:      agent,
+		LastActive: time.Now(),
+	}
+	return sm.saveLocked()
+}
+
+// TouchThreadAgent refreshes the activity timestamp for an existing
+// thread→agent binding without changing the agent. No-op if the key
+// does not exist. Persists on update.
+func (sm *StateManager) TouchThreadAgent(channel, threadTS string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	key := threadAgentKey(channel, threadTS)
+	entry, ok := sm.data.ThreadAgents[key]
+	if !ok {
+		return nil
+	}
+	entry.LastActive = time.Now()
+	sm.data.ThreadAgents[key] = entry
 	return sm.saveLocked()
 }
 
@@ -213,8 +261,8 @@ func (sm *StateManager) RemoveThreadAgent(channel, threadTS string) error {
 func (sm *StateManager) RemoveThreadAgentByAgent(agent string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	for k, v := range sm.data.ThreadAgents {
-		if v == agent {
+	for k, entry := range sm.data.ThreadAgents {
+		if entry.Agent == agent {
 			delete(sm.data.ThreadAgents, k)
 			delete(sm.data.ListenThreads, k)
 		}
@@ -222,13 +270,13 @@ func (sm *StateManager) RemoveThreadAgentByAgent(agent string) error {
 	return sm.saveLocked()
 }
 
-// AllThreadAgents returns a copy of all thread→agent mappings.
+// AllThreadAgents returns a copy of all thread→agent mappings (agent names only).
 func (sm *StateManager) AllThreadAgents() map[string]string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	out := make(map[string]string, len(sm.data.ThreadAgents))
-	for k, v := range sm.data.ThreadAgents {
-		out[k] = v
+	for k, entry := range sm.data.ThreadAgents {
+		out[k] = entry.Agent
 	}
 	return out
 }
@@ -238,7 +286,7 @@ func (sm *StateManager) ClearAllThreadAgents() (int, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	n := len(sm.data.ThreadAgents)
-	sm.data.ThreadAgents = make(map[string]string)
+	sm.data.ThreadAgents = make(map[string]ThreadAgentEntry)
 	return n, sm.saveLocked()
 }
 
@@ -248,9 +296,9 @@ func (sm *StateManager) GetThreadAgentsByChannel(channel string) []string {
 	defer sm.mu.RUnlock()
 	prefix := channel + ":"
 	var agents []string
-	for k, v := range sm.data.ThreadAgents {
+	for k, entry := range sm.data.ThreadAgents {
 		if strings.HasPrefix(k, prefix) {
-			agents = append(agents, v)
+			agents = append(agents, entry.Agent)
 		}
 	}
 	return agents
@@ -321,8 +369,13 @@ func (sm *StateManager) SetLastEventID(id string) error {
 
 // --- Compaction ---
 
+// ThreadAgentTTL is the default inactivity duration after which thread-agent
+// bindings are eligible for cleanup.
+const ThreadAgentTTL = 24 * time.Hour
+
 // CompactStaleEntries removes decision/chat messages and agent cards for
-// agents that are no longer active. This prevents unbounded growth of the
+// agents that are no longer active, and thread-agent bindings that have
+// exceeded the inactivity TTL. This prevents unbounded growth of the
 // state file over weeks of operation. Returns the number of entries removed.
 // The activeAgents set should contain short agent names of currently active agents.
 func (sm *StateManager) CompactStaleEntries(activeAgents map[string]bool) (int, error) {
@@ -355,10 +408,41 @@ func (sm *StateManager) CompactStaleEntries(activeAgents map[string]bool) (int, 
 		}
 	}
 
+	// Compact thread-agent bindings that have exceeded the TTL.
+	removed += sm.cleanExpiredThreadAgentsLocked(ThreadAgentTTL)
+
 	if removed > 0 {
 		return removed, sm.saveLocked()
 	}
 	return 0, nil
+}
+
+// CleanExpiredThreadAgents removes thread-agent bindings whose LastActive
+// timestamp is older than the given TTL, along with their listen-thread
+// flags. Returns the number of entries removed.
+func (sm *StateManager) CleanExpiredThreadAgents(ttl time.Duration) (int, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	removed := sm.cleanExpiredThreadAgentsLocked(ttl)
+	if removed > 0 {
+		return removed, sm.saveLocked()
+	}
+	return 0, nil
+}
+
+// cleanExpiredThreadAgentsLocked removes expired thread-agent entries.
+// Caller must hold sm.mu.
+func (sm *StateManager) cleanExpiredThreadAgentsLocked(ttl time.Duration) int {
+	now := time.Now()
+	removed := 0
+	for k, entry := range sm.data.ThreadAgents {
+		if !entry.LastActive.IsZero() && now.Sub(entry.LastActive) > ttl {
+			delete(sm.data.ThreadAgents, k)
+			delete(sm.data.ListenThreads, k)
+			removed++
+		}
+	}
+	return removed
 }
 
 // Stats returns counts of all tracked state entries (for observability).
@@ -393,7 +477,7 @@ func (sm *StateManager) load() error {
 		sm.data.AgentCards = make(map[string]MessageRef)
 	}
 	if sm.data.ThreadAgents == nil {
-		sm.data.ThreadAgents = make(map[string]string)
+		sm.data.ThreadAgents = make(map[string]ThreadAgentEntry)
 	}
 	if sm.data.ListenThreads == nil {
 		sm.data.ListenThreads = make(map[string]bool)
