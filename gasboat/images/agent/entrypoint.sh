@@ -306,6 +306,16 @@ if [ -d "/ms-playwright" ] && [ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
     echo "[entrypoint] Set PLAYWRIGHT_BROWSERS_PATH=/ms-playwright"
 fi
 
+# ── Custom CA certificates ────────────────────────────────────────────────
+# If operators mount custom CA certs into /usr/local/share/ca-certificates/
+# (e.g., via K8s Secret or ConfigMap volume), regenerate the system bundle
+# so all tools (curl, git, Python requests, Node.js) trust them.
+CUSTOM_CA_DIR="/usr/local/share/ca-certificates"
+if [ -d "${CUSTOM_CA_DIR}" ] && ls "${CUSTOM_CA_DIR}"/*.crt &>/dev/null; then
+    echo "[entrypoint] Custom CA certificates found, updating trust store"
+    sudo update-ca-certificates 2>&1 || echo "[entrypoint] WARNING: update-ca-certificates failed"
+fi
+
 # ── Resolve coop working directory ────────────────────────────────────────
 #
 # If the init container cloned the primary project repo (at
