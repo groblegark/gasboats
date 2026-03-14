@@ -27,12 +27,6 @@ const threadNudgeInterval = 30 * time.Second
 func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEvent, agent string) {
 	agentName := extractAgentName(agent)
 
-	// Refresh the TTL on this thread→agent binding so active threads
-	// don't get cleaned up by the 24h inactivity expiry.
-	if b.state != nil {
-		_ = b.state.TouchThreadAgent(ev.Channel, ev.ThreadTimeStamp)
-	}
-
 	// Validate the agent is still active.
 	if _, err := b.daemon.FindAgentBead(ctx, agentName); err != nil {
 		b.logger.Info("thread-forward: agent no longer active, respawning with session resume",
@@ -41,6 +35,14 @@ func (b *Bot) handleThreadForward(ctx context.Context, ev *slackevents.MessageEv
 		// finds the existing session JSONL and PVC for session continuity.
 		b.respawnThreadAgent(ctx, ev.Channel, ev.ThreadTimeStamp, agentName, ev.Text, ev.User)
 		return
+	}
+
+	// Refresh the TTL on this thread→agent binding so active threads
+	// don't get cleaned up by the 24h inactivity expiry. Done after
+	// the agent validation to avoid serializing concurrent forwards
+	// through the state mutex before the spawnInFlight guard.
+	if b.state != nil {
+		_ = b.state.TouchThreadAgent(ev.Channel, ev.ThreadTimeStamp)
 	}
 
 	// Throttle check first — skip bead creation for rapid-fire thread replies
