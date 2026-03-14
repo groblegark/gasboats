@@ -158,6 +158,27 @@ var builtinConfigs = map[string]*model.Config{
 	"type:mention":  {Key: "type:mention", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
 	"type:artifact": {Key: "type:artifact", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
 	"type:runbook":  {Key: "type:runbook", Value: json.RawMessage(`{"kind":"data","fields":[]}`)},
+
+	"type:schedule": {Key: "type:schedule", Value: json.RawMessage(`{
+		"kind": "config",
+		"fields": [
+			{"name": "cron",                  "type": "string",  "required": true},
+			{"name": "project",               "type": "string",  "required": true},
+			{"name": "role",                   "type": "string"},
+			{"name": "prompt",                 "type": "string",  "required": true},
+			{"name": "enabled",                "type": "boolean"},
+			{"name": "timezone",               "type": "string"},
+			{"name": "slack_channel",          "type": "string"},
+			{"name": "last_run",               "type": "string"},
+			{"name": "last_agent_id",          "type": "string"},
+			{"name": "timeout",                "type": "string"},
+			{"name": "max_concurrent",         "type": "string"},
+			{"name": "max_retries",            "type": "string"},
+			{"name": "retry_on_failure",       "type": "string"},
+			{"name": "consecutive_failures",   "type": "string"},
+			{"name": "last_checked_agent",     "type": "string"}
+		]
+	}`)},
 }
 
 var builtinConfigsByNamespace = func() map[string][]*model.Config {
