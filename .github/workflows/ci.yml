@@ -25,7 +25,7 @@ jobs:
       helm: ${{ steps.filter.outputs.helm }}
       is_tag: ${{ startsWith(github.ref, 'refs/tags/20') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -49,8 +49,8 @@ jobs:
     if: needs.changes.outputs.gasboat == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: gasboat/controller/go.mod
       - run: go test ./gasboat/controller/...
@@ -61,8 +61,8 @@ jobs:
     if: needs.changes.outputs.kbeads == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: kbeads/go.mod
       - run: go test ./kbeads/...
@@ -73,8 +73,8 @@ jobs:
     if: needs.changes.outputs.gasboat == 'true' || needs.changes.outputs.kbeads == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: gasboat/controller/go.mod
       - uses: golangci/golangci-lint-action@v7
@@ -92,7 +92,7 @@ jobs:
     if: needs.changes.outputs.coop == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get install -y protobuf-compiler
       - run: cd coop && RUSTC_WRAPPER="" cargo test --workspace --lib
@@ -103,8 +103,8 @@ jobs:
     if: needs.changes.outputs.beads3d == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: cd beads3d && npm ci && npm run build
@@ -115,6 +115,6 @@ jobs:
     if: needs.changes.outputs.helm == 'true' || needs.changes.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: azure/setup-helm@v4
       - run: helm lint gasboat/helm/gasboat/
