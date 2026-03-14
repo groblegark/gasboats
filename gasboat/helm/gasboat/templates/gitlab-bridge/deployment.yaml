@@ -100,7 +100,12 @@ spec:
             {{- toYaml .Values.gitlabBridge.resources | nindent 12 }}
       volumes:
         - name: state
+          {{- if .Values.gitlabBridge.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "gasboat.fullname" . }}-gitlab-bridge-state
+          {{- else }}
           emptyDir: {}
+          {{- end }}
       {{- include "gasboat.nodeSelector" (dict "local" .Values.gitlabBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.gitlabBridge.tolerations }}
       tolerations:

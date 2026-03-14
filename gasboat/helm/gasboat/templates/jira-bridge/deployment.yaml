@@ -121,7 +121,12 @@ spec:
             {{- toYaml .Values.jiraBridge.resources | nindent 12 }}
       volumes:
         - name: state
+          {{- if .Values.jiraBridge.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "gasboat.fullname" . }}-jira-bridge-state
+          {{- else }}
           emptyDir: {}
+          {{- end }}
       {{- include "gasboat.nodeSelector" (dict "local" .Values.jiraBridge.nodeSelector "global" .Values.global.nodeSelector) | nindent 6 }}
       {{- with .Values.jiraBridge.tolerations }}
       tolerations:
