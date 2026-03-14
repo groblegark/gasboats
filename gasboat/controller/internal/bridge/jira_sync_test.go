@@ -631,3 +631,126 @@ func TestJiraSync_CatchUp_NilClient(t *testing.T) {
 	// Should not panic.
 	s.CatchUp(context.Background(), nil)
 }
+
+// TestJiraSync_CatchUp_ClosedBeadPreventsReplay verifies that CatchUp marks
+// closed beads so that SSE replay of historical "updated" events for
+// long-gone agents doesn't re-post "working on this issue" comments.
+// This is the fix for the bug where the jira bridge repeated itself on restart
+// because closed beads were not included in the CatchUp query.
+func TestJiraSync_CatchUp_ClosedBeadPreventsReplay(t *testing.T) {
+	var (
+		mu           sync.Mutex
+		commentCount int
+	)
+
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-950/comment":
+			commentCount++
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":"1"}`)
+		case r.Method == "PUT" && r.URL.Path == "/rest/api/3/issue/PE-950":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PE-950/transitions":
+			resp := map[string]any{"transitions": []map[string]any{
+				{"id": "21", "name": "In Progress", "to": map[string]string{"name": "In Progress"}},
+			}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-950/transitions":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jiraServer.Close()
+
+	s := NewJiraSync(JiraSyncConfig{Jira: newTestJiraClient(jiraServer.URL), Logger: slog.Default()})
+
+	// Simulate restart catch-up: bead was claimed by an agent that is now
+	// long gone — the bead is closed.
+	client := &mockCatchUpClient{
+		beads: []*beadsapi.BeadDetail{
+			{
+				ID:       "bd-task-closed",
+				Status:   "closed",
+				Assignee: "jira-fixer99",
+				Labels:   []string{"source:jira"},
+				Fields:   map[string]string{"jira_key": "PE-950"},
+			},
+		},
+	}
+	s.CatchUp(context.Background(), client)
+
+	// SSE replays the historical "updated" event (the claim from before
+	// the bead was closed). Without the fix, this would re-post the
+	// "working on this issue" comment to Jira.
+	event := marshalSSEBeadPayload(BeadEvent{
+		ID: "bd-task-closed", Type: "task", Title: "[PE-950] Fix something",
+		Status:   "in_progress",
+		Assignee: "jira-fixer99",
+		Labels:   []string{"source:jira"},
+		Fields:   map[string]string{"jira_key": "PE-950"},
+	})
+	s.handleUpdated(context.Background(), event)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if commentCount != 0 {
+		t.Errorf("expected 0 comments for closed bead (deduped), got %d", commentCount)
+	}
+}
+
+// TestJiraSync_CatchUp_ClosedBeadPreventsCloseReplay verifies that CatchUp
+// also marks close events for closed beads.
+func TestJiraSync_CatchUp_ClosedBeadPreventsCloseReplay(t *testing.T) {
+	var (
+		mu           sync.Mutex
+		commentCount int
+	)
+
+	jiraServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PE-960/comment" {
+			commentCount++
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":"1"}`)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer jiraServer.Close()
+
+	s := NewJiraSync(JiraSyncConfig{Jira: newTestJiraClient(jiraServer.URL), Logger: slog.Default()})
+
+	client := &mockCatchUpClient{
+		beads: []*beadsapi.BeadDetail{
+			{
+				ID:       "bd-task-closed2",
+				Status:   "closed",
+				Assignee: "agent-old",
+				Labels:   []string{"source:jira"},
+				Fields:   map[string]string{"jira_key": "PE-960"},
+			},
+		},
+	}
+	s.CatchUp(context.Background(), client)
+
+	// Replay close event — should be deduped.
+	event := marshalSSEBeadPayload(BeadEvent{
+		ID: "bd-task-closed2", Type: "task", Title: "[PE-960] Old task",
+		Status: "closed",
+		Labels: []string{"source:jira"},
+		Fields: map[string]string{"jira_key": "PE-960"},
+	})
+	s.handleClosed(context.Background(), event)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if commentCount != 0 {
+		t.Errorf("expected 0 comments for replayed close event (deduped), got %d", commentCount)
+	}
+}

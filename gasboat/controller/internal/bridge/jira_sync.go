@@ -68,17 +68,25 @@ type JiraSyncCatchUpClient interface {
 // CatchUp fetches existing Jira-sourced beads from the daemon and pre-populates
 // the dedup map so that SSE replay after a restart does not re-post comments,
 // links, or transitions that were already synced.
+//
+// This includes closed beads because the bridge state volume may be ephemeral
+// (emptyDir), causing the SSE last-event-ID to be lost on restart. Without
+// covering closed beads, ancient claim/close events would be replayed and
+// re-posted to Jira every time the bridge restarts.
 func (s *JiraSync) CatchUp(ctx context.Context, client JiraSyncCatchUpClient) {
 	if client == nil {
 		return
 	}
 
-	// Fetch all active issue-kind beads with source:jira label.
+	// Fetch all Jira-sourced beads including closed ones. The bridge state
+	// volume may be ephemeral (emptyDir), so SSE may replay from the
+	// beginning on restart. We must pre-mark all historical sync operations
+	// to prevent duplicate Jira comments.
 	result, err := client.ListBeadsFiltered(ctx, beadsapi.ListBeadsQuery{
 		Kinds:    []string{"issue"},
-		Statuses: []string{"open", "in_progress"},
+		Statuses: []string{"open", "in_progress", "closed"},
 		Labels:   []string{"source:jira"},
-		Limit:    500,
+		Limit:    1000,
 	})
 	if err != nil {
 		s.logger.Warn("jira catch-up: failed to list beads", "error", err)
@@ -101,8 +109,10 @@ func (s *JiraSync) CatchUp(ctx context.Context, client JiraSyncCatchUpClient) {
 			continue
 		}
 
-		// Pre-mark claimed beads.
-		if bead.Status == "in_progress" && bead.Assignee != "" {
+		// Pre-mark claimed beads. Any bead with an assignee was claimed
+		// at some point — mark regardless of current status so that
+		// replayed "updated" events for closed beads don't re-post.
+		if bead.Assignee != "" {
 			s.mark("claimed:" + bead.ID + ":" + bead.Assignee)
 			marked++
 		}
@@ -116,6 +126,12 @@ func (s *JiraSync) CatchUp(ctx context.Context, client JiraSyncCatchUpClient) {
 		// Pre-mark MR merged.
 		if bead.Fields["mr_merged"] == "true" {
 			s.mark("merged:" + bead.ID)
+			marked++
+		}
+
+		// Pre-mark closed beads so replayed close events don't re-post.
+		if bead.Status == "closed" {
+			s.mark("close:" + bead.ID)
 			marked++
 		}
 	}

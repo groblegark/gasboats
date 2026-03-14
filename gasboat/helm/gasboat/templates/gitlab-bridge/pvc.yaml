@@ -1,0 +1,20 @@
+{{- if and .Values.gitlabBridge.enabled .Values.gitlabBridge.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gasboat.fullname" . }}-gitlab-bridge-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "gasboat.fullname" . }}-gitlab-bridge
+    app.kubernetes.io/component: gitlab-bridge
+    {{- include "gasboat.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.gitlabBridge.persistence.storageClass }}
+  storageClassName: {{ .Values.gitlabBridge.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.gitlabBridge.persistence.size | default "100Mi" }}
+{{- end }}

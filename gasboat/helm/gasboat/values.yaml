@@ -944,6 +944,13 @@ jiraBridge:
       cpu: 200m
       memory: 128Mi
 
+  # State persistence — survives pod restarts, preserves SSE last-event-ID and dedup state.
+  # When disabled (default), an emptyDir is used (state lost on restart, CatchUp covers dedup).
+  persistence:
+    enabled: false
+    size: 100Mi
+    storageClass: ""
+
   # Pod scheduling
   nodeSelector: {}
   tolerations: []
@@ -1063,6 +1070,13 @@ gitlabBridge:
     limits:
       cpu: 200m
       memory: 128Mi
+
+  # State persistence — survives pod restarts, preserves SSE last-event-ID and dedup state.
+  # When disabled (default), an emptyDir is used (state lost on restart, CatchUp covers dedup).
+  persistence:
+    enabled: false
+    size: 100Mi
+    storageClass: ""
 
   # Pod scheduling
   nodeSelector: {}
