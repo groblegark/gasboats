@@ -414,8 +414,9 @@ type GitLabWebhookConfig struct {
 	GitLab        *GitLabClient
 	Daemon        GitLabBeadClient
 	WebhookSecret string
-	BotUsername   string    // GitLab username of the bot; notes from this user are ignored to prevent loops
-	Nudge         NudgeFunc // optional; if set, review comments nudge the assigned agent with rich context
+	BotUsername   string            // GitLab username of the bot; notes from this user are ignored to prevent loops
+	Nudge         NudgeFunc         // optional; if set, review comments nudge the assigned agent with rich context
+	AgentResolver *AgentResolver    // optional; if set, spawns agents for review comments when no running agent found
 	Logger        *slog.Logger
 }
 
@@ -509,7 +510,7 @@ func GitLabWebhookHandlerWithConfig(cfg GitLabWebhookConfig) http.Handler {
 				DiscussionID: event.ObjectAttr.DiscussionID,
 				MR:           event.MergeRequest,
 			}
-			handleNoteWebhook(r.Context(), nc, cfg.Nudge, daemon, logger)
+			handleNoteWebhook(r.Context(), nc, cfg.Nudge, cfg.AgentResolver, daemon, logger)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"status":"processed","kind":"note"}`)
 			return
@@ -702,9 +703,10 @@ type noteContext struct {
 // handleNoteWebhook processes a GitLab note webhook event. It matches
 // MR review comments to beads, creates bead comments with the review feedback,
 // and nudges the assigned agent with a rich message containing file path, line,
-// diff context, and discussion ID.
+// diff context, and discussion ID. If no running agent is found and an
+// AgentResolver is configured, it spawns a new agent to handle the review.
 // Notes from the bot user are skipped to prevent feedback loops.
-func handleNoteWebhook(ctx context.Context, nc noteContext, nudge NudgeFunc, daemon GitLabBeadClient, logger *slog.Logger) {
+func handleNoteWebhook(ctx context.Context, nc noteContext, nudge NudgeFunc, resolver *AgentResolver, daemon GitLabBeadClient, logger *slog.Logger) {
 	// Only process MR discussion notes.
 	if nc.NoteableType != "MergeRequest" {
 		logger.Debug("webhook: note event is not for MergeRequest, skipping",
@@ -772,6 +774,7 @@ func handleNoteWebhook(ctx context.Context, nc noteContext, nudge NudgeFunc, dae
 		}
 
 		// Nudge the assigned agent with rich context.
+		nudged := false
 		if nudge != nil && bead.Assignee != "" {
 			msg := buildReviewNudgeMessage(nc, bead.ID)
 			if err := nudge(ctx, bead.Assignee, msg); err != nil {
@@ -780,6 +783,28 @@ func handleNoteWebhook(ctx context.Context, nc noteContext, nudge NudgeFunc, dae
 			} else {
 				logger.Info("webhook: nudged agent for review comment",
 					"bead", bead.ID, "agent", bead.Assignee, "author", nc.Author)
+				nudged = true
+			}
+		}
+
+		// Fallback: if nudge didn't work and we have an agent resolver,
+		// try to find or spawn an agent for this MR review comment.
+		if !nudged && resolver != nil {
+			taskEvent := BeadEvent{
+				ID:       bead.ID,
+				Type:     bead.Type,
+				Title:    bead.Title,
+				Assignee: bead.Assignee,
+				Labels:   bead.Labels,
+				Fields:   bead.Fields,
+			}
+			msg := buildReviewNudgeMessage(nc, bead.ID)
+			if err := resolver.ResolveAndNudge(ctx, taskEvent, msg); err != nil {
+				logger.Warn("webhook: agent resolver failed for review comment",
+					"bead", bead.ID, "mr_url", nc.MR.URL, "error", err)
+			} else {
+				logger.Info("webhook: dispatched review via agent resolver",
+					"bead", bead.ID, "mr_url", nc.MR.URL, "author", nc.Author)
 			}
 		}
 	}

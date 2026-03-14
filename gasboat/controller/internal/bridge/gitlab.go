@@ -316,6 +316,43 @@ func (c *GitLabClient) PostMRDiscussionReply(ctx context.Context, projectPath st
 	return &note, nil
 }
 
+// GitLabDiscussion represents a discussion thread on a GitLab merge request.
+type GitLabDiscussion struct {
+	ID             string       `json:"id"`
+	IndividualNote bool         `json:"individual_note"`
+	Notes          []GitLabNote `json:"notes"`
+}
+
+// ListMRNotes lists all notes on a merge request, ordered by creation date descending.
+// GET /projects/:id/merge_requests/:merge_request_iid/notes
+func (c *GitLabClient) ListMRNotes(ctx context.Context, projectPath string, mrIID int) ([]GitLabNote, error) {
+	encoded := url.PathEscape(projectPath)
+	q := url.Values{}
+	q.Set("per_page", "100")
+	q.Set("sort", "desc")
+	q.Set("order_by", "created_at")
+	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/notes?%s", encoded, mrIID, q.Encode())
+	var notes []GitLabNote
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &notes); err != nil {
+		return nil, fmt.Errorf("GitLab list MR notes %s!%d: %w", projectPath, mrIID, err)
+	}
+	return notes, nil
+}
+
+// ListMRDiscussions lists all discussion threads on a merge request.
+// GET /projects/:id/merge_requests/:merge_request_iid/discussions
+func (c *GitLabClient) ListMRDiscussions(ctx context.Context, projectPath string, mrIID int) ([]GitLabDiscussion, error) {
+	encoded := url.PathEscape(projectPath)
+	q := url.Values{}
+	q.Set("per_page", "100")
+	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/discussions?%s", encoded, mrIID, q.Encode())
+	var discussions []GitLabDiscussion
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &discussions); err != nil {
+		return nil, fmt.Errorf("GitLab list MR discussions %s!%d: %w", projectPath, mrIID, err)
+	}
+	return discussions, nil
+}
+
 // MRRef holds the parsed components of a GitLab MR URL.
 type MRRef struct {
 	ProjectPath string // e.g., "PiHealth/CoreFICS/fics-helm-chart"

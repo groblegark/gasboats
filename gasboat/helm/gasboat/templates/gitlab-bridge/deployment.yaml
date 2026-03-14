@@ -73,6 +73,10 @@ spec:
             - name: GITLAB_POLL_INTERVAL
               value: {{ .Values.gitlabBridge.gitlab.pollInterval | quote }}
             {{- end }}
+            {{- if .Values.gitlabBridge.gitlab.botUsername }}
+            - name: GITLAB_BOT_USERNAME
+              value: {{ .Values.gitlabBridge.gitlab.botUsername | quote }}
+            {{- end }}
             - name: LISTEN_ADDR
               value: ":8092"
             - name: STATE_PATH

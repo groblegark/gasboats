@@ -95,6 +95,14 @@ func main() {
 		return bridge.NudgeAgent(ctx, daemon, nudgeClient, logger, agentName, message)
 	}
 
+	// Agent resolver for MR review comment agent lookup/spawn.
+	agentResolver := bridge.NewAgentResolver(bridge.AgentResolverConfig{
+		Daemon: daemon,
+		GitLab: gitlabClient,
+		Client: nudgeClient,
+		Logger: logger,
+	})
+
 	// Webhook endpoint for GitLab MR events.
 	mux.Handle("/webhook", bridge.GitLabWebhookHandlerWithConfig(bridge.GitLabWebhookConfig{
 		GitLab:        gitlabClient,
@@ -102,6 +110,7 @@ func main() {
 		WebhookSecret: cfg.gitlabWebhookSecret,
 		BotUsername:   cfg.gitlabBotUsername,
 		Nudge:         nudgeFunc,
+		AgentResolver: agentResolver,
 		Logger:        logger,
 	}))
 
@@ -144,13 +153,7 @@ func main() {
 		State:         state,
 	})
 
-	// Register GitLab sync handler on the SSE stream.
-	agentResolver := bridge.NewAgentResolver(bridge.AgentResolverConfig{
-		Daemon: daemon,
-		GitLab: gitlabClient,
-		Client: nudgeClient,
-		Logger: logger,
-	})
+	// Register GitLab sync handler on the SSE stream (reuses agentResolver from above).
 	gitlabSync := bridge.NewGitLabSync(bridge.GitLabSyncConfig{
 		GitLab:   gitlabClient,
 		Daemon:   daemon,
