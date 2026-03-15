@@ -406,3 +406,47 @@ func TestGRPCListBeads_BundleFilterResolvesToMolecule(t *testing.T) {
 		t.Fatalf("expected type=molecule, got %q", resp.Beads[0].Type)
 	}
 }
+
+// --- Scheduler field tests ---
+
+func TestGRPCCreateBead_TaskType_WithScheduleID(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title:  "Scheduled: connectivity test",
+		Type:   "task",
+		Fields: []byte(`{"schedule_id":"kd-sched-1"}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating task with schedule_id: %v", err)
+	}
+	if resp.Bead.Kind != "issue" {
+		t.Fatalf("expected kind=issue, got %q", resp.Bead.Kind)
+	}
+}
+
+func TestGRPCCreateBead_AgentType_WithSchedulerFields(t *testing.T) {
+	srv, _, ctx := testCtx(t)
+
+	resp, err := srv.CreateBead(ctx, &beadsv1.CreateBeadRequest{
+		Title: "sched-agent",
+		Type:  "agent",
+		Fields: []byte(`{
+			"agent":"sched-agent",
+			"role":"crew",
+			"project":"gasboat",
+			"prompt":"Run health check",
+			"task_id":"kd-task-1",
+			"schedule_id":"kd-sched-1",
+			"schedule_title":"Daily Health Check",
+			"schedule_cron":"0 9 * * *",
+			"schedule_slack_channel":"C_ALERTS"
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating agent with scheduler fields: %v", err)
+	}
+	if resp.Bead.Kind != "config" {
+		t.Fatalf("expected kind=config, got %q", resp.Bead.Kind)
+	}
+}

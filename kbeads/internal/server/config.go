@@ -22,7 +22,12 @@ var builtinConfigs = map[string]*model.Config{
 		Value: json.RawMessage(`{"filter":{"status":["open","in_progress"],"kind":["issue"]},"sort":"priority","limit":5}`),
 	},
 	"type:epic":    {Key: "type:epic", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
-	"type:task":    {Key: "type:task", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
+	"type:task": {Key: "type:task", Value: json.RawMessage(`{
+		"kind": "issue",
+		"fields": [
+			{"name": "schedule_id", "type": "string"}
+		]
+	}`)},
 	"type:feature": {Key: "type:feature", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
 	"type:chore":   {Key: "type:chore", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
 	"type:bug":     {Key: "type:bug", Value: json.RawMessage(`{"kind":"issue","fields":[]}`)},
@@ -66,9 +71,15 @@ var builtinConfigs = map[string]*model.Config{
 			{"name": "project",       "type": "string", "required": true},
 			{"name": "mode",          "type": "string"},
 			{"name": "agent_state",   "type": "string"},
+			{"name": "prompt",        "type": "string"},
+			{"name": "task_id",       "type": "string"},
 			{"name": "mock_scenario", "type": "string"},
 			{"name": "stop_requested",    "type": "string"},
 			{"name": "gate_satisfied_by", "type": "string"},
+			{"name": "schedule_id",            "type": "string"},
+			{"name": "schedule_title",         "type": "string"},
+			{"name": "schedule_cron",          "type": "string"},
+			{"name": "schedule_slack_channel", "type": "string"},
 			{"name": "advice_subscriptions",         "type": "string[]"},
 			{"name": "advice_subscriptions_exclude",  "type": "string[]"}
 		]
