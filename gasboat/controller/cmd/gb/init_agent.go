@@ -195,7 +195,7 @@ func bypassStartup(ctx context.Context, coop *coopapi.Client) error {
 				}
 				if strings.Contains(screen, "trust this folder") {
 					logInit("Auto-accepting trust folder prompt")
-					_ = coop.Respond(ctx, 0)
+					_ = coop.Respond(ctx, 1)
 					time.Sleep(3 * time.Second)
 					continue
 				}
