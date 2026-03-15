@@ -36,6 +36,8 @@ COPY images/agent/install/ /tmp/install/
 RUN . /tmp/install/versions.env && \
     apt-get update && apt-get install -y --no-install-recommends $BASE_PACKAGES && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
+    update-ca-certificates && \
+    mkdir -p /usr/local/share/ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js + Claude Code ─────────────────────────────────────────
@@ -135,5 +137,9 @@ RUN /tmp/install/playwright.sh
 ENV BUN_INSTALL=/usr/local/bun
 ENV PATH="${BUN_INSTALL}/bin:${PATH}"
 ENV HELM_PLUGINS=/usr/local/share/helm/plugins
+# Ensure all tools (Python requests, Node.js, httpx) use the system CA bundle.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 USER 1000
