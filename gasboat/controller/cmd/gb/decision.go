@@ -26,24 +26,69 @@ var decisionCmd = &cobra.Command{
 var decisionCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a decision point and optionally wait for response",
+	Long: `Create a decision point and optionally wait for response.
+
+Examples:
+  # Simple mode with --option flags (auto-wraps into JSON):
+  gb decision create --no-wait \
+    --prompt="Deploy to staging?" \
+    --option="yes:Deploy now:plan" \
+    --option="no:Skip this cycle:report"
+
+  # Full JSON mode:
+  gb decision create --no-wait \
+    --prompt="How should we proceed?" \
+    --options='[{"id":"a","short":"Option A","label":"Do X","artifact_type":"plan"}]'
+
+Option format for --option: "id:label:artifact_type" (artifact_type defaults to "report")`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prompt, _ := cmd.Flags().GetString("prompt")
+		title, _ := cmd.Flags().GetString("title")
 		optionsJSON, _ := cmd.Flags().GetString("options")
+		simpleOpts, _ := cmd.Flags().GetStringArray("option")
 		requestedBy, _ := cmd.Flags().GetString("requested-by")
 		decisionCtx, _ := cmd.Flags().GetString("context")
 		noWait, _ := cmd.Flags().GetBool("no-wait")
 
+		// Accept --title as alias for --prompt (common agent mistake).
+		if prompt == "" && title != "" {
+			prompt = title
+		}
+
 		if prompt == "" {
-			return fmt.Errorf("--prompt is required")
+			return fmt.Errorf("--prompt is required\n\nExample:\n  gb decision create --no-wait --prompt=\"What should we do?\" --option=\"yes:Proceed:plan\" --option=\"no:Skip:report\"")
 		}
 
 		fields := map[string]any{
 			"prompt": prompt,
 		}
-		if optionsJSON != "" {
+
+		// Build options from either --options JSON or --option flags.
+		if optionsJSON != "" && len(simpleOpts) > 0 {
+			return fmt.Errorf("use --options (JSON) or --option (simple), not both")
+		}
+
+		if len(simpleOpts) > 0 {
+			// Simple mode: --option "id:label:artifact_type"
+			opts := make([]map[string]any, 0, len(simpleOpts))
+			for _, s := range simpleOpts {
+				opt, err := parseSimpleOption(s)
+				if err != nil {
+					return err
+				}
+				opts = append(opts, opt)
+			}
+			encoded, _ := json.Marshal(opts)
+			fields["options"] = json.RawMessage(encoded)
+		} else if optionsJSON != "" {
 			var opts []map[string]any
 			if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
-				return fmt.Errorf("invalid --options JSON: %w", err)
+				// Try to detect common mistakes and give helpful errors.
+				var strArray []string
+				if json.Unmarshal([]byte(optionsJSON), &strArray) == nil {
+					return fmt.Errorf("--options must be an array of objects, not strings\n\nGot:      %s\nExpected: [{\"id\":\"a\",\"short\":\"Option A\",\"artifact_type\":\"plan\"},...]\n\nOr use --option flags instead:\n  --option \"a:Option A:plan\" --option \"b:Option B:report\"", optionsJSON)
+				}
+				return fmt.Errorf("invalid --options JSON: %w\n\nExpected format: [{\"id\":\"a\",\"short\":\"...\",\"label\":\"...\",\"artifact_type\":\"plan\"},...]\n\nOr use --option flags instead:\n  --option \"a:Option A:plan\" --option \"b:Option B:report\"", err)
 			}
 			for i, opt := range opts {
 				at, _ := opt["artifact_type"].(string)
@@ -52,7 +97,7 @@ var decisionCreateCmd = &cobra.Command{
 					if id == "" {
 						id = fmt.Sprintf("#%d", i)
 					}
-					return fmt.Errorf("option %s missing required artifact_type (allowed: report, plan, checklist, diff-summary, epic, bug)", id)
+					return fmt.Errorf("option %s missing required artifact_type (allowed: report, plan, checklist, diff-summary, epic, bug)\n\nEach option must include \"artifact_type\". Example:\n  {\"id\":\"%s\",\"short\":\"...\",\"artifact_type\":\"report\"}", id, id)
 				}
 				if !validArtifactTypes[at] {
 					return fmt.Errorf("unknown artifact_type %q on option %d (allowed: report, plan, checklist, diff-summary, epic, bug)", at, i)
@@ -495,6 +540,39 @@ var validArtifactTypes = map[string]bool{
 	"diff-summary": true, "epic": true, "bug": true,
 }
 
+// parseSimpleOption parses "id:label:artifact_type" into a map.
+// The artifact_type defaults to "report" if omitted.
+func parseSimpleOption(s string) (map[string]any, error) {
+	parts := strings.SplitN(s, ":", 3)
+	switch len(parts) {
+	case 1:
+		// Just an ID — use as both id and label.
+		return map[string]any{
+			"id": parts[0], "short": parts[0],
+			"label": parts[0], "artifact_type": "report",
+		}, nil
+	case 2:
+		return map[string]any{
+			"id": parts[0], "short": parts[1],
+			"label": parts[1], "artifact_type": "report",
+		}, nil
+	case 3:
+		at := parts[2]
+		if at == "" {
+			at = "report"
+		}
+		if !validArtifactTypes[at] {
+			return nil, fmt.Errorf("unknown artifact_type %q in --option %q (allowed: report, plan, checklist, diff-summary, epic, bug)", at, s)
+		}
+		return map[string]any{
+			"id": parts[0], "short": parts[1],
+			"label": parts[1], "artifact_type": at,
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid --option format %q, expected \"id:label:artifact_type\"", s)
+	}
+}
+
 // extractArtifactType looks up the chosen option and returns its artifact_type (if any).
 func extractArtifactType(optionsJSON, chosenID string) string {
 	var opts []map[string]any
@@ -529,7 +607,9 @@ func init() {
 	decisionCmd.AddCommand(decisionReportCmd)
 
 	decisionCreateCmd.Flags().String("prompt", "", "decision prompt (required)")
+	decisionCreateCmd.Flags().String("title", "", "alias for --prompt (accepted for convenience)")
 	decisionCreateCmd.Flags().String("options", "", "options JSON array")
+	decisionCreateCmd.Flags().StringArray("option", nil, `simple option: "id:label:artifact_type" (repeatable, artifact_type defaults to "report")`)
 	decisionCreateCmd.Flags().String("requested-by", "", "who is requesting (default: actor)")
 	decisionCreateCmd.Flags().String("context", "", "background context for the decision")
 	decisionCreateCmd.Flags().Bool("no-wait", false, "return immediately without waiting for response")
